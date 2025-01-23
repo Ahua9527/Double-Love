@@ -127,7 +127,7 @@ export default function Home() {
           marginBottom={majorScale(4)} 
           textAlign="center"
         >
-          万有引力
+          Double-Love
         </Heading>
 
         {error && (

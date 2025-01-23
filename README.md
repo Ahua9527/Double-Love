@@ -1,6 +1,6 @@
 # Double-Love-Web
 
-万有引力 XML 处理工具
+Double-Love XML 处理工具
 
 ## 本地开发
 

@@ -1,4 +1,4 @@
 export const metadata = {
-  title: '万有引力',
+  title: 'Double-Love',
   description: 'XML文件处理工具',
 }

@@ -6,8 +6,8 @@ import Link from 'next/link'
 const inter = Inter({ subsets: ['latin'] })
 
 export const metadata: Metadata = {
-  title: '万有引力',
-  description: '万有引力 XML 处理工具',
+  title: 'Double-Love',
+  description: 'Double-Love XML 处理工具',
   manifest: '/manifest.json'
 }
 
