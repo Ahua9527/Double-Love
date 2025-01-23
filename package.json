@@ -4,13 +4,14 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "next build && npx @cloudflare/next-on-pages",
+    "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "deploy": "npm run build && npx wrangler pages deploy .vercel/output/static"
+    "deploy": "npm run build && npx @cloudflare/next-on-pages && npx wrangler pages deploy .vercel/output/static"
   },
   "dependencies": {
     "@cloudflare/next-on-pages": "^1.13.7",
+    "evergreen-ui": "^7.1.9",
     "next": "15.1.6",
     "react": "^18.2.0",
     "react-dom": "^18.2.0"

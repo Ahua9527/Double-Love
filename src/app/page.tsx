@@ -194,7 +194,7 @@ export default function Home() {
           onAccepted={handleAccepted}
           onRejected={handleRejected}
           disabled={isProcessing}
-          multiple={true}
+          maxFiles={10}
           marginBottom={majorScale(3)}
         />
         

@@ -147,14 +147,21 @@ export async function processXML(file: File, config?: {
 export function getCameraIdentifier(camerarollText: string): string {
   if (!camerarollText) return "";
   
-  const firstPart = camerarollText.includes("_") 
-    ? camerarollText.split("_")[0] 
-    : camerarollText;
-    
-  if (firstPart.length >= 2 && 
-      firstPart[0].match(/[a-zA-Z]/) && 
-      firstPart[1].match(/[a-zA-Z]/)) {
-    return firstPart.slice(0, 2).toLowerCase();
+  // 提取第一个字母序列（直到遇到数字或下划线）
+  const match = camerarollText.match(/^[A-Za-z]+/);
+  if (!match) return "";
+  
+  const letters = match[0];
+  
+  // 如果字母序列长度大于2，只取前两个字母
+  if (letters.length > 2) {
+    return letters.slice(0, 2).toLowerCase();
   }
-  return "";
+  
+  // 如果只有一个字母，直接返回
+  if (letters.length === 1) {
+    return letters.toLowerCase();
+  }
+  
+  return letters.toLowerCase();
 }
