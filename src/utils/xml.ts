@@ -4,6 +4,7 @@ interface XMLProcessConfig {
   height?: number;     // 输出分辨率高度
   format?: string;     // 文件名格式模板
   prefix?: string;     // 文件名前缀
+  onProgress?: (percent: number) => void; // 进度回调函数
 }
 
 // XML处理错误类型枚举
@@ -48,7 +49,8 @@ const DEFAULT_CONFIG = {
   width: 1920,              // 默认宽度
   height: 1080,             // 默认高度
   format: '{scene}_{shot}_{take}{camera}{Rating}', // 默认文件名格式
-  prefix: ''                // 默认前缀为空
+  prefix: '',               // 默认前缀为空
+  onProgress: () => {}      // 默认进度回调
 } as const;
 
 /**
