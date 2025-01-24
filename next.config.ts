@@ -1,3 +1,4 @@
+// next.config.ts
 import type { NextConfig } from 'next'
 import type { Configuration as WebpackConfig } from 'webpack'
 
@@ -17,100 +18,33 @@ const nextConfig: NextConfig = {
   async headers() {
     return [
       {
-        // Service Worker 配置
         source: '/sw.js',
         headers: [
           {
             key: 'Cache-Control',
-            value: 'public, max-age=0, must-revalidate',
+            value: 'no-store, no-cache, must-revalidate',
           },
           {
-            key: 'Service-Worker-Allowed',
-            value: '/',
-          },
+            key: 'Content-Type',
+            value: 'application/javascript; charset=utf-8',
+          }
         ],
       },
       {
-        // manifest.json 配置
         source: '/manifest.json',
         headers: [
           {
             key: 'Cache-Control',
-            value: 'public, max-age=0, must-revalidate',
-          },
+            value: 'no-store, no-cache, must-revalidate',
+          }
         ],
-      },
-      {
-        // 安全相关头部配置
-        source: '/:path*',
-        headers: [
-          {
-            key: 'X-Content-Type-Options',
-            value: 'nosniff',
-          },
-          {
-            key: 'X-Frame-Options',
-            value: 'DENY',
-          },
-          {
-            key: 'X-XSS-Protection',
-            value: '1; mode=block',
-          },
-          {
-            key: 'Access-Control-Allow-Credentials',
-            value: 'true',
-          },
-          {
-            key: 'Access-Control-Allow-Origin',
-            value: '*',
-          },
-          {
-            key: 'Access-Control-Allow-Methods',
-            value: 'GET,POST,OPTIONS',
-          },
-          {
-            key: 'Access-Control-Allow-Headers',
-            value: 'X-Requested-With,content-type',
-          },
-        ],
-      },
+      }
     ]
-  },
-
-  // 重写规则
-  async rewrites() {
-    return {
-      beforeFiles: [
-        {
-          source: '/sw.js',
-          destination: '/_next/static/sw.js',
-        }
-      ],
-      afterFiles: [],
-      fallback: []
-    }
-  },
-
-  // 构建时的环境变量
-  env: {
-    NEXT_PUBLIC_APP_VERSION: process.env.npm_package_version || '1.0.0',
-  },
-  
-  // 编译时优化
-  compiler: {
-    // 移除 console.log
-    removeConsole: process.env.NODE_ENV === 'production',
-  },
-  
-  // 实验性功能
-  experimental: {
-    // 优化资源加载
-    optimizePackageImports: ['evergreen-ui'],
   },
 
   // ESLint 配置
   eslint: {
-    ignoreDuringBuilds: true, // 构建时忽略 ESLint 错误
+    ignoreDuringBuilds: true,
   },
   
   // Webpack 配置
@@ -133,9 +67,6 @@ const nextConfig: NextConfig = {
   
   // 设置严格模式
   reactStrictMode: true,
-
-  // 禁用遥测
-  telemetry: false
 }
 
 export default nextConfig

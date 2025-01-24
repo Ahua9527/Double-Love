@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from 'next'
 import { Inter } from 'next/font/google'
 import './globals.css'
 import { PWAInitializer } from './pwa'
+// import Script from 'next/script'
 
 const inter = Inter({ subsets: ['latin'] })
 
@@ -39,6 +40,11 @@ export default function RootLayout({
         <link rel="apple-touch-icon" href="/icon-192x192.png" />
         <meta name="apple-mobile-web-app-capable" content="yes" />
         <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+        {/* <Script
+          id="pwa-test"
+          strategy="afterInteractive"
+          src="/pwa-test.js"
+        /> */}
       </head>
       <body className={inter.className}>
         <PWAInitializer />

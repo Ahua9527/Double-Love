@@ -1,12 +1,12 @@
-// public/manifest.json
 {
   "name": "Double-LOVE",
   "short_name": "Double-LOVE",
-  "description": "Double-LOVE XML 处理工具",
+  "description": "专业的 XML 处理工具",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#ffffff",
   "theme_color": "#ffffff",
+  "orientation": "any",
   "icons": [
     {
       "src": "/icon-192x192.png",
@@ -19,6 +19,15 @@
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "any maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "开始处理",
+      "short_name": "处理",
+      "description": "开始处理 XML 文件",
+      "url": "/?source=pwa",
+      "icons": [{ "src": "/icon-192x192.png", "sizes": "192x192" }]
     }
   ]
 }
