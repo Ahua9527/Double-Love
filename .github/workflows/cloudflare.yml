@@ -19,12 +19,11 @@ jobs:
         run: npm install
         
       - name: Build project
-        run: npm run build
-        
+        run: npm run build && npx @cloudflare/next-on-pages
       - name: Deploy to Cloudflare Pages
         uses: cloudflare/pages-action@1
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           projectName: double-love-web
-          directory: dist
+          directory: .vercel/output/static
