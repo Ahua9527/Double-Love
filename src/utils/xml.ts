@@ -1,17 +1,19 @@
 // 类型定义
 interface XMLProcessConfig {
-  width?: number;
-  height?: number;
-  format?: string;
-  prefix?: string;
+  width?: number;      // 输出分辨率宽度
+  height?: number;     // 输出分辨率高度
+  format?: string;     // 文件名格式模板
+  prefix?: string;     // 文件名前缀
 }
 
+// XML处理错误类型枚举
 enum XMLProcessErrorType {
-  INVALID_XML = 'INVALID_XML',
-  MISSING_REQUIRED_ELEMENTS = 'MISSING_REQUIRED_ELEMENTS',
-  INVALID_FORMAT = 'INVALID_FORMAT'
+  INVALID_XML = 'INVALID_XML',                           // XML格式无效
+  MISSING_REQUIRED_ELEMENTS = 'MISSING_REQUIRED_ELEMENTS', // 缺少必需元素
+  INVALID_FORMAT = 'INVALID_FORMAT'                      // 格式错误
 }
 
+// 自定义XML处理错误类
 class XMLProcessError extends Error {
   constructor(
     public type: XMLProcessErrorType,
@@ -22,32 +24,38 @@ class XMLProcessError extends Error {
   }
 }
 
+// clip元素相关接口
 interface ClipElements {
-  logginginfo: Element;
-  scene: Element;
-  shottake: Element;
-  filmdata: Element;
-  comments: Element;
-  mastercomment2: Element;
+  logginginfo: Element;      // 日志信息元素
+  scene: Element;            // 场景元素
+  shottake: Element;         // 镜头和场次元素
+  filmdata: Element;         // 影片数据元素
+  comments: Element;         // 评论元素
+  mastercomment2: Element;   // 主评论2元素
 }
 
+// 处理后的clip数据接口
 interface ProcessedClipData {
-  sceneFormatted: string;
-  shotFormatted: string;
-  takeFormatted: string;
-  cameraId: string;
-  rating: string;
+  sceneFormatted: string;    // 格式化后的场景号
+  shotFormatted: string;     // 格式化后的镜头号
+  takeFormatted: string;     // 格式化后的场次号
+  cameraId: string;          // 摄影机标识
+  rating: string;            // 评分(ok/kp/ng)
 }
 
-// 常量定义
+// 默认配置常量
 const DEFAULT_CONFIG = {
-  width: 1920,
-  height: 1080,
-  format: '{scene}_{shot}_{take}{camera}{Rating}',
-  prefix: ''
+  width: 1920,              // 默认宽度
+  height: 1080,             // 默认高度
+  format: '{scene}_{shot}_{take}{camera}{Rating}', // 默认文件名格式
+  prefix: ''                // 默认前缀为空
 } as const;
 
-// 工具函数
+/**
+ * 验证值是否有效
+ * @param value - 待验证的字符串
+ * @returns 布尔值表示是否有效
+ */
 function isValidValue(value: string): boolean {
   value = value.trim();
   if (!value) return false;
@@ -56,10 +64,20 @@ function isValidValue(value: string): boolean {
   return true;
 }
 
+/**
+ * 格式化场景号（保证3位数字）
+ * @param scene - 原始场景号
+ * @returns 格式化后的场景号
+ */
 function formatSceneNumber(scene: string): string {
   return scene.replace(/(\d+)/g, match => match.padStart(3, '0')).toUpperCase();
 }
 
+/**
+ * 格式化镜头号和场次号（各保证2位数字）
+ * @param value - 原始镜头和场次值
+ * @returns [格式化的镜头号, 格式化的场次号]
+ */
 function formatShotTake(value: string): [string, string] {
   const [shot, take] = value.replace(/\s/g, '').split('-');
   return [
@@ -68,12 +86,22 @@ function formatShotTake(value: string): [string, string] {
   ];
 }
 
+/**
+ * 清理文件名（去除多余下划线）
+ * @param name - 原始文件名
+ * @returns 清理后的文件名
+ */
 function cleanupFileName(name: string): string {
   return name
-    .replace(/_{2,}/g, '_')
-    .replace(/_+$/, '');
+    .replace(/_{2,}/g, '_')    // 替换多个连续下划线为单个
+    .replace(/_+$/, '');       // 移除末尾下划线
 }
 
+/**
+ * 获取评分值
+ * @param comment - 评论内容
+ * @returns 评分值(ok/kp/ng)
+ */
 function getRatingValue(comment: string): string {
   if (comment.includes("Circle")) return "ok";
   if (comment.includes("KEEP")) return "kp";
@@ -81,7 +109,11 @@ function getRatingValue(comment: string): string {
   return "";
 }
 
-// 主要处理函数
+/**
+ * 提取摄影机标识（取摄影机编号前1-2个字母）
+ * @param camerarollText - 摄影机编号
+ * @returns 摄影机标识(小写)
+ */
 export function getCameraIdentifier(camerarollText: string): string {
   if (!camerarollText) return "";
   
@@ -97,6 +129,11 @@ export function getCameraIdentifier(camerarollText: string): string {
   return letters.toLowerCase();
 }
 
+/**
+ * 提取clip中的必要元素
+ * @param clip - clip元素
+ * @returns 包含必要元素的对象或null
+ */
 function extractClipElements(clip: Element): ClipElements | null {
   const logginginfo = clip.querySelector('logginginfo');
   const scene = logginginfo?.querySelector('scene');
@@ -112,16 +149,23 @@ function extractClipElements(clip: Element): ClipElements | null {
   return { logginginfo, scene, shottake, filmdata, comments, mastercomment2 };
 }
 
+/**
+ * 处理clip数据
+ * @param elements - clip元素集合
+ * @returns 处理后的数据或null
+ */
 function processClipData(elements: ClipElements): ProcessedClipData | null {
   const { scene, shottake, filmdata, mastercomment2 } = elements;
   
   const sceneValue = scene.textContent || "";
   const shottakeValue = shottake.textContent || "";
   
+  // 验证数据有效性
   if (!isValidValue(sceneValue) || !isValidValue(shottakeValue)) {
     return null;
   }
   
+  // 格式化数据
   const sceneFormatted = formatSceneNumber(sceneValue);
   const [shotFormatted, takeFormatted] = formatShotTake(shottakeValue);
   
@@ -141,6 +185,12 @@ function processClipData(elements: ClipElements): ProcessedClipData | null {
   };
 }
 
+/**
+ * 生成新文件名
+ * @param data - 处理后的clip数据
+ * @param config - 配置信息
+ * @returns 新文件名
+ */
 function generateNewName(data: ProcessedClipData, config: Required<XMLProcessConfig>): string {
   let newName = config.format
     .replace('{scene}', data.sceneFormatted)
@@ -154,11 +204,17 @@ function generateNewName(data: ProcessedClipData, config: Required<XMLProcessCon
   return newName;
 }
 
+/**
+ * 更新相关XML元素
+ * @param clip - 当前clip元素
+ * @param xmlDoc - XML文档
+ * @param newName - 新文件名
+ */
 function updateRelatedElements(clip: Element, xmlDoc: Document, newName: string): void {
   const clipId = clip.getAttribute('id');
   if (!clipId) return;
   
-  // 更新clip name
+  // 更新clip名称
   const nameElem = clip.querySelector('name');
   if (nameElem) {
     nameElem.textContent = newName;
@@ -169,7 +225,7 @@ function updateRelatedElements(clip: Element, xmlDoc: Document, newName: string)
                       xmlDoc.querySelector(`sequence[id="sequence_${clipId}_ci"]`);
   
   if (sequenceElem) {
-    // 更新sequence name
+    // 更新sequence名称
     const sequenceName = sequenceElem.querySelector('name');
     if (sequenceName) {
       sequenceName.textContent = newName;
@@ -181,7 +237,7 @@ function updateRelatedElements(clip: Element, xmlDoc: Document, newName: string)
       nameElements[2].textContent = newName;
     }
     
-    // 更新clipitem
+    // 更新clipitem名称
     const clipitem = sequenceElem.querySelector(`clipitem[id="sequence_${clipId}_ci"]`);
     if (clipitem) {
       const clipitemName = clipitem.querySelector('name');
@@ -192,6 +248,11 @@ function updateRelatedElements(clip: Element, xmlDoc: Document, newName: string)
   }
 }
 
+/**
+ * 更新分辨率设置
+ * @param xmlDoc - XML文档
+ * @param config - 配置信息
+ */
 function updateResolution(xmlDoc: Document, config: Required<XMLProcessConfig>): void {
   const widthElems = xmlDoc.getElementsByTagName('width');
   const heightElems = xmlDoc.getElementsByTagName('height');
@@ -205,6 +266,10 @@ function updateResolution(xmlDoc: Document, config: Required<XMLProcessConfig>):
   });
 }
 
+/**
+ * 更新DIT信息
+ * @param xmlDoc - XML文档
+ */
 function updateDITInfo(xmlDoc: Document): void {
   const lognoteElems = xmlDoc.getElementsByTagName('lognote');
   Array.from(lognoteElems).forEach(elem => {
@@ -214,7 +279,12 @@ function updateDITInfo(xmlDoc: Document): void {
   });
 }
 
-// 主函数
+/**
+ * XML处理主函数
+ * @param file - XML文件
+ * @param config - 配置信息
+ * @returns 处理后的XML字符串
+ */
 export async function processXML(file: File, config?: XMLProcessConfig): Promise<string> {
   // 合并配置
   const finalConfig = { ...DEFAULT_CONFIG, ...config };
@@ -224,7 +294,7 @@ export async function processXML(file: File, config?: XMLProcessConfig): Promise
   const parser = new DOMParser();
   const xmlDoc = parser.parseFromString(text, 'text/xml');
   
-  // 验证XML
+  // 验证XML有效性
   if (xmlDoc.getElementsByTagName('parsererror').length > 0) {
     throw new XMLProcessError(
       XMLProcessErrorType.INVALID_XML,
@@ -241,11 +311,11 @@ export async function processXML(file: File, config?: XMLProcessConfig): Promise
       const elements = extractClipElements(clip);
       if (!elements) continue;
       
-      // 处理数据
+      // 处理clip数据
       const processedData = processClipData(elements);
       if (!processedData) continue;
       
-      // 生成新名称
+      // 生成新文件名
       const newName = generateNewName(processedData, finalConfig);
       
       // 更新相关元素
