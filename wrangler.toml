@@ -1,4 +1,4 @@
-name = "Double-LOVE-web"
+name = "double-love-web"
 compatibility_date = "2025-01-23"
 compatibility_flags = ["nodejs_compat"]
 
