@@ -165,6 +165,14 @@ function processClipData(elements: ClipElements): ProcessedClipData | null {
     return null;
   }
   
+  // 检查shottake格式是否有效
+  const shotTakeParts = shottakeValue.split('-');
+  if (shotTakeParts.length !== 2 || 
+      !shotTakeParts[0].trim() || 
+      !shotTakeParts[1].trim()) {
+    return null;
+  }
+  
   // 格式化数据
   const sceneFormatted = formatSceneNumber(sceneValue);
   const [shotFormatted, takeFormatted] = formatShotTake(shottakeValue);
