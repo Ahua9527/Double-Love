@@ -15,11 +15,6 @@ import {
 import React, { useEffect, useState, useCallback } from 'react'
 import { processXML } from '@/utils/xml'
 
-// 定义进度类型
-type Progress = {
-  [key: string]: number;
-}
-
 // 定义错误类型
 type ProcessError = {
   type: 'upload' | 'process' | 'download';
@@ -39,8 +34,6 @@ export default function Home() {
   const [isProcessing, setIsProcessing] = useState(false)
   // 错误信息
   const [errors, setErrors] = useState<ProcessError[]>([])
-  // 处理进度
-  const [progress, setProgress] = useState<Progress>({})
   // 分辨率设置
   const [width, setWidth] = useState('1920')
   const [height, setHeight] = useState('1080')
@@ -52,14 +45,6 @@ export default function Home() {
   const validateResolution = useCallback((value: string): boolean => {
     const num = parseInt(value)
     return !isNaN(num) && num > 0 && num <= 8192
-  }, [])
-
-  // 更新文件处理进度
-  const updateProgress = useCallback((fileName: string, percent: number) => {
-    setProgress(prev => ({
-      ...prev,
-      [fileName]: percent
-    }))
   }, [])
 
   // 添加错误信息
@@ -108,11 +93,6 @@ export default function Home() {
     setFiles(files.filter(f => f !== file))
     setFileRejections(fileRejections.filter(r => r.file !== file))
     setErrors(errors.filter(e => e.fileName !== file.name))
-    setProgress(prev => {
-      const newProgress = { ...prev }
-      delete newProgress[file.name]
-      return newProgress
-    })
   }
 
   // 处理分辨率输入
@@ -132,58 +112,50 @@ export default function Home() {
     setErrors([])
     
     try {
-      // 并行处理所有文件
-      const processPromises = files.map(async file => {
-        updateProgress(file.name, 0)
+      // 串行处理所有文件
+      const successfulFiles: File[] = [];
+      
+      for (const file of files) {
         try {
           // 处理 XML
           const processedXML = await processXML(file, {
             width: parseInt(width),
             height: parseInt(height),
             format: '{scene}_{shot}_{take}{camera}_{Rating}',
-            prefix,
-            onProgress: (percent: number) => updateProgress(file.name, percent)
-          })
+            prefix
+          });
 
           // 创建下载
-          const blob = new Blob([processedXML], { type: 'text/xml;charset=utf-8' })
-          const url = URL.createObjectURL(blob)
+          const blob = new Blob([processedXML], { type: 'text/xml;charset=utf-8' });
+          const url = URL.createObjectURL(blob);
           
           // 下载延迟
-          await new Promise(resolve => setTimeout(resolve, 500))
+          await new Promise(resolve => setTimeout(resolve, 500));
           
           // 触发下载
-          const a = document.createElement('a')
-          a.href = url
-          a.download = file.name.replace('.xml', '_Double_LOVE.xml')
-          document.body.appendChild(a)
-          a.click()
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = file.name.replace('.xml', '_Double_LOVE.xml');
+          document.body.appendChild(a);
+          a.click();
           
           // 清理
-          await new Promise(resolve => setTimeout(resolve, 500))
-          document.body.removeChild(a)
-          URL.revokeObjectURL(url)
+          await new Promise(resolve => setTimeout(resolve, 500));
+          document.body.removeChild(a);
+          URL.revokeObjectURL(url);
           
-          updateProgress(file.name, 100)
-          return { file, success: true }
+          successfulFiles.push(file);
         } catch (err) {
           addError({
             type: 'process',
             fileName: file.name,
             message: err instanceof Error ? err.message : '处理失败'
-          })
-          return { file, success: false }
+          });
         }
-      })
+      }
 
-      // 等待所有处理完成
-      const results = await Promise.all(processPromises)
-      
       // 移除处理成功的文件
-      const successfulFiles = results
-        .filter(result => result.success)
-        .map(result => result.file)
-      setFiles(prev => prev.filter(f => !successfulFiles.includes(f)))
+      setFiles(prev => prev.filter(f => !successfulFiles.includes(f)));
       
     } catch (err) {
       addError({
@@ -339,7 +311,6 @@ export default function Home() {
                 name={file.name}
                 sizeInBytes={file.size}
                 onRemove={() => handleRemove(file)}
-                progress={progress[file.name]}
                 marginBottom={majorScale(1)}
               />
             ))}
