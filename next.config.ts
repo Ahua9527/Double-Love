@@ -1,6 +1,7 @@
 import { NextConfig } from 'next'
 
 const nextConfig: NextConfig = {
+  output: 'export',
   reactStrictMode: true,
   images: {
     unoptimized: true
@@ -15,8 +16,8 @@ const nextConfig: NextConfig = {
         minimize: true,
         splitChunks: {
           chunks: 'all',
-          maxSize: 200000, // 200KB
-          minSize: 10000 // 10KB
+          maxSize: 200000,
+          minSize: 10000
         }
       }
     }

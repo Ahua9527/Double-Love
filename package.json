@@ -7,7 +7,6 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "export": "next export",
     "deploy": "npm run build && npx @cloudflare/next-on-pages && npx wrangler pages deploy .vercel/output/static"
   },
   "dependencies": {
