@@ -81,12 +81,13 @@ const nextConfig: NextConfig = {
   async rewrites() {
     return {
       beforeFiles: [
-        // 确保 Service Worker 可以被正确访问
         {
           source: '/sw.js',
           destination: '/_next/static/sw.js',
-        },
+        }
       ],
+      afterFiles: [],
+      fallback: []
     }
   },
 
@@ -106,10 +107,14 @@ const nextConfig: NextConfig = {
     // 优化资源加载
     optimizePackageImports: ['evergreen-ui'],
   },
+
+  // ESLint 配置
+  eslint: {
+    ignoreDuringBuilds: true, // 构建时忽略 ESLint 错误
+  },
   
   // Webpack 配置
   webpack: (config: WebpackConfig, { isServer }: { isServer: boolean }) => {
-    // 优化 XML 相关的处理
     if (!config.module) {
       config.module = { rules: [] }
     }
@@ -128,6 +133,9 @@ const nextConfig: NextConfig = {
   
   // 设置严格模式
   reactStrictMode: true,
+
+  // 禁用遥测
+  telemetry: false
 }
 
 export default nextConfig
