@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "dev": "next dev", 
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
@@ -24,4 +24,4 @@
     "eslint-config-next": "15.1.6",
     "typescript": "^5.3.3"
   }
-}
+ }
