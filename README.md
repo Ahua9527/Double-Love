@@ -1,6 +1,6 @@
-# Double-Love-Web
+# Double-LOVE-Web
 
-Double-Love XML 处理工具
+Double-LOVE XML 处理工具
 
 ## 本地开发
 
