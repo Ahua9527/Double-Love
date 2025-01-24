@@ -24,13 +24,30 @@ export async function processXML(file: File, config?: {
     if (!scene || !shottake) continue;
 
     let sceneValue = scene.textContent || "";
+    const shottakeValue = shottake.textContent || "";
+    let shotFormatted = "";
+    let takeFormatted = "";
+    
+    // 如果scene或shottake任意一个为空、仅包含"-"、或格式不完整，保持原样
+    if (!sceneValue.trim() || sceneValue.trim() === "-" ||
+        !shottakeValue.trim() || shottakeValue.trim() === "-" ||
+        shottakeValue.trim() === "- " || 
+        shottakeValue.trim() === " -" ||
+        shottakeValue.trim() === " - " ||
+        shottakeValue.trim().endsWith(" -") ||
+        shottakeValue.trim().startsWith("- ")) {
+      continue;
+    }
+
+    // 正常处理scene
     sceneValue = sceneValue.replace(/(\d+)/g, (match) => match.padStart(3, '0'));
     sceneValue = sceneValue.toUpperCase();
-
-    const [shotValue, takeValue] = shottake.textContent?.replace(/\s/g, '').split('-') || ['', ''];
-    const shotFormatted = shotValue.replace(/(\d+)/g, (match) => 
+    
+    // 正常处理shottake
+    const [shotValue, takeValue] = shottakeValue.replace(/\s/g, '').split('-') || ['', ''];
+    shotFormatted = shotValue.replace(/(\d+)/g, (match) => 
       match.padStart(2, '0')).toLowerCase();
-    const takeFormatted = takeValue.replace(/(\d+)/g, (match) => 
+    takeFormatted = takeValue.replace(/(\d+)/g, (match) => 
       match.padStart(2, '0')).toLowerCase();
 
     const filmdata = clip.querySelector('filmdata');
@@ -39,7 +56,7 @@ export async function processXML(file: File, config?: {
     const cameraroll = filmdata.querySelector('cameraroll');
     if (!cameraroll || !cameraroll.textContent) continue;
 
-    const cameraIdentifier = getCameraIdentifier(cameraroll.textContent);
+    const cameraIdentifier = (!shottakeValue.trim() || shottakeValue.trim() === "-") ? "" : getCameraIdentifier(cameraroll.textContent);
 
     const comments = clip.querySelector('comments');
     if (!comments) continue;
@@ -70,7 +87,9 @@ export async function processXML(file: File, config?: {
       .replace('{scene}', sceneValue)
       .replace('{shot}', shotFormatted)
       .replace('{take}', takeFormatted)
-      .replace('{camera}', cameraIdentifier);
+      .replace('{camera}', cameraIdentifier)
+      .replace(/_{2,}/g, '_') // 先替换双下划线
+      .replace(/_+$/, ''); // 再移除末尾下划线
 
     if (ratingvalue) {
       newNameValue = (config?.prefix || '') + newNameValue.replace('{Rating}', `_${ratingvalue}`);
