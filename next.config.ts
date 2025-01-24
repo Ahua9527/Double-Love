@@ -1,15 +1,13 @@
 import { NextConfig } from 'next'
 
-// const nextConfig: NextConfig = {
-//   output: 'export',
-//   reactStrictMode: true,
-//   images: {
-//     unoptimized: true
-//   },
-//   trailingSlash: true,
-  assetPrefix: process.env.NODE_ENV === 'production' ? 'https://f6291174.double-love-web.pages.dev' : undefined,
+const nextConfig: NextConfig = {
+  output: 'export',
+  images: {
+    unoptimized: true
+  },
+  trailingSlash: true,
   webpack: (config, { isServer }) => {
-    config.cache = false
+    config.cache = false;
     if (!isServer) {
       config.optimization = {
         ...config.optimization,
@@ -21,7 +19,7 @@ import { NextConfig } from 'next'
         }
       }
     }
-    return config
+    return config;
   }
 }
 
