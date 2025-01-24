@@ -1,5 +1,7 @@
-/** @type {import('next').NextConfig} */
-const nextConfig = {
+import type { NextConfig } from 'next'
+import type { Configuration as WebpackConfig } from 'webpack'
+
+const nextConfig: NextConfig = {
   // 输出独立部署包
   output: 'standalone',
   
@@ -54,9 +56,25 @@ const nextConfig = {
             key: 'X-XSS-Protection',
             value: '1; mode=block',
           },
+          {
+            key: 'Access-Control-Allow-Credentials',
+            value: 'true',
+          },
+          {
+            key: 'Access-Control-Allow-Origin',
+            value: '*',
+          },
+          {
+            key: 'Access-Control-Allow-Methods',
+            value: 'GET,POST,OPTIONS',
+          },
+          {
+            key: 'Access-Control-Allow-Headers',
+            value: 'X-Requested-With,content-type',
+          },
         ],
       },
-    ];
+    ]
   },
 
   // 重写规则
@@ -69,7 +87,7 @@ const nextConfig = {
           destination: '/_next/static/sw.js',
         },
       ],
-    };
+    }
   },
 
   // 构建时的环境变量
@@ -85,40 +103,31 @@ const nextConfig = {
   
   // 实验性功能
   experimental: {
-    // 优化字体加载
-    optimizeFonts: true,
     // 优化资源加载
     optimizePackageImports: ['evergreen-ui'],
   },
   
   // Webpack 配置
-  webpack: (config, { isServer }) => {
+  webpack: (config: WebpackConfig, { isServer }: { isServer: boolean }) => {
     // 优化 XML 相关的处理
+    if (!config.module) {
+      config.module = { rules: [] }
+    }
+
+    if (!config.module.rules) {
+      config.module.rules = []
+    }
+
     config.module.rules.push({
       test: /\.xml$/,
       use: 'raw-loader',
-    });
+    })
 
-    return config;
+    return config
   },
   
   // 设置严格模式
   reactStrictMode: true,
-  
-  // 设置跨域策略
-  async headers() {
-    return [
-      {
-        source: '/api/:path*',
-        headers: [
-          { key: 'Access-Control-Allow-Credentials', value: 'true' },
-          { key: 'Access-Control-Allow-Origin', value: '*' },
-          { key: 'Access-Control-Allow-Methods', value: 'GET,POST,OPTIONS' },
-          { key: 'Access-Control-Allow-Headers', value: 'X-Requested-With,content-type' },
-        ],
-      },
-    ]
-  },
 }
 
-module.exports = nextConfig
+export default nextConfig
