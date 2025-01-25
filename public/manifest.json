@@ -4,6 +4,7 @@
   "description": "专业的 XML 处理工具",
   "start_url": "/",
   "display": "standalone",
+  "display_override": ["window-controls-overlay"],
   "background_color": "#ffffff",
   "theme_color": "#ffffff",
   "orientation": "any",
