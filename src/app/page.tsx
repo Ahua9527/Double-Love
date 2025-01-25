@@ -16,8 +16,6 @@ import {
 } from 'evergreen-ui'
 import React, { useEffect, useState, useCallback } from 'react'
 import { processXML } from '@/utils/xml'
-import { ThemeToggle } from '@/components/ThemeToggle'
-import { useTheme } from '@/hooks/useTheme'
 
 type ProcessError = {
   type: 'upload' | 'process' | 'download';
@@ -25,8 +23,12 @@ type ProcessError = {
   fileName: string;
 }
 
+interface BeforeInstallPromptEvent extends Event {
+  prompt: () => Promise<void>;
+  userChoice: Promise<{ outcome: 'accepted' | 'dismissed'; platform: string }>;
+}
+
 export default function Home() {
-  const { theme } = useTheme();
   const [isMounted, setIsMounted] = useState(false)
   const [files, setFiles] = useState<File[]>([])
   const [fileRejections, setFileRejections] = useState<{ file: File; message: string }[]>([])
@@ -35,6 +37,8 @@ export default function Home() {
   const [width, setWidth] = useState('1920')
   const [height, setHeight] = useState('1080')
   const [prefix, setPrefix] = useState('')
+  const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(null)
+  const [isInstalled, setIsInstalled] = useState(false)
 
   const validateResolution = useCallback((value: string): boolean => {
     const num = parseInt(value)
@@ -47,13 +51,54 @@ export default function Home() {
 
   useEffect(() => {
     setIsMounted(true)
+
+    const checkInstalled = () => {
+      const isStandalone = window.matchMedia('(display-mode: standalone)').matches ||
+                          (window.navigator as any).standalone ||
+                          document.referrer.includes('android-app://');
+      setIsInstalled(isStandalone);
+    };
+
+    const handleBeforeInstallPrompt = (e: Event) => {
+      e.preventDefault();
+      setDeferredPrompt(e as BeforeInstallPromptEvent);
+    };
+
+    const handleAppInstalled = () => {
+      setIsInstalled(true);
+      setDeferredPrompt(null);
+    };
+
+    window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+    window.addEventListener('appinstalled', handleAppInstalled);
+    checkInstalled();
+
     return () => {
       files.forEach(file => {
         URL.revokeObjectURL(URL.createObjectURL(file))
       })
+      window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+      window.removeEventListener('appinstalled', handleAppInstalled);
       setIsMounted(false)
     }
   }, [files])
+
+  const handleInstallClick = async () => {
+    if (!deferredPrompt) return;
+    
+    try {
+      await deferredPrompt.prompt();
+      const choiceResult = await deferredPrompt.userChoice;
+      
+      if (choiceResult.outcome === 'accepted') {
+        console.log('PWA 已安装');
+      }
+      
+      setDeferredPrompt(null);
+    } catch (error) {
+      console.error('安装 PWA 时出错:', error);
+    }
+  };
 
   if (!isMounted) {
     return null
@@ -170,174 +215,166 @@ export default function Home() {
   }
 
   return (
-    <Pane 
-      display="flex" 
-      alignItems="center" 
-      justifyContent="center" 
-      minHeight="100vh"
-      padding={24}
-      background={theme === 'dark' ? '#0a0a0a' : 'tint1'}
-      className="transition-colors duration-200"
-    >
-      <ThemeToggle />
-      <Pane 
-        elevation={4}
-        float="left"
-        margin={24}
-        width="100%"
-        maxWidth={720}
-        background={theme === 'dark' ? '#1a1a1a' : 'white'}
-        padding={48}
-        borderRadius={8}
-        borderColor={theme === 'dark' ? '#2d2d2d' : undefined}
-        className="transition-colors duration-200"
-      >
-        <Pane 
-          display="flex" 
-          flexDirection="column" 
-          alignItems="center" 
-          marginBottom={32}
-        >
-          <Heading size={900} color={theme === 'dark' ? 'white' : undefined}>Double-LOVE</Heading>
-        </Pane>
-
-        <Pane 
-          background={theme === 'dark' ? '#262626' : 'tint2'}
-          padding={24} 
-          borderRadius={8}
-          marginBottom={16}
-          borderColor={theme === 'dark' ? '#2d2d2d' : undefined}
-          className="transition-colors duration-200"
-        >
-          <Pane marginBottom={16}>
-            <Label>
-              <Strong color={theme === 'dark' ? 'white' : undefined}>自定义前缀</Strong>
-            </Label>
-            <TextInput
-              value={prefix}
-              onChange={(e) => setPrefix(e.target.value)}
-              width="100%"
-              height={40}
-              placeholder="输入自定义前缀（可选）"
-              background={theme === 'dark' ? '#1a1a1a' : 'white'}
-              borderColor={theme === 'dark' ? '#2d2d2d' : undefined}
-            />
-          </Pane>
-
-          <Pane display="flex" gap={16}>
-            <Pane flex={1}>
-              <Label>
-                <Strong color={theme === 'dark' ? 'white' : undefined}>分辨率 - 宽度</Strong>
-              </Label>
-              <TextInput
-                value={width}
-                onChange={(e) => handleResolutionChange(e, setWidth)}
-                height={40}
-                width="100%"
-                placeholder="宽度"
-                background={theme === 'dark' ? '#1a1a1a' : 'white'}
-                borderColor={theme === 'dark' ? '#2d2d2d' : undefined}
-              />
-            </Pane>
-            <Pane display="flex" alignItems="center" marginTop={24}>
-              <Text color={theme === 'dark' ? 'white' : undefined}>×</Text>
-            </Pane>
-            <Pane flex={1}>
-              <Label>
-                <Strong color={theme === 'dark' ? 'white' : undefined}>分辨率 - 高度</Strong>
-              </Label>
-              <TextInput
-                value={height}
-                onChange={(e) => handleResolutionChange(e, setHeight)}
-                height={40}
-                width="100%"
-                placeholder="高度"
-                background={theme === 'dark' ? '#1a1a1a' : 'white'}
-                borderColor={theme === 'dark' ? '#2d2d2d' : undefined}
-              />
-            </Pane>
-          </Pane>
-        </Pane>
-
+    <>
+      {!isInstalled && deferredPrompt && (
         <Pane
-          background={files.length === 0 ? (theme === 'dark' ? '#262626' : 'tint2') : (theme === 'dark' ? '#1a1a1a' : 'white')}
-          padding={24}
-          borderRadius={8}
-          border="default"
-          borderColor={theme === 'dark' ? '#2d2d2d' : undefined}
-          className="transition-colors duration-200"
+          position="fixed"
+          top={16}
+          right={16}
+          zIndex={999}
         >
-          <FileUploader
-            label={<Strong color={theme === 'dark' ? 'white' : undefined}>上传 XML 文件</Strong>}
-            description={
-              <Text color={theme === 'dark' ? '#a6a6a6' : undefined}>
-                支持拖放或点击上传，单个文件最大 50MB
-              </Text>
-            }
-            maxSizeInBytes={50 * 1024 ** 2}
-            acceptedMimeTypes={['text/xml' as MimeType]}
-            onAccepted={handleAccepted}
-            onRejected={handleRejected}
-            disabled={isProcessing}
-            maxFiles={10}
-            background={theme === 'dark' ? '#1a1a1a' : undefined}
-            borderColor={theme === 'dark' ? '#2d2d2d' : undefined}
-          />
-          
-          {files.length > 0 && (
-            <Pane marginTop={16}>
-              <Pane 
-                display="flex" 
-                justifyContent="space-between" 
-                alignItems="center"
-                marginBottom={8}
-              >
-                <Strong color={theme === 'dark' ? 'white' : undefined}>已上传文件 ({files.length})</Strong>
-                <Button 
-                  height={24} 
-                  appearance="minimal" 
-                  onClick={() => setFiles([])}
-                  color={theme === 'dark' ? 'white' : undefined}
-                >
-                  清空
-                </Button>
-              </Pane>
-              {files.map((file, index) => (
-                <FileCard
-                  key={`${file.name}-${index}`}
-                  name={file.name}
-                  sizeInBytes={file.size}
-                  onRemove={() => handleRemove(file)}
-                  marginBottom={8}
-                  background={theme === 'dark' ? '#262626' : undefined}
-                  borderColor={theme === 'dark' ? '#2d2d2d' : undefined}
-                />
-              ))}
-            </Pane>
-          )}
-        </Pane>
-
-        {files.length > 0 && (
           <Button
             appearance="primary"
             intent="success"
-            onClick={handleProcess}
-            isLoading={isProcessing}
-            disabled={isProcessing}
-            height={48}
-            width="100%"
-            marginTop={16}
+            onClick={handleInstallClick}
+            height={32}
+            // className="hover:bg-blue-500"
+            // color="white"
           >
-            {isProcessing ? `正在处理 ${files.length} 个文件...` : `处理 ${files.length} 个文件`}
+            安装应用
           </Button>
-        )}
+        </Pane>
+      )}
 
-        {errors.length > 0 && (
-          <Pane marginTop={16}>
-            {renderErrors()}
+      <Pane 
+        display="flex" 
+        alignItems="center" 
+        justifyContent="center" 
+        minHeight="100vh"
+        padding={24}
+        background="tint1"
+      >
+        <Pane 
+          elevation={4}
+          float="left"
+          margin={24}
+          width="100%"
+          maxWidth={720}
+          background="white"
+          padding={48}
+          borderRadius={16}
+        >
+          <Pane 
+            display="flex" 
+            flexDirection="row" 
+            alignItems="center" 
+            justifyContent="center"
+            marginBottom={32}
+          >
+            <Heading size={900}>Double-LOVE</Heading>
           </Pane>
-        )}
+
+          <Pane 
+            background="tint2" 
+            padding={24} 
+            borderRadius={8}
+            marginBottom={16}
+          >
+            <Pane marginBottom={16}>
+              <Label><Strong>自定义前缀</Strong></Label>
+              <TextInput
+                value={prefix}
+                onChange={(e) => setPrefix(e.target.value)}
+                width="100%"
+                height={40}
+                placeholder="输入自定义前缀（可选）"
+              />
+            </Pane>
+
+            <Pane display="flex" gap={16}>
+              <Pane flex={1}>
+                <Label><Strong>分辨率 - 宽度</Strong></Label>
+                <TextInput
+                  value={width}
+                  onChange={(e) => handleResolutionChange(e, setWidth)}
+                  height={40}
+                  width="100%"
+                  placeholder="宽度"
+                />
+              </Pane>
+              <Pane display="flex" alignItems="center" marginTop={24}>×</Pane>
+              <Pane flex={1}>
+                <Label><Strong>分辨率 - 高度</Strong></Label>
+                <TextInput
+                  value={height}
+                  onChange={(e) => handleResolutionChange(e, setHeight)}
+                  height={40}
+                  width="100%"
+                  placeholder="高度"
+                />
+              </Pane>
+            </Pane>
+          </Pane>
+
+          <Pane
+            background={files.length === 0 ? 'tint2' : 'white'}
+            padding={24}
+            borderRadius={8}
+            border="default"
+          >
+            <FileUploader
+              label={<Strong>上传 XML 文件</Strong>}
+              description="支持拖放或点击上传，单个文件最大 50MB"
+              maxSizeInBytes={50 * 1024 ** 2}
+              acceptedMimeTypes={['text/xml' as MimeType]}
+              onAccepted={handleAccepted}
+              onRejected={handleRejected}
+              disabled={isProcessing}
+              maxFiles={10}
+            />
+            
+            {files.length > 0 && (
+              <Pane marginTop={16}>
+                <Pane 
+                  display="flex" 
+                  justifyContent="space-between" 
+                  alignItems="center"
+                  marginBottom={8}
+                >
+                  <Strong>已上传文件 ({files.length})</Strong>
+                  <Button 
+                    height={24} 
+                    appearance="minimal" 
+                    onClick={() => setFiles([])}
+                  >
+                    清空
+                  </Button>
+                </Pane>
+                {files.map((file, index) => (
+                  <FileCard
+                    key={`${file.name}-${index}`}
+                    name={file.name}
+                    sizeInBytes={file.size}
+                    onRemove={() => handleRemove(file)}
+                    marginBottom={8}
+                  />
+                ))}
+              </Pane>
+            )}
+          </Pane>
+
+          {files.length > 0 && (
+            <Button
+              appearance="primary"
+              intent="success"
+              onClick={handleProcess}
+              isLoading={isProcessing}
+              disabled={isProcessing}
+              height={48}
+              width="100%"
+              marginTop={16}
+            >
+              {isProcessing ? `正在处理 ${files.length} 个文件...` : `处理 ${files.length} 个文件`}
+            </Button>
+          )}
+
+          {errors.length > 0 && (
+            <Pane marginTop={16}>
+              {renderErrors()}
+            </Pane>
+          )}
+        </Pane>
       </Pane>
-    </Pane>
+    </>
   )
 }
