@@ -67,6 +67,9 @@ const nextConfig: NextConfig = {
   
   // 设置严格模式
   reactStrictMode: true,
+  devIndicators: {
+    appIsrStatus: false,
+  },
 }
 
 export default nextConfig
