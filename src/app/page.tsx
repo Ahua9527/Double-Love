@@ -228,8 +228,6 @@ export default function Home() {
             intent="success"
             onClick={handleInstallClick}
             height={32}
-            // className="hover:bg-blue-500"
-            // color="white"
           >
             安装应用
           </Button>
