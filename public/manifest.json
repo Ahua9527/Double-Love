@@ -1,34 +1,29 @@
 {
-  "name": "Double-LOVE",
-  "short_name": "Double-LOVE",
-  "description": "专业的 XML 处理工具",
-  "start_url": "/",
-  "display": "standalone",
-  "display_override": ["window-controls-overlay"],
-  "background_color": "#ffffff",
-  "theme_color": "#ffffff",
-  "orientation": "any",
-  "icons": [
-    {
-      "src": "/icon-192x192.png",
-      "sizes": "192x192",
-      "type": "image/png",
-      "purpose": "any maskable"
-    },
-    {
-      "src": "/icon-512x512.png",
-      "sizes": "512x512",
-      "type": "image/png",
-      "purpose": "any maskable"
-    }
-  ],
-  "shortcuts": [
-    {
-      "name": "开始处理",
-      "short_name": "处理",
-      "description": "开始处理 XML 文件",
-      "url": "/?source=pwa",
-      "icons": [{ "src": "/icon-192x192.png", "sizes": "192x192" }]
-    }
-  ]
-}
+    "name": "Double Love",
+    "short_name": "Double Love",
+    "description": "A tool for processing XML files with love",
+    "start_url": "/",
+    "display": "standalone",
+    "display_override": ["window-controls-overlay"],
+    "background_color": "#F1F1F1",
+    "theme_color": "#3366FF",
+    "icons": [
+      {
+        "src": "favicon-96x96.png",
+        "sizes": "96x96",
+        "type": "image/png"
+      },
+      {
+        "src": "pwa-192x192.png",
+        "sizes": "192x192",
+        "type": "image/png",
+        "purpose": "any"
+      },
+      {
+        "src": "pwa-512x512.png",
+        "sizes": "512x512",
+        "type": "image/png",
+        "purpose": "any"
+      }
+    ]
+  }
