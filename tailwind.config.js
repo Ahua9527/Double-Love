@@ -12,6 +12,7 @@ export default {
       },
       colors: {
         selected: '#3366FF',
+        love: '#EA2AA0',
         premiere: '#9999FF',
         light: {
           'bg': '#F1F1F1',
