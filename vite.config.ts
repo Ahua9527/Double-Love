@@ -12,7 +12,7 @@ export default defineConfig({
       manifest: {
         name: 'Double Love',
         short_name: 'Double Love',
-        description: 'A tool for processing XML files with love',
+        description: 'Double Love：让每个镜头都藏着我未说出口的帧率',
         theme_color: '#171717',
         background_color: '#171717',
         display: 'standalone',
@@ -63,7 +63,7 @@ export default defineConfig({
         ]
       }
     })
-  ],
+  ] ,
   server: {
     https: true // 启用 HTTPS
   }

@@ -132,11 +132,12 @@ const DoubleLoveUploader = () => {
       <main className="flex-grow flex items-center justify-center p-6 pb-32 bg-light-bg dark:bg-dark-bg">
         <div className="w-full max-w-2xl bg-light-card dark:bg-dark-card rounded-2xl shadow-xl p-10 min-h-[600px] transition-all duration-500 ease-in-out">
         <h1 className="text-3xl font-chalkboard font-bold text-gray-900 dark:text-white mt-6 mb-12 text-center tracking-wide transition-colors duration-500 ease-in-out">
-          Double<span className="text-selected">-</span>LOVE
+          Double<span className="text-selected"> LOVE</span>
         </h1>
-          
-
         
+        {/* <p className="text-sm text-gray-600 dark:text-gray-400 mb-12 text-center">
+        🎥帧间有爱，效率翻倍
+          </p> */}
         
         <div className="space-y-6">
           {/* 自定义前缀输入 */}
@@ -217,9 +218,9 @@ const DoubleLoveUploader = () => {
               />
               <div className="text-center">
                 <Upload className="mx-auto h-12 w-12 text-gray-400 dark:text-gray-500" />
-                <p className="mt-2 text-sm text-gray-500 dark:text-gray-400">
-                  支持拖放或点击上传，最多99个文件
-                </p>
+                {/* <p className="mt-2 text-sm text-gray-500 dark:text-gray-400">
+                  支持拖放或点击上传
+                </p> */}
                 <p className="mt-1 text-sm text-blue-500 hover:text-blue-500">
                   点击或拖拽文件到此处
                 </p>

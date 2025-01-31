@@ -5,7 +5,10 @@
 [![GitHub license](https://img.shields.io/github/license/Ahua9527/Double-Love)](https://github.com/Ahua9527/Double-Love/blob/main/LICENSE)
 ![GitHub stars](https://img.shields.io/github/stars/Ahua9527/Double-Love)
 
+<h3>🎬 帧间有爱，效率翻倍</h3>
 
+[//]: # (藏在代码里的彩蛋)
+<!Double Love：让每个镜头都藏着我未说出口的帧率 -->
 
 [English](./README.en.md) · 简体中文 · [在线体验](https://double-love.ahua.space)
 
