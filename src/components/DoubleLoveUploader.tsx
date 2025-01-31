@@ -131,8 +131,8 @@ const DoubleLoveUploader = () => {
       {/* 内容区域 */}
       <main className="flex-grow flex items-center justify-center p-6 pb-32 bg-light-bg dark:bg-dark-bg">
         <div className="w-full max-w-2xl bg-light-card dark:bg-dark-card rounded-2xl shadow-xl p-10 min-h-[600px] transition-all duration-500 ease-in-out">
-        <h1 className="text-3xl font-chalkboard font-bold text-gray-900 dark:text-white mt-6 mb-2 text-center tracking-wide transition-colors duration-500 ease-in-out">
-          Double<span className="text-selected">-</span>LOVE
+        <h1 className="text-3xl font-chalkboard font-bold text-gray-900 dark:text-white mt-6 mb-12 text-center tracking-wide transition-colors duration-500 ease-in-out">
+          Double<span className="text-selected"> LOVE</span>
         </h1>
         
         {/* <p className="text-sm text-gray-600 dark:text-gray-400 mb-12 text-center">
