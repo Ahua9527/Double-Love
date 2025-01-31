@@ -1,6 +1,7 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
+import fs from 'fs';
 
 // https://vitejs.dev/config/
 export default defineConfig({
@@ -63,8 +64,11 @@ export default defineConfig({
         ]
       }
     })
-  ] ,
+  ],
   server: {
-    https: true // 启用 HTTPS
+    https: {
+      key: fs.readFileSync('localhost-key.pem'),
+      cert: fs.readFileSync('localhost.pem'),
+    }
   }
 })
