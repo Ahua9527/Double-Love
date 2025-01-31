@@ -63,7 +63,7 @@ export default defineConfig({
         ]
       }
     })
-  ]  ,
+  ] ,
   server: {
     https: true // 启用 HTTPS
   }
