@@ -13,7 +13,7 @@ export default {
       colors: {
         selected: '#3366FF',
         love: '#EA2AA0',
-        premiere: '#9999FF',
+        premiere: '#00005B',
         light: {
           'bg': '#F1F1F1',
           'card': '#F9F9F9',
