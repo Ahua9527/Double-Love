@@ -1,51 +1,58 @@
 <!DOCTYPE html>
+<!-- 根元素：设置语言为英语 -->
 <html lang="en">
   <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Double Love</title>
-    <meta name="description" content="Double Love：让每个镜头都藏着我未说出口的帧率">
-    
-    <!-- PWA primary color -->
-    <meta name="theme-color" content="#212121" media="(prefers-color-scheme: dark)">
-    <meta name="theme-color" content="#F1F1F1" media="(prefers-color-scheme: light)">
+    <!-- 基础元数据 -->
+    <meta charset="UTF-8" /><!-- 字符编码设置 -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><!-- 移动端视口适配 -->
+    <title>Double Love</title><!-- 页面标题 -->
+    <meta name="description" content="Double Love：让每个镜头都藏着我未说出口的帧率"><!-- SEO描述 -->
+    <!-- 主题颜色配置 -->
+    <meta name="theme-color" content="#212121" media="(prefers-color-scheme: dark)"><!-- 暗色模式主题色 -->
+    <meta name="theme-color" content="#F1F1F1" media="(prefers-color-scheme: light)"><!-- 亮色模式主题色 -->
+    <!-- iOS图标配置 -->
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png"><!-- 主屏幕图标 -->
+    <!-- 多格式favicon配置 -->
+    <link rel="icon" type="image/png" href="/Double-Love_96_any.png" sizes="96x96"><!-- 96x96 PNG图标 -->
+    <link rel="icon" href="/favicon.ico" sizes="48x48"><!-- 传统ICO图标 -->
+    <link rel="icon" href="/favicon.svg" sizes="any" type="image/svg+xml"><!-- SVG矢量图标 -->
 
-    <!-- Icon for Safari -->
-    <link rel="apple-touch-icon" href="/apple-touch-icon.png">
-    
-    <!-- Icons for different platforms -->
-    <link rel="icon" type="image/png" href="/Double-Love_96_any.png" sizes="96x96">
-    <link rel="icon" href="/favicon.ico" sizes="48x48">
-    <link rel="icon" href="/favicon.svg" sizes="any" type="image/svg+xml">
+    <!-- PWA配置 -->
+    <meta name="apple-mobile-web-app-capable" content="yes"><!-- 启用全屏模式 -->
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"><!-- 状态栏样式 -->
+    <meta name="apple-mobile-web-app-title" content="Double Love"><!-- 应用名称 -->
 
-    <!-- Apple specific meta tags -->
-    <meta name="apple-mobile-web-app-capable" content="yes">
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <meta name="apple-mobile-web-app-title" content="Double Love">
-
+    <!-- 关键CSS样式 -->
     <style>
+      /* 基础背景色设置 */
       html {
-        background-color: #FFFFFF;
+        background-color: #FFFFFF; /* 默认白色背景 */
       }
       html.dark {
-        background-color: #212121;
+        background-color: #212121; /* 暗色模式背景 */
       }
+      /* 全屏高度布局 */
       html, body, #root {
-        min-height: 100%;
-        height: 100%;
+        min-height: 100%; /* 最小高度保证 */
+        height: 100%; /* 继承父级高度 */
       }
       body {
-        margin: 0;
+        margin: 0; /* 去除默认边距 */
       }
     </style>
+    
+    <!-- 主题自动检测脚本 -->
     <script>
+      // 根据系统主题自动切换暗色模式
       if (window.matchMedia('(prefers-color-scheme: dark)').matches) {
-        document.documentElement.classList.add('dark');
+        document.documentElement.classList.add('dark'); // 添加dark类
       }
     </script>
   </head>
   <body>
+    <!-- React应用挂载点 -->
     <div id="root"></div>
+    <!-- 应用入口脚本 -->
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
