@@ -1,18 +1,37 @@
+/**
+ * 双LOVE文件上传处理组件
+ * 
+ * 主要功能：
+ * 1. 支持拖拽和点击上传XML文件
+ * 2. 文件格式和大小验证
+ * 3. 批量文件处理与进度跟踪
+ * 4. 自定义前缀和分辨率设置
+ * 5. 处理结果文件下载
+ */
 import { useState, useRef } from 'react';
-import { Upload, FileText, X ,Github} from 'lucide-react';
+import { Upload, FileText, X, Github } from 'lucide-react';
 import { processXML } from '../utils/xml';
 
-
+/**
+ * 双LOVE文件上传组件
+ * @returns {JSX.Element} 文件上传处理界面
+ */
 const DoubleLoveUploader = () => {
-  const [prefix, setPrefix] = useState('');
-  const [width, setWidth] = useState('1920');
-  const [height, setHeight] = useState('1080');
-  const [files, setFiles] = useState<File[]>([]);
-  const [isDragging, setIsDragging] = useState(false);
-  const [processing, setProcessing] = useState(false);
-  const [currentFile, setCurrentFile] = useState<string>('');
-  const [progress, setProgress] = useState<number>(0);
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  // 组件状态管理
+  const [prefix, setPrefix] = useState(''); // 文件前缀
+  const [width, setWidth] = useState('1920'); // 默认宽度
+  const [height, setHeight] = useState('1080'); // 默认高度
+  const [files, setFiles] = useState<File[]>([]); // 已上传文件列表
+  const [isDragging, setIsDragging] = useState(false); // 拖拽状态
+  const [processing, setProcessing] = useState(false); // 处理中状态
+  const [currentFile, setCurrentFile] = useState<string>(''); // 当前处理文件
+  const [progress, setProgress] = useState<number>(0); // 处理进度
+  const fileInputRef = useRef<HTMLInputElement>(null); // 文件输入引用
+
+  /**
+   * 处理拖拽进入事件
+   * @param {React.DragEvent} e - 拖拽事件对象
+   */
 
   const handleDragEnter = (e: React.DragEvent) => {
     e.preventDefault();
@@ -20,17 +39,29 @@ const DoubleLoveUploader = () => {
     setIsDragging(true);
   };
 
+  /**
+   * 处理拖拽离开事件
+   * @param {React.DragEvent} e - 拖拽事件对象
+   */
   const handleDragLeave = (e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
     setIsDragging(false);
   };
 
+  /**
+   * 处理拖拽悬停事件
+   * @param {React.DragEvent} e - 拖拽事件对象
+   */
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
   };
 
+  /**
+   * 处理文件放置事件
+   * @param {React.DragEvent} e - 拖拽事件对象
+   */
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
@@ -40,17 +71,19 @@ const DoubleLoveUploader = () => {
     handleFiles(droppedFiles);
   };
 
+  /**
+   * 处理文件上传
+   * @param {File[]} newFiles - 新上传的文件列表
+   */
   const handleFiles = (newFiles: File[]) => {
-    // 检查文件总数是否超过限制
-    if (files.length + newFiles.length > 99) {
+        if (files.length + newFiles.length > 99) {
       alert('最多只能上传99个文件');
       return;
     }
 
     const validFiles = newFiles.filter(file => {
       const isXML = file.name.toLowerCase().endsWith('.xml');
-      const isValidSize = file.size <= 50 * 1024 * 1024; // 50MB
-      return isXML && isValidSize;
+      const isValidSize = file.size <= 50 * 1024 * 1024;       return isXML && isValidSize;
     });
 
     if (validFiles.length === 0) {
@@ -58,24 +91,38 @@ const DoubleLoveUploader = () => {
       return;
     }
 
-    // 合并当前文件和新文件
-    setFiles(prevFiles => [...prevFiles, ...validFiles]);
+        setFiles(prevFiles => [...prevFiles, ...validFiles]);
   };
 
+  /**
+   * 移除单个文件
+   * @param {number} index - 要移除的文件索引
+   */
   const removeFile = (index: number) => {
     setFiles(prev => prev.filter((_, i) => i !== index));
   };
 
+  /**
+   * 清空所有文件
+   */
   const clearFiles = () => {
     setFiles([]);
   };
 
+  /**
+   * 格式化文件大小
+   * @param {number} bytes - 文件字节数
+   * @returns {string} 格式化后的文件大小字符串
+   */
   const formatFileSize = (bytes: number): string => {
     if (bytes < 1024) return bytes + ' B';
     if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
     return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
   };
 
+  /**
+   * 处理文件处理流程
+   */
   const handleProcess = async () => {
     if (!files.length) return;
     
@@ -125,22 +172,22 @@ const DoubleLoveUploader = () => {
     }
   };
 
+  /**
+   * 渲染组件界面
+   */
   return (
-    // {/* 主容器 */}
-    <div className="min-h-screen flex flex-col bg-light-bg dark:bg-dark-bg transition-all duration-500 ease-in-out">
-      {/* 内容区域 */}
+        <div className="min-h-screen flex flex-col bg-light-bg dark:bg-dark-bg transition-all duration-500 ease-in-out">
+      {}
       <main className="flex-grow flex items-center justify-center p-6 pb-32 bg-light-bg dark:bg-dark-bg">
         <div className="w-full max-w-2xl bg-light-card dark:bg-dark-card rounded-2xl shadow-xl p-10 min-h-[600px] transition-all duration-500 ease-in-out">
         <h1 className="text-4xl font-chalkboard font-bold text-gray-900 dark:text-white mt-6 mb-12 text-center tracking-wide transition-colors duration-500 ease-in-out [filter:drop-shadow(2px_4px_6px_rgba(0,0,0,0.3))]">
           Double<span className="text-selected"> LOVE</span>
         </h1>
         
-        {/* <p className="text-sm text-gray-600 dark:text-gray-400 mb-12 text-center">
-        🎥帧间有爱，效率翻倍
-          </p> */}
+        {}
         
         <div className="space-y-6">
-          {/* 自定义前缀输入 */}
+          {}
           <div>
             <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2 transition-colors duration-500 ease-in-out">
               自定义前缀
@@ -157,7 +204,7 @@ const DoubleLoveUploader = () => {
             />
           </div>
 
-          {/* 分辨率输入区域 */}
+          {}
           <div>
             <label className="block text-sm font-medium text-gray-700 dark:text-dark-placeholder mb-2 transition-colors duration-500 ease-in-out">
               分辨率
@@ -191,7 +238,7 @@ const DoubleLoveUploader = () => {
             </div>
           </div>
 
-          {/* 文件上传区域 */}
+          {}
           <div>
             <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
               上传 XML 文件
@@ -218,9 +265,7 @@ const DoubleLoveUploader = () => {
               />
               <div className="text-center">
                 <Upload className="mx-auto h-12 w-12 text-gray-400 dark:text-gray-500" />
-                {/* <p className="mt-2 text-sm text-gray-500 dark:text-gray-400">
-                  支持拖放或点击上传
-                </p> */}
+                {}
                 <p className="mt-1 text-sm text-blue-500 hover:text-blue-500">
                   点击或拖拽文件到此处
                 </p>
@@ -228,7 +273,7 @@ const DoubleLoveUploader = () => {
             </div>
           </div>
 
-          {/* 文件列表 */}
+          {}
           {files.length > 0 && (
             <div className="space-y-4">
               <div className="flex justify-between items-center">
@@ -266,7 +311,7 @@ const DoubleLoveUploader = () => {
             </div>
           )}
 
-          {/* 处理进度 */}
+          {}
           {processing && (
             <div className="space-y-2">
               <div className="text-sm text-gray-500 dark:text-gray-400">
@@ -281,7 +326,7 @@ const DoubleLoveUploader = () => {
             </div>
           )}
 
-          {/* 处理按钮 */}
+          {}
           {files.length > 0 && (
             <button
               onClick={handleProcess}
@@ -298,7 +343,7 @@ const DoubleLoveUploader = () => {
         </div>
         </div>
       </main>
-      {/* 固定底部 */}
+      {}
       <footer className="fixed bottom-0 w-full bg-gradient-to-t from-light-bg/95 via-light-bg/80 to-light-bg/0 dark:from-dark-bg/95 dark:via-dark-bg/80 dark:to-dark-bg/0">
         <div className="container mx-auto px-4 py-4">
           <div className="flex items-center justify-center space-x-6">
@@ -317,7 +362,7 @@ const DoubleLoveUploader = () => {
           </p>
         </div>
       </footer>
-      {/* 背景遮罩层 */}
+      {}
       <div className="fixed inset-0 -z-10 bg-light-bg dark:bg-dark-bg"></div>
     </div>
     
