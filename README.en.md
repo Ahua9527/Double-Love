@@ -14,7 +14,7 @@ English · [简体中文](./README.md) · [Live Demo](https://double-love.ahua.s
 
 </div>
 
-Double Love is an intelligent XML processing tool designed for film production, automating and standardizing script supervisor metadata.
+Double Love provides automated and standardized processing for production metadata. It supports offline use. Through batch processing and localization, it ensures seamless integration with Adobe Premiere, Silverstack, and DTG Slate to ensure metadata consistency. This effectively improves the efficiency of post-production workflows.
 
 ## ✨ Features
 
