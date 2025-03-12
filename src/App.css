@@ -1,42 +1,53 @@
+/* 根容器样式 */
 #root {
-  max-width: 1280px;
-  margin: 0 auto;
-  padding: 2rem;
-  text-align: center;
+  max-width: 1280px;    /* 最大宽度限制 */
+  margin: 0 auto;       /* 水平居中 */
+  padding: 2rem;        /* 内边距 */
+  text-align: center;   /* 文本居中 */
 }
 
+/* Logo基础样式 */
 .logo {
-  height: 6em;
-  padding: 1.5em;
-  will-change: filter;
-  transition: filter 500ms;
-}
-.logo:hover {
-  filter: drop-shadow(0 0 2em #646cffaa);
-}
-.logo.react:hover {
-  filter: drop-shadow(0 0 2em #61dafbaa);
+  height: 6em;         /* 固定高度 */
+  padding: 1.5em;      /* 内边距 */
+  will-change: filter; /* 性能优化提示 */
+  transition: filter 500ms; /* 过渡动画 */
 }
 
+/* Logo悬停效果 */
+.logo:hover {
+  filter: drop-shadow(0 0 2em #646cffaa); /* 蓝色发光效果 */
+}
+
+/* React专属Logo效果 */
+.logo.react:hover {
+  filter: drop-shadow(0 0 2em #61dafbaa); /* 青色发光效果 */
+}
+
+/* 旋转动画定义 */
 @keyframes logo-spin {
   from {
-    transform: rotate(0deg);
+    transform: rotate(0deg);  /* 起始角度 */
   }
   to {
-    transform: rotate(360deg);
+    transform: rotate(360deg); /* 结束角度 */
   }
 }
 
+/* 响应式动画设置 - 仅在用户不要求减少动画时生效 */
 @media (prefers-reduced-motion: no-preference) {
+  /* 第二个链接中的Logo应用旋转动画 */
   a:nth-of-type(2) .logo {
-    animation: logo-spin infinite 20s linear;
+    animation: logo-spin infinite 20s linear; /* 无限循环旋转 */
   }
 }
 
+/* 卡片组件样式 */
 .card {
-  padding: 2em;
+  padding: 2em;  /* 统一内边距 */
 }
 
+/* 文档说明文字样式 */
 .read-the-docs {
   color: #888;
 }

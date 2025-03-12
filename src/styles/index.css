@@ -1,41 +1,49 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+/* Tailwind CSS 基础层导入 */
+@tailwind base;    /* 初始化浏览器默认样式 */
+@tailwind components; /* 组件类定义 */
+@tailwind utilities; /* 工具类生成 */
 
-
-/* PWA 标题栏相关样式 */
+/* 针对WebKit内核浏览器的样式适配 */
 @supports (-webkit-appearance: none) and (stroke-color: transparent) {
+  /* 自定义标题栏区域样式 */
   .titlebar-area {
-    -webkit-app-region: drag;
-    app-region: drag;
-    background-color: var(--titlebar-bg);
+    -webkit-app-region: drag;  /* 启用窗口拖拽区域 */
+    app-region: drag;          /* 标准属性：窗口拖拽区域 */
+    background-color: var(--titlebar-bg);  /* 使用CSS变量设置背景色 */
   }
 }
 
+/* 基础层样式定义 */
 @layer base {
+  /* 亮色模式CSS变量定义 */
   :root {
-    --titlebar-bg: theme('colors.light.titlebar');
+    --titlebar-bg: theme('colors.light.titlebar');  /* 从Tailwind配置获取标题栏背景色 */
   }
 
+  /* 暗色模式CSS变量覆盖 */
   .dark {
-    --titlebar-bg: theme('colors.dark.titlebar');
+    --titlebar-bg: theme('colors.dark.titlebar');    /* 暗色模式标题栏背景色 */
   }
   
+  /* 根元素背景色设置 */
   html {
-    @apply bg-light-bg dark:bg-dark-bg;
+    @apply bg-light-bg dark:bg-dark-bg;  /* 应用亮/暗模式背景色 */
   }
   
+  /* 主体元素样式 */
   body {
-    @apply bg-light-bg dark:bg-dark-bg;
-    margin: 0;
+    @apply bg-light-bg dark:bg-dark-bg; /* 继承html背景色 */
+    margin: 0;  /* 清除默认边距 */
   }
 
+  /* 根容器样式 */
   #root {
-    @apply bg-light-bg dark:bg-dark-bg;
-    min-height: 100vh;
-    height: 100%;
+    @apply bg-light-bg dark:bg-dark-bg; /* 确保根容器背景色一致 */
+    min-height: 100vh;  /* 最小视口高度 */
+    height: 100%;       /* 充满父容器高度 */
   }
 
+  /* 全局过渡效果 */
   * {
     transition: background-color 0.5s ease,
                 color 0.5s ease,
