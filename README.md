@@ -14,7 +14,7 @@
 
 </div>
 
-Double Love 是专为影视制作设计的智能 XML 处理工具，实现场记元数据自动化标准化
+Double Love 为场记元数据提供自动化标准化处理。支持离线使用。通过批量处理、本地化处理，实现无缝对接Adobe Premiere，Silverstack，DTG Slate确保元数据一致性。有效提高后期工作流效率。
 
 ## ✨ 功能特性
 
