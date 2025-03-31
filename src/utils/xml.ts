@@ -347,6 +347,29 @@ function generateNewName(data: ProcessedClipData, config: Required<XMLProcessCon
 }
 
 /**
+ * 处理标签元素，修正拼写错误
+ * 
+ * @param {Element | null} labelsElement - 标签元素
+ * @returns {void} 
+ */
+function fixLabelsSpelling(labelsElement: Element | null): void {
+  if (!labelsElement) return;
+  
+  // 查找label2元素
+  const label2Elem = labelsElement.querySelector('label2');
+  if (!label2Elem) return;
+  
+  // 获取label2的文本内容
+  const label2Text = label2Elem.textContent || "";
+  
+  // 如果包含"Celurean"，修正为"Cerulean"
+  if (label2Text.includes("Celurean")) {
+    label2Elem.textContent = label2Text.replace("Celurean", "Cerulean");
+    console.log("已修正拼写: Celurean -> Cerulean");
+  }
+}
+
+/**
  * 更新相关XML元素
  * 
  * @param {Element} clip - 当前clip元素
@@ -358,6 +381,7 @@ function generateNewName(data: ProcessedClipData, config: Required<XMLProcessCon
  * 2. 关联sequence元素的name元素
  * 3. 关联clipitem的name元素
  * 4. 将clip的labels元素复制到sequence元素
+ * 5. 修正label2中Celurean的拼写
  */
 function updateRelatedElements(clip: Element, xmlDoc: Document, newName: string): void {
   const clipId = clip.getAttribute('id');
@@ -365,6 +389,9 @@ function updateRelatedElements(clip: Element, xmlDoc: Document, newName: string)
   
   // 获取clip中的labels元素
   const labelsElem = clip.querySelector('labels');
+  
+  // 修正labels元素中的拼写错误
+  fixLabelsSpelling(labelsElem);
   
   // 更新clip的name元素
   const nameElem = clip.querySelector('name');
@@ -483,6 +510,12 @@ export async function processXML(file: File, config?: XMLProcessConfig): Promise
       XMLProcessErrorType.INVALID_XML,
       '无效的XML文件'
     );
+  }
+  
+  // 查找并修正所有独立的labels元素（不在clip或sequence内的）
+  const allLabelsElems = xmlDoc.getElementsByTagName('labels');
+  for (const labelsElem of Array.from(allLabelsElems)) {
+    fixLabelsSpelling(labelsElem);
   }
   
   // 遍历处理所有clip元素
