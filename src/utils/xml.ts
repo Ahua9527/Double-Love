@@ -380,7 +380,7 @@ function fixLabelsSpelling(labelsElement: Element | null): void {
  * 1. 当前clip的name元素
  * 2. 关联sequence元素的name元素
  * 3. 关联clipitem的name元素
- * 4. 将clip的labels元素复制到sequence元素
+ * 4. 将clip的labels元素复制到sequence元素和其中的clipitem元素
  * 5. 修正label2中Celurean的拼写
  */
 function updateRelatedElements(clip: Element, xmlDoc: Document, newName: string): void {
@@ -410,25 +410,13 @@ function updateRelatedElements(clip: Element, xmlDoc: Document, newName: string)
       sequenceName.textContent = newName;
     }
     
-    // 更新sequence中的第三个name元素（通常是clipitem的标题）
-    const nameElements = sequenceElem.getElementsByTagName('name');
-    if (nameElements.length >= 3) {
-      nameElements[2].textContent = newName;
-    }
+    // 更新sequence中的clipitem相关元素
+    updateClipItems(sequenceElem, newName, labelsElem);
     
-    // 更新关联的clipitem元素
-    const clipitem = sequenceElem.querySelector(`clipitem[id="sequence_${clipId}_ci"]`);
-    if (clipitem) {
-      const clipitemName = clipitem.querySelector('name');
-      if (clipitemName) {
-        clipitemName.textContent = newName;
-      }
-    }
-    
-    // 复制labels元素到sequence元素
+    // 复制labels元素到sequence元素末尾
     if (labelsElem) {
       // 检查sequence是否已有labels元素
-      const sequenceLabelsElem = sequenceElem.querySelector('labels');
+      const sequenceLabelsElem = sequenceElem.querySelector(':scope > labels');
       if (sequenceLabelsElem) {
         // 如果存在，则替换内容
         sequenceLabelsElem.innerHTML = labelsElem.innerHTML;
@@ -436,9 +424,58 @@ function updateRelatedElements(clip: Element, xmlDoc: Document, newName: string)
         // 如果不存在，则复制并添加到sequence元素的末尾
         const clonedLabels = labelsElem.cloneNode(true);
         sequenceElem.appendChild(clonedLabels);
-        console.log("已复制labels元素到sequence:", clipId);
+        console.log("已复制labels元素到sequence末尾:", clipId);
       }
     }
+  }
+}
+
+/**
+ * 更新sequence中的clipitem元素
+ * 
+ * @param {Element} sequenceElem - sequence元素
+ * @param {string} newName - 新文件名
+ * @param {Element | null} labelsElem - 标签元素
+ */
+function updateClipItems(sequenceElem: Element, newName: string, labelsElem: Element | null): void {
+  // 更新所有video track中的clipitem
+  const videoTrackClipitems = sequenceElem.querySelectorAll('video > track > clipitem');
+  for (const clipitem of Array.from(videoTrackClipitems)) {
+    const clipitemName = clipitem.querySelector('name');
+    if (clipitemName) {
+      clipitemName.textContent = newName;
+    }
+    
+    // 复制labels元素到video clipitem
+    copyLabelsToElement(clipitem, labelsElem);
+  }
+  
+  // 更新所有audio track中的clipitem
+  const audioTrackClipitems = sequenceElem.querySelectorAll('audio > track > clipitem');
+  for (const clipitem of Array.from(audioTrackClipitems)) {
+    // 复制labels元素到audio clipitem
+    copyLabelsToElement(clipitem, labelsElem);
+  }
+}
+
+/**
+ * 复制labels元素到目标元素
+ * 
+ * @param {Element} targetElem - 目标元素
+ * @param {Element | null} labelsElem - 标签元素
+ */
+function copyLabelsToElement(targetElem: Element, labelsElem: Element | null): void {
+  if (!labelsElem) return;
+  
+  // 检查目标元素是否已有labels元素
+  const targetLabelsElem = targetElem.querySelector('labels');
+  if (targetLabelsElem) {
+    // 如果存在，则替换内容
+    targetLabelsElem.innerHTML = labelsElem.innerHTML;
+  } else {
+    // 如果不存在，则复制并添加到目标元素中
+    const clonedLabels = labelsElem.cloneNode(true);
+    targetElem.appendChild(clonedLabels);
   }
 }
 
