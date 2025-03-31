@@ -357,10 +357,14 @@ function generateNewName(data: ProcessedClipData, config: Required<XMLProcessCon
  * 1. 当前clip的name元素
  * 2. 关联sequence元素的name元素
  * 3. 关联clipitem的name元素
+ * 4. 将clip的labels元素复制到sequence元素
  */
 function updateRelatedElements(clip: Element, xmlDoc: Document, newName: string): void {
   const clipId = clip.getAttribute('id');
   if (!clipId) return;
+  
+  // 获取clip中的labels元素
+  const labelsElem = clip.querySelector('labels');
   
   // 更新clip的name元素
   const nameElem = clip.querySelector('name');
@@ -391,6 +395,21 @@ function updateRelatedElements(clip: Element, xmlDoc: Document, newName: string)
       const clipitemName = clipitem.querySelector('name');
       if (clipitemName) {
         clipitemName.textContent = newName;
+      }
+    }
+    
+    // 复制labels元素到sequence元素
+    if (labelsElem) {
+      // 检查sequence是否已有labels元素
+      const sequenceLabelsElem = sequenceElem.querySelector('labels');
+      if (sequenceLabelsElem) {
+        // 如果存在，则替换内容
+        sequenceLabelsElem.innerHTML = labelsElem.innerHTML;
+      } else {
+        // 如果不存在，则复制并添加到sequence元素的末尾
+        const clonedLabels = labelsElem.cloneNode(true);
+        sequenceElem.appendChild(clonedLabels);
+        console.log("已复制labels元素到sequence:", clipId);
       }
     }
   }
