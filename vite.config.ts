@@ -1,11 +1,15 @@
-// Vite核心配置导入
+// vite.config.ts
+
 import { defineConfig } from 'vite'
-// React插件（支持JSX、HMR等）
 import react from '@vitejs/plugin-react'
-// PWA插件（离线支持、service worker）
 import { VitePWA } from 'vite-plugin-pwa'
-// 文件系统模块
 import fs from 'fs'
+// 移除未使用的path导入
+// import path from 'path'
+
+// 读取package.json获取版本号
+const packageJson = JSON.parse(fs.readFileSync('./package.json', 'utf-8'));
+const { version } = packageJson;
 
 // 主配置对象
 export default defineConfig({
@@ -117,6 +121,11 @@ export default defineConfig({
       }
     })
   ],
+  // 定义环境变量供前端使用
+  define: {
+    'import.meta.env.APP_VERSION': JSON.stringify(version),
+    'import.meta.env.BUILD_DATE': JSON.stringify(new Date().toISOString())
+  },
   // 构建配置
   build: {
     sourcemap: true, // 生成sourcemap

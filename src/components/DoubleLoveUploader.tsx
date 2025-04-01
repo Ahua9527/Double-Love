@@ -11,7 +11,7 @@
 import { useState, useRef } from 'react';
 import { Upload, FileText, X, Github } from 'lucide-react';
 import { processXML } from '../utils/xml';
-
+import { getVersionDisplay } from '../config/version';
 /**
  * 双LOVE文件上传组件
  * @returns {JSX.Element} 文件上传处理界面
@@ -359,6 +359,10 @@ const DoubleLoveUploader = () => {
           </div>
           <p className="mt-2 text-xs text-center text-gray-500 dark:text-gray-400">
             Double LOVE © 2025 | Designed & Developed by 哆啦Ahua🌱
+          </p>
+          {/* 版本号显示 */}
+          <p className="mt-1 text-xs text-center text-gray-400 dark:text-gray-500 opacity-60">
+            {getVersionDisplay()}
           </p>
         </div>
       </footer>

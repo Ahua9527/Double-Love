@@ -8,7 +8,12 @@
  * @property {Function} [onProgress] - 进度回调函数
  */
 interface XMLProcessConfig {
-  width?: number;        height?: number;       format?: string;       prefix?: string;       onProgress?: (percent: number) => void; }
+  width?: number;        
+  height?: number;       
+  format?: string;       
+  prefix?: string;       
+  onProgress?: (percent: number) => void; 
+}
 
 /**
  * XML处理错误类型枚举
@@ -19,7 +24,10 @@ interface XMLProcessConfig {
  * @property {string} INVALID_FORMAT - 数据格式不符合要求
  */
 enum XMLProcessErrorType {
-  INVALID_XML = 'INVALID_XML',                             MISSING_REQUIRED_ELEMENTS = 'MISSING_REQUIRED_ELEMENTS',   INVALID_FORMAT = 'INVALID_FORMAT'                      }
+  INVALID_XML = 'INVALID_XML',                             
+  MISSING_REQUIRED_ELEMENTS = 'MISSING_REQUIRED_ELEMENTS',   
+  INVALID_FORMAT = 'INVALID_FORMAT'                      
+}
 
 /**
  * 自定义XML处理错误类
@@ -47,9 +55,17 @@ class XMLProcessError extends Error {
  * @property {Element} filmdata - 胶片数据元素
  * @property {Element} comments - 评论父元素
  * @property {Element} mastercomment2 - 主评论元素
+ * @property {Element | null} labels - 标签元素
  */
 interface ClipElements {
-  logginginfo: Element;        scene: Element;              shottake: Element;           filmdata: Element;           comments: Element;           mastercomment2: Element;   }
+  logginginfo: Element;        
+  scene: Element;              
+  shottake: Element;           
+  filmdata: Element;           
+  comments: Element;           
+  mastercomment2: Element;
+  labels: Element | null;   // 修改为Element | null类型
+}
 
 /**
  * 处理后的剪辑数据接口
@@ -62,7 +78,12 @@ interface ClipElements {
  * @property {string} rating - 拍摄评级（ok/kp/ng）
  */
 interface ProcessedClipData {
-  sceneFormatted: string;      shotFormatted: string;       takeFormatted: string;       cameraId: string;            rating: string;            }
+  sceneFormatted: string;      
+  shotFormatted: string;       
+  takeFormatted: string;       
+  cameraId: string;            
+  rating: string;            
+}
 
 /**
  * 默认配置常量
@@ -71,7 +92,12 @@ interface ProcessedClipData {
  * @type {Required<XMLProcessConfig>}
  */
 const DEFAULT_CONFIG = {
-  width: 1920,                height: 1080,               format: '{scene}_{shot}_{take}{camera}{Rating}',   prefix: '',                 onProgress: () => {}      } as const;
+  width: 1920,                
+  height: 1080,               
+  format: '{scene}_{shot}_{take}{camera}{Rating}',   
+  prefix: '',                 
+  onProgress: () => {}      
+} as const;
 
 /**
  * 验证输入值有效性
@@ -134,24 +160,46 @@ function formatShotTake(value: string): [string, string] {
  */
 function cleanupFileName(name: string): string {
   return name
-    .replace(/_{2,}/g, '_')        .replace(/_+$/, '');       }
+    .replace(/_{2,}/g, '_')        
+    .replace(/_+$/, '');       
+}
 
 /**
- * 从评论中提取拍摄评级
+ * 从标签中提取拍摄评级
+ * @param {Element | null} labelsElement - 标签元素
+ * @returns {string} 评级标识（小写形式）
  * 
- * @param {string} comment - 评论内容
- * @returns {string} 评级标识（ok/kp/ng）
- * 
- * 匹配规则：
- * - 包含"Circle"返回"ok"
- * - 包含"KEEP"返回"kp" 
- * - 包含"NG"返回"ng"
+ * 提取规则：
+ * - 如果包含"No Label"则不提取（返回空字符串）
+ * - 特殊处理: "keep" 或 "kp" 统一返回 "kp"
+ * - 其他任何内容都提取并转换为小写
  */
-function getRatingValue(comment: string): string {
-  if (comment.includes("Circle")) return "ok";
-  if (comment.includes("KEEP")) return "kp";
-  if (comment.includes("NG")) return "ng";
-  return "";
+function getRatingFromLabels(labelsElement: Element | null): string {
+  // 如果标签元素不存在，返回空字符串
+  if (!labelsElement) return "";
+  
+  // 获取label元素的文本内容
+  const labelElem = labelsElement.querySelector('label');
+  const labelText = labelElem?.textContent?.trim() || "";
+  
+  // 调试输出
+  console.log("label内容:", labelText);
+  
+  // 转换为小写进行比较
+  const lowerLabelText = labelText.toLowerCase();
+  
+  // 如果包含"no label"，则不提取
+  if (lowerLabelText.includes("no label")) {
+    return ""; // 不识别
+  }
+  
+  // 特殊处理: "keep" 或 "kp" 统一返回 "kp"
+  if (lowerLabelText.includes("keep") || lowerLabelText.includes("kp")) {
+    return "kp";
+  }
+  
+  // 其他任何内容都提取并转换为小写
+  return lowerLabelText;
 }
 
 /**
@@ -192,6 +240,7 @@ export function getCameraIdentifier(camerarollText: string): string {
  * - filmdata
  * - comments
  * - mastercomment2
+ * - labels
  */
 function extractClipElements(clip: Element): ClipElements | null {
   const logginginfo = clip.querySelector('logginginfo');
@@ -200,12 +249,15 @@ function extractClipElements(clip: Element): ClipElements | null {
   const filmdata = clip.querySelector('filmdata');
   const comments = clip.querySelector('comments');
   const mastercomment2 = comments?.querySelector('mastercomment2');
+  const labels = clip.querySelector('labels'); // 直接从clip中提取labels
+  
+  console.log("从clip中提取的labels元素:", labels);
   
   if (!logginginfo || !scene || !shottake || !filmdata || !comments || !mastercomment2) {
     return null;
   }
   
-  return { logginginfo, scene, shottake, filmdata, comments, mastercomment2 };
+  return { logginginfo, scene, shottake, filmdata, comments, mastercomment2, labels };
 }
 
 /**
@@ -218,34 +270,40 @@ function extractClipElements(clip: Element): ClipElements | null {
  * 1. 验证场景和镜头数据有效性
  * 2. 格式化场景、镜头、拍摄编号
  * 3. 提取摄影机标识
- * 4. 解析拍摄评级
+ * 4. 从labels元素提取拍摄评级
  */
 function processClipData(elements: ClipElements): ProcessedClipData | null {
-  const { scene, shottake, filmdata, mastercomment2 } = elements;
+  const { scene, shottake, filmdata, labels } = elements;
   
   const sceneValue = scene.textContent || "";
   const shottakeValue = shottake.textContent || "";
   
-    if (!isValidValue(sceneValue) || !isValidValue(shottakeValue)) {
+  // 验证数据有效性
+  if (!isValidValue(sceneValue) || !isValidValue(shottakeValue)) {
     return null;
   }
   
-    const shotTakeParts = shottakeValue.split('-');
+  // 验证镜头-拍摄格式
+  const shotTakeParts = shottakeValue.split('-');
   if (shotTakeParts.length !== 2 || 
       !shotTakeParts[0].trim() || 
       !shotTakeParts[1].trim()) {
     return null;
   }
   
-    const sceneFormatted = formatSceneNumber(sceneValue);
+  // 格式化数据
+  const sceneFormatted = formatSceneNumber(sceneValue);
   const [shotFormatted, takeFormatted] = formatShotTake(shottakeValue);
   
+  // 提取摄影机标识
   const cameraroll = filmdata.querySelector('cameraroll');
   if (!cameraroll?.textContent) return null;
   
   const cameraId = getCameraIdentifier(cameraroll.textContent);
-  const mastercomment2Value = (mastercomment2.textContent?.trim() || "").replace(/,$/, '');
-  const rating = getRatingValue(mastercomment2Value);
+  
+  // 提取评级信息 - 使用提取的labels元素
+  const rating = getRatingFromLabels(labels);
+  console.log("提取的评级:", rating);
   
   return {
     sceneFormatted,
@@ -271,16 +329,44 @@ function processClipData(elements: ClipElements): ProcessedClipData | null {
  * {Rating} -> 评级后缀（带下划线）
  */
 function generateNewName(data: ProcessedClipData, config: Required<XMLProcessConfig>): string {
+  console.log("生成文件名, 评级值:", data.rating);
+  
   let newName = config.format
     .replace('{scene}', data.sceneFormatted)
     .replace('{shot}', data.shotFormatted)
     .replace('{take}', data.takeFormatted)
     .replace('{camera}', data.cameraId)
     .replace('{Rating}', data.rating ? `_${data.rating}` : '');
+  
+  console.log("替换{Rating}后:", newName);
     
   newName = config.prefix + cleanupFileName(newName);
+  console.log("最终文件名:", newName);
   
   return newName;
+}
+
+/**
+ * 处理标签元素，修正拼写错误
+ * 
+ * @param {Element | null} labelsElement - 标签元素
+ * @returns {void} 
+ */
+function fixLabelsSpelling(labelsElement: Element | null): void {
+  if (!labelsElement) return;
+  
+  // 查找label2元素
+  const label2Elem = labelsElement.querySelector('label2');
+  if (!label2Elem) return;
+  
+  // 获取label2的文本内容
+  const label2Text = label2Elem.textContent || "";
+  
+  // 如果包含"Celurean"，修正为"Cerulean"
+  if (label2Text.includes("Celurean")) {
+    label2Elem.textContent = label2Text.replace("Celurean", "Cerulean");
+    console.log("已修正拼写: Celurean -> Cerulean");
+  }
 }
 
 /**
@@ -294,37 +380,102 @@ function generateNewName(data: ProcessedClipData, config: Required<XMLProcessCon
  * 1. 当前clip的name元素
  * 2. 关联sequence元素的name元素
  * 3. 关联clipitem的name元素
+ * 4. 将clip的labels元素复制到sequence元素和其中的clipitem元素
+ * 5. 修正label2中Celurean的拼写
  */
 function updateRelatedElements(clip: Element, xmlDoc: Document, newName: string): void {
   const clipId = clip.getAttribute('id');
   if (!clipId) return;
   
-    const nameElem = clip.querySelector('name');
+  // 获取clip中的labels元素
+  const labelsElem = clip.querySelector('labels');
+  
+  // 修正labels元素中的拼写错误
+  fixLabelsSpelling(labelsElem);
+  
+  // 更新clip的name元素
+  const nameElem = clip.querySelector('name');
   if (nameElem) {
     nameElem.textContent = newName;
   }
   
-    const sequenceElem = xmlDoc.querySelector(`sequence[id="sequence_id_${clipId}"]`) ||
+  // 查找关联的sequence元素
+  const sequenceElem = xmlDoc.querySelector(`sequence[id="sequence_id_${clipId}"]`) ||
                       xmlDoc.querySelector(`sequence[id="sequence_${clipId}_ci"]`);
   
   if (sequenceElem) {
-        const sequenceName = sequenceElem.querySelector('name');
+    // 更新sequence的name元素
+    const sequenceName = sequenceElem.querySelector('name');
     if (sequenceName) {
       sequenceName.textContent = newName;
     }
     
-        const nameElements = sequenceElem.getElementsByTagName('name');
-    if (nameElements.length >= 3) {
-      nameElements[2].textContent = newName;
-    }
+    // 更新sequence中的clipitem相关元素
+    updateClipItems(sequenceElem, newName, labelsElem);
     
-        const clipitem = sequenceElem.querySelector(`clipitem[id="sequence_${clipId}_ci"]`);
-    if (clipitem) {
-      const clipitemName = clipitem.querySelector('name');
-      if (clipitemName) {
-        clipitemName.textContent = newName;
+    // 复制labels元素到sequence元素末尾
+    if (labelsElem) {
+      // 检查sequence是否已有labels元素
+      const sequenceLabelsElem = sequenceElem.querySelector(':scope > labels');
+      if (sequenceLabelsElem) {
+        // 如果存在，则替换内容
+        sequenceLabelsElem.innerHTML = labelsElem.innerHTML;
+      } else {
+        // 如果不存在，则复制并添加到sequence元素的末尾
+        const clonedLabels = labelsElem.cloneNode(true);
+        sequenceElem.appendChild(clonedLabels);
+        console.log("已复制labels元素到sequence末尾:", clipId);
       }
     }
+  }
+}
+
+/**
+ * 更新sequence中的clipitem元素
+ * 
+ * @param {Element} sequenceElem - sequence元素
+ * @param {string} newName - 新文件名
+ * @param {Element | null} labelsElem - 标签元素
+ */
+function updateClipItems(sequenceElem: Element, newName: string, labelsElem: Element | null): void {
+  // 更新所有video track中的clipitem
+  const videoTrackClipitems = sequenceElem.querySelectorAll('video > track > clipitem');
+  for (const clipitem of Array.from(videoTrackClipitems)) {
+    const clipitemName = clipitem.querySelector('name');
+    if (clipitemName) {
+      clipitemName.textContent = newName;
+    }
+    
+    // 复制labels元素到video clipitem
+    copyLabelsToElement(clipitem, labelsElem);
+  }
+  
+  // 更新所有audio track中的clipitem
+  const audioTrackClipitems = sequenceElem.querySelectorAll('audio > track > clipitem');
+  for (const clipitem of Array.from(audioTrackClipitems)) {
+    // 复制labels元素到audio clipitem
+    copyLabelsToElement(clipitem, labelsElem);
+  }
+}
+
+/**
+ * 复制labels元素到目标元素
+ * 
+ * @param {Element} targetElem - 目标元素
+ * @param {Element | null} labelsElem - 标签元素
+ */
+function copyLabelsToElement(targetElem: Element, labelsElem: Element | null): void {
+  if (!labelsElem) return;
+  
+  // 检查目标元素是否已有labels元素
+  const targetLabelsElem = targetElem.querySelector('labels');
+  if (targetLabelsElem) {
+    // 如果存在，则替换内容
+    targetLabelsElem.innerHTML = labelsElem.innerHTML;
+  } else {
+    // 如果不存在，则复制并添加到目标元素中
+    const clonedLabels = labelsElem.cloneNode(true);
+    targetElem.appendChild(clonedLabels);
   }
 }
 
@@ -382,32 +533,55 @@ function updateDITInfo(xmlDoc: Document): void {
  * 7. 序列化输出XML
  */
 export async function processXML(file: File, config?: XMLProcessConfig): Promise<string> {
-    const finalConfig = { ...DEFAULT_CONFIG, ...config };
+  // 合并配置
+  const finalConfig = { ...DEFAULT_CONFIG, ...config };
   
-    const text = await file.text();
+  // 解析XML文件
+  const text = await file.text();
   const parser = new DOMParser();
   const xmlDoc = parser.parseFromString(text, 'text/xml');
   
-    if (xmlDoc.getElementsByTagName('parsererror').length > 0) {
+  // 验证XML有效性
+  if (xmlDoc.getElementsByTagName('parsererror').length > 0) {
     throw new XMLProcessError(
       XMLProcessErrorType.INVALID_XML,
       '无效的XML文件'
     );
   }
   
-    const clips = xmlDoc.getElementsByTagName('clip');
+  // 查找并修正所有独立的labels元素（不在clip或sequence内的）
+  const allLabelsElems = xmlDoc.getElementsByTagName('labels');
+  for (const labelsElem of Array.from(allLabelsElems)) {
+    fixLabelsSpelling(labelsElem);
+  }
+  
+  // 遍历处理所有clip元素
+  const clips = xmlDoc.getElementsByTagName('clip');
+  console.log("找到片段数量:", clips.length);
   
   for (const clip of Array.from(clips)) {
     try {
-            const elements = extractClipElements(clip);
-      if (!elements) continue;
+      console.log("处理片段:", clip.getAttribute('id'));
       
-            const processedData = processClipData(elements);
-      if (!processedData) continue;
+      // 提取必要元素
+      const elements = extractClipElements(clip);
+      if (!elements) {
+        console.log("无法提取必要元素，跳过此片段");
+        continue;
+      }
       
-            const newName = generateNewName(processedData, finalConfig);
+      // 处理剪辑数据
+      const processedData = processClipData(elements);
+      if (!processedData) {
+        console.log("处理数据失败，跳过此片段");
+        continue;
+      }
       
-            updateRelatedElements(clip, xmlDoc, newName);
+      // 生成新文件名
+      const newName = generateNewName(processedData, finalConfig);
+      
+      // 更新相关元素
+      updateRelatedElements(clip, xmlDoc, newName);
       
     } catch (error) {
       console.error('处理clip失败:', error);
@@ -415,11 +589,14 @@ export async function processXML(file: File, config?: XMLProcessConfig): Promise
     }
   }
   
-    updateResolution(xmlDoc, finalConfig);
+  // 更新分辨率设置
+  updateResolution(xmlDoc, finalConfig);
   
-    updateDITInfo(xmlDoc);
+  // 更新DIT信息
+  updateDITInfo(xmlDoc);
   
-    const serializer = new XMLSerializer();
+  // 序列化输出XML
+  const serializer = new XMLSerializer();
   return '<?xml version="1.0" encoding="UTF-8"?>\n' + 
          serializer.serializeToString(xmlDoc.documentElement);
 }
