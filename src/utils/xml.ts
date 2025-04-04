@@ -516,6 +516,37 @@ function updateDITInfo(xmlDoc: Document): void {
   });
 }
 
+
+/**
+ * 处理路径URL函数
+ * 
+ * @param {Document} xmlDoc - XML文档对象
+ * 
+ * 使用正则表达式找到并替换pathurl元素中的序列帧文件名：
+ * 1. 将匹配 \.\d+\.arx 的内容替换为 .arx
+ * 2. 将匹配 \.\d+\.ari 的内容替换为 .ari
+ * 3. 将匹配 _\d+\.dng 的内容替换为 .dng
+ */
+function processPathURLs(xmlDoc: Document): void {
+  // 获取所有pathurl元素
+  const pathurlElems = xmlDoc.getElementsByTagName('pathurl');
+  
+  // 遍历处理每个pathurl元素
+  Array.from(pathurlElems).forEach(elem => {
+    if (elem.textContent) {
+      // 使用正则表达式替换 \.\d+\.arx 为 .arx
+      let newValue = elem.textContent.replace(/\.\d+\.arx/g, '.arx');
+      // 使用正则表达式替换 \.\d+\.ari 为 .ari
+      newValue = newValue.replace(/\.\d+\.ari/g, '.ari');
+      // 使用正则表达式替换 _\d+\.dng 为 .dng
+      newValue = newValue.replace(/_\d+\.dng/g, '.dng');
+      elem.textContent = newValue;
+    }
+  });
+}
+
+
+
 /**
  * 主处理函数
  * 
@@ -594,6 +625,9 @@ export async function processXML(file: File, config?: XMLProcessConfig): Promise
   
   // 更新DIT信息
   updateDITInfo(xmlDoc);
+
+  // 更新PathURL信息
+  processPathURLs(xmlDoc);
   
   // 序列化输出XML
   const serializer = new XMLSerializer();
