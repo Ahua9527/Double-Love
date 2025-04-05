@@ -176,18 +176,18 @@ const DoubleLoveUploader = () => {
    * 渲染组件界面
    */
   return (
-        <div className="min-h-screen flex flex-col bg-light-bg dark:bg-dark-bg transition-all duration-500 ease-in-out">
-      {}
+    <div className="min-h-screen flex flex-col bg-light-bg dark:bg-dark-bg transition-all duration-500 ease-in-out">
+      {/* 主内容区域 */}
       <main className="flex-grow flex items-center justify-center p-6 pb-32 bg-light-bg dark:bg-dark-bg">
         <div className="w-full max-w-2xl bg-light-card dark:bg-dark-card rounded-2xl shadow-xl p-10 min-h-[600px] transition-all duration-500 ease-in-out">
         <h1 className="text-4xl font-chalkboard font-bold text-gray-900 dark:text-white mt-6 mb-12 text-center tracking-wide transition-colors duration-500 ease-in-out [filter:drop-shadow(2px_4px_6px_rgba(0,0,0,0.3))]">
           Double<span className="text-selected"> LOVE</span>
         </h1>
         
-        {}
+        {/* 主要内容区域 */}
         
         <div className="space-y-6">
-          {}
+          {/* 自定义前缀输入 */}
           <div>
             <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2 transition-colors duration-500 ease-in-out">
               自定义前缀
@@ -204,7 +204,7 @@ const DoubleLoveUploader = () => {
             />
           </div>
 
-          {}
+          {/* 分辨率设置 */}
           <div>
             <label className="block text-sm font-medium text-gray-700 dark:text-dark-placeholder mb-2 transition-colors duration-500 ease-in-out">
               分辨率
@@ -238,7 +238,7 @@ const DoubleLoveUploader = () => {
             </div>
           </div>
 
-          {}
+          {/* 文件上传区域 */}
           <div>
             <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
               上传 XML 文件
@@ -265,7 +265,6 @@ const DoubleLoveUploader = () => {
               />
               <div className="text-center">
                 <Upload className="mx-auto h-12 w-12 text-gray-400 dark:text-gray-500" />
-                {}
                 <p className="mt-1 text-sm text-blue-500 hover:text-blue-500">
                   点击或拖拽文件到此处
                 </p>
@@ -273,7 +272,7 @@ const DoubleLoveUploader = () => {
             </div>
           </div>
 
-          {}
+          {/* 文件列表 */}
           {files.length > 0 && (
             <div className="space-y-4">
               <div className="flex justify-between items-center">
@@ -311,7 +310,7 @@ const DoubleLoveUploader = () => {
             </div>
           )}
 
-          {}
+          {/* 处理进度 */}
           {processing && (
             <div className="space-y-2">
               <div className="text-sm text-gray-500 dark:text-gray-400">
@@ -326,7 +325,7 @@ const DoubleLoveUploader = () => {
             </div>
           )}
 
-          {}
+          {/* 处理按钮 */}
           {files.length > 0 && (
             <button
               onClick={handleProcess}
@@ -343,10 +342,17 @@ const DoubleLoveUploader = () => {
         </div>
         </div>
       </main>
-      {}
+      {/* 底部版权和版本信息 */}
       <footer className="fixed bottom-0 w-full bg-gradient-to-t from-light-bg/95 via-light-bg/80 to-light-bg/0 dark:from-dark-bg/95 dark:via-dark-bg/80 dark:to-dark-bg/0">
         <div className="container mx-auto px-4 py-4">
-          <div className="flex items-center justify-center space-x-6">
+          {/* 版本号显示 - 独立元素固定在右下角 */}
+          <div className="fixed bottom-4 right-4">
+            <p className="text-xs text-gray-400 dark:text-gray-500 opacity-60">
+              {getVersionDisplay()}
+            </p>
+          </div>
+          
+          <div className="flex items-center justify-center">
             <a
               href="https://github.com/Ahua9527/Double-Love"
               target="_blank"
@@ -360,13 +366,9 @@ const DoubleLoveUploader = () => {
           <p className="mt-2 text-xs text-center text-gray-500 dark:text-gray-400">
             Double LOVE © 2025 | Designed & Developed by 哆啦Ahua🌱
           </p>
-          {/* 版本号显示 */}
-          <p className="mt-1 text-xs text-center text-gray-400 dark:text-gray-500 opacity-60">
-            {getVersionDisplay()}
-          </p>
         </div>
       </footer>
-      {}
+      {/* 背景层 */}
       <div className="fixed inset-0 -z-10 bg-light-bg dark:bg-dark-bg"></div>
     </div>
     
