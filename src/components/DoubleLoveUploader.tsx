@@ -263,11 +263,31 @@ const DoubleLoveUploader = () => {
                 multiple
                 onChange={(e) => handleFiles(Array.from(e.target.files || []))}
               />
-              <div className="text-center">
-                <Upload className="mx-auto h-12 w-12 text-gray-400 dark:text-gray-500" />
-                <p className="mt-1 text-sm text-blue-500 hover:text-blue-500">
-                  点击或拖拽文件到此处
-                </p>
+              <div className="text-center space-y-2">
+                <Upload className={`mx-auto h-12 w-12 transition-all duration-300 ${
+                  isDragging 
+                    ? 'text-selected scale-110 animate-pulse' 
+                    : 'text-gray-400 dark:text-gray-500 hover:scale-105'
+                }`} />
+                <div className={`transition-all duration-300 ${
+                  isDragging 
+                    ? 'bg-selected/10 dark:bg-selected/20 rounded-lg py-2 px-4'
+                    : ''
+                }`}>
+                  <p className={`text-sm font-medium transition-colors ${
+                    isDragging 
+                      ? 'text-selected' 
+                      : 'text-blue-500 hover:text-blue-500'
+                  }`}>
+                    {isDragging ? '松开鼠标上传文件' : '点击或拖拽文件到此处'}
+                  </p>
+                  <p className={`text-xs transition-colors mt-1 ${
+                    isDragging 
+                      ? 'text-selected/80 dark:text-selected/70' 
+                      : 'text-gray-500 dark:text-gray-400'
+                  }`}>
+                  </p>
+                </div>
               </div>
             </div>
           </div>
@@ -289,21 +309,28 @@ const DoubleLoveUploader = () => {
               {files.map((file, index) => (
                 <div
                   key={index}
-                  className="flex items-center justify-between p-3 bg-white dark:bg-gray-700 
-                           border border-gray-200 dark:border-gray-600 rounded-lg shadow-sm"
+                  className="group flex items-center justify-between p-3 bg-white dark:bg-gray-700 
+                           border border-gray-200 dark:border-gray-600 rounded-lg shadow-sm
+                           hover:bg-gray-50 dark:hover:bg-gray-600 transition-colors"
                 >
-                  <div className="flex items-center space-x-3">
-                    <FileText className="w-5 h-5 text-gray-400 dark:text-gray-500" />
-                    <div>
-                      <p className="text-sm font-medium text-gray-700 dark:text-gray-300">{file.name}</p>
-                      <p className="text-xs text-gray-500 dark:text-gray-400">{formatFileSize(file.size)}</p>
+                  <div className="flex items-center space-x-3 min-w-0">
+                    <FileText className="flex-shrink-0 w-5 h-5 text-gray-400 dark:text-gray-500" />
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium text-gray-700 dark:text-gray-300 truncate">
+                        {file.name}
+                      </p>
+                      <p className="text-xs text-gray-500 dark:text-gray-400">
+                        {formatFileSize(file.size)}
+                      </p>
                     </div>
                   </div>
                   <button
                     onClick={() => removeFile(index)}
-                    className="p-1 hover:bg-gray-100 dark:hover:bg-gray-600 rounded-full"
+                    className="p-1 text-gray-400 dark:text-gray-500 hover:text-red-500 
+                              dark:hover:text-red-400 rounded-full transition-colors"
+                    title="移除文件"
                   >
-                    <X className="w-4 h-4 text-gray-500 dark:text-gray-400" />
+                    <X className="w-4 h-4" />
                   </button>
                 </div>
               ))}
@@ -316,11 +343,17 @@ const DoubleLoveUploader = () => {
               <div className="text-sm text-gray-500 dark:text-gray-400">
                 正在处理: {currentFile}
               </div>
-              <div className="w-full bg-gray-200 dark:bg-gray-600 rounded-full h-2">
+              <div className="w-full bg-gray-200 dark:bg-gray-600 rounded-full h-2.5 relative overflow-hidden">
                 <div 
-                  className="bg-selected h-2 rounded-full transition-all duration-300"
+                  className="bg-gradient-to-r from-blue-400 to-selected h-full rounded-full 
+                             transition-all duration-300 ease-out"
                   style={{ width: `${progress}%` }}
                 />
+                {/* <div className="absolute inset-0 flex items-center justify-center">
+                  <span className="text-[10px] font-medium text-white dark:text-gray-900">
+                    {Math.round(progress)}%
+                  </span>
+                </div> */}
               </div>
             </div>
           )}
@@ -336,7 +369,15 @@ const DoubleLoveUploader = () => {
                   : 'bg-selected hover:bg-blue-600 text-white shadow-md hover:shadow-lg'
                 }`}
             >
-              {processing ? '处理中...' : `处理 ${files.length} 个文件`}
+              {processing ? (
+                <span className="inline-flex items-center">
+                  <svg className="animate-spin -ml-1 mr-2 h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                  </svg>
+                  处理中...
+                </span>
+              ) : `处理 ${files.length} 个文件`}
             </button>
           )}
         </div>
