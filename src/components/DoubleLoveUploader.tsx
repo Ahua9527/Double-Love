@@ -1,5 +1,5 @@
 /**
- * 双LOVE文件上传处理组件
+ * Double LOVE文件上传处理组件
  * 
  * 主要功能：
  * 1. 支持拖拽和点击上传XML文件
@@ -13,7 +13,7 @@ import { Upload, FileText, X, Github } from 'lucide-react';
 import { processXML } from '../utils/xml';
 import { getVersionDisplay } from '../config/version';
 /**
- * 双LOVE文件上传组件
+ * Double LOVE文件上传组件
  * @returns {JSX.Element} 文件上传处理界面
  */
 const DoubleLoveUploader = () => {
@@ -176,18 +176,18 @@ const DoubleLoveUploader = () => {
    * 渲染组件界面
    */
   return (
-        <div className="min-h-screen flex flex-col bg-light-bg dark:bg-dark-bg transition-all duration-500 ease-in-out">
-      {}
+    <div className="min-h-screen flex flex-col bg-light-bg dark:bg-dark-bg transition-all duration-500 ease-in-out">
+      {/* 主内容区域 */}
       <main className="flex-grow flex items-center justify-center p-6 pb-32 bg-light-bg dark:bg-dark-bg">
         <div className="w-full max-w-2xl bg-light-card dark:bg-dark-card rounded-2xl shadow-xl p-10 min-h-[600px] transition-all duration-500 ease-in-out">
         <h1 className="text-4xl font-chalkboard font-bold text-gray-900 dark:text-white mt-6 mb-12 text-center tracking-wide transition-colors duration-500 ease-in-out [filter:drop-shadow(2px_4px_6px_rgba(0,0,0,0.3))]">
           Double<span className="text-selected"> LOVE</span>
         </h1>
         
-        {}
+        {/* 主要内容区域 */}
         
         <div className="space-y-6">
-          {}
+          {/* 自定义前缀输入 */}
           <div>
             <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2 transition-colors duration-500 ease-in-out">
               自定义前缀
@@ -204,7 +204,7 @@ const DoubleLoveUploader = () => {
             />
           </div>
 
-          {}
+          {/* 分辨率设置 */}
           <div>
             <label className="block text-sm font-medium text-gray-700 dark:text-dark-placeholder mb-2 transition-colors duration-500 ease-in-out">
               分辨率
@@ -238,7 +238,7 @@ const DoubleLoveUploader = () => {
             </div>
           </div>
 
-          {}
+          {/* 文件上传区域 */}
           <div>
             <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
               上传 XML 文件
@@ -263,17 +263,36 @@ const DoubleLoveUploader = () => {
                 multiple
                 onChange={(e) => handleFiles(Array.from(e.target.files || []))}
               />
-              <div className="text-center">
-                <Upload className="mx-auto h-12 w-12 text-gray-400 dark:text-gray-500" />
-                {}
-                <p className="mt-1 text-sm text-blue-500 hover:text-blue-500">
-                  点击或拖拽文件到此处
-                </p>
+              <div className="text-center space-y-2">
+                <Upload className={`mx-auto h-12 w-12 transition-all duration-300 ${
+                  isDragging 
+                    ? 'text-selected scale-110 animate-pulse' 
+                    : 'text-gray-400 dark:text-gray-500 hover:scale-105'
+                }`} />
+                <div className={`transition-all duration-300 ${
+                  isDragging 
+                    ? 'bg-selected/10 dark:bg-selected/20 rounded-lg py-2 px-4'
+                    : ''
+                }`}>
+                  <p className={`text-sm font-medium transition-colors ${
+                    isDragging 
+                      ? 'text-selected' 
+                      : 'text-blue-500 hover:text-blue-500'
+                  }`}>
+                    {isDragging ? '松开鼠标上传文件' : '点击或拖拽文件到此处'}
+                  </p>
+                  <p className={`text-xs transition-colors mt-1 ${
+                    isDragging 
+                      ? 'text-selected/80 dark:text-selected/70' 
+                      : 'text-gray-500 dark:text-gray-400'
+                  }`}>
+                  </p>
+                </div>
               </div>
             </div>
           </div>
 
-          {}
+          {/* 文件列表 */}
           {files.length > 0 && (
             <div className="space-y-4">
               <div className="flex justify-between items-center">
@@ -290,43 +309,56 @@ const DoubleLoveUploader = () => {
               {files.map((file, index) => (
                 <div
                   key={index}
-                  className="flex items-center justify-between p-3 bg-white dark:bg-gray-700 
-                           border border-gray-200 dark:border-gray-600 rounded-lg shadow-sm"
+                  className="group flex items-center justify-between p-3 bg-white dark:bg-gray-700 
+                           border border-gray-200 dark:border-gray-600 rounded-lg shadow-sm
+                           hover:bg-gray-50 dark:hover:bg-gray-600 transition-colors"
                 >
-                  <div className="flex items-center space-x-3">
-                    <FileText className="w-5 h-5 text-gray-400 dark:text-gray-500" />
-                    <div>
-                      <p className="text-sm font-medium text-gray-700 dark:text-gray-300">{file.name}</p>
-                      <p className="text-xs text-gray-500 dark:text-gray-400">{formatFileSize(file.size)}</p>
+                  <div className="flex items-center space-x-3 min-w-0">
+                    <FileText className="flex-shrink-0 w-5 h-5 text-gray-400 dark:text-gray-500" />
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium text-gray-700 dark:text-gray-300 truncate">
+                        {file.name}
+                      </p>
+                      <p className="text-xs text-gray-500 dark:text-gray-400">
+                        {formatFileSize(file.size)}
+                      </p>
                     </div>
                   </div>
                   <button
                     onClick={() => removeFile(index)}
-                    className="p-1 hover:bg-gray-100 dark:hover:bg-gray-600 rounded-full"
+                    className="p-1 text-gray-400 dark:text-gray-500 hover:text-red-500 
+                              dark:hover:text-red-400 rounded-full transition-colors"
+                    title="移除文件"
                   >
-                    <X className="w-4 h-4 text-gray-500 dark:text-gray-400" />
+                    <X className="w-4 h-4" />
                   </button>
                 </div>
               ))}
             </div>
           )}
 
-          {}
+          {/* 处理进度 */}
           {processing && (
             <div className="space-y-2">
               <div className="text-sm text-gray-500 dark:text-gray-400">
                 正在处理: {currentFile}
               </div>
-              <div className="w-full bg-gray-200 dark:bg-gray-600 rounded-full h-2">
+              <div className="w-full bg-gray-200 dark:bg-gray-600 rounded-full h-2.5 relative overflow-hidden">
                 <div 
-                  className="bg-selected h-2 rounded-full transition-all duration-300"
+                  className="bg-gradient-to-r from-blue-400 to-selected h-full rounded-full 
+                             transition-all duration-300 ease-out"
                   style={{ width: `${progress}%` }}
                 />
+                {/* <div className="absolute inset-0 flex items-center justify-center">
+                  <span className="text-[10px] font-medium text-white dark:text-gray-900">
+                    {Math.round(progress)}%
+                  </span>
+                </div> */}
               </div>
             </div>
           )}
 
-          {}
+          {/* 处理按钮 */}
           {files.length > 0 && (
             <button
               onClick={handleProcess}
@@ -337,16 +369,31 @@ const DoubleLoveUploader = () => {
                   : 'bg-selected hover:bg-blue-600 text-white shadow-md hover:shadow-lg'
                 }`}
             >
-              {processing ? '处理中...' : `处理 ${files.length} 个文件`}
+              {processing ? (
+                <span className="inline-flex items-center">
+                  <svg className="animate-spin -ml-1 mr-2 h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                  </svg>
+                  处理中...
+                </span>
+              ) : `处理 ${files.length} 个文件`}
             </button>
           )}
         </div>
         </div>
       </main>
-      {}
+      {/* 底部版权和版本信息 */}
       <footer className="fixed bottom-0 w-full bg-gradient-to-t from-light-bg/95 via-light-bg/80 to-light-bg/0 dark:from-dark-bg/95 dark:via-dark-bg/80 dark:to-dark-bg/0">
         <div className="container mx-auto px-4 py-4">
-          <div className="flex items-center justify-center space-x-6">
+          {/* 版本号显示 - 独立元素固定在右下角 */}
+          <div className="fixed bottom-4 right-4">
+            <p className="text-xs text-gray-400 dark:text-gray-500 opacity-60">
+              {getVersionDisplay()}
+            </p>
+          </div>
+          
+          <div className="flex items-center justify-center">
             <a
               href="https://github.com/Ahua9527/Double-Love"
               target="_blank"
@@ -360,13 +407,9 @@ const DoubleLoveUploader = () => {
           <p className="mt-2 text-xs text-center text-gray-500 dark:text-gray-400">
             Double LOVE © 2025 | Designed & Developed by 哆啦Ahua🌱
           </p>
-          {/* 版本号显示 */}
-          <p className="mt-1 text-xs text-center text-gray-400 dark:text-gray-500 opacity-60">
-            {getVersionDisplay()}
-          </p>
         </div>
       </footer>
-      {}
+      {/* 背景层 */}
       <div className="fixed inset-0 -z-10 bg-light-bg dark:bg-dark-bg"></div>
     </div>
     
