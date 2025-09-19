@@ -19,5 +19,5 @@ const getEnvVar = (key: string, fallback: string): string => {
   
   // 格式化显示的版本信息
   export const getVersionDisplay = (): string => {
-    return `v${APP_VERSION}`;
+    return `Version ${APP_VERSION}`;
   };
