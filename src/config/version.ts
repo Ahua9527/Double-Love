@@ -4,7 +4,7 @@
 // 通过类型断言来避免潜在的类型错误
 const getEnvVar = (key: string, fallback: string): string => {
     try {
-      const value = (import.meta.env as any)[key];
+      const value = (import.meta.env as Record<string, string | undefined>)[key];
       return value !== undefined ? value : fallback;
     } catch {
       return fallback;
