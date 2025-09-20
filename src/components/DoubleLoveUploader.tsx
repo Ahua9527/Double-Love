@@ -10,7 +10,7 @@
  */
 import { useState, useRef } from 'react';
 import { Upload, FileText, X, Github } from 'lucide-react';
-import { processXML, parseCSVForEpisodes } from '../utils/xml';
+import { processXML, parseCSVForSeasonEpisode } from '../utils/xml';
 import { getVersionDisplay } from '../config/version';
 /**
  * Double LOVE文件上传组件
@@ -145,31 +145,42 @@ const DoubleLoveUploader = () => {
     setProcessing(true);
     setProgress(0);
     
-    // 解析CSV文件获取Episode映射
+    // 解析CSV文件获取Season和Episode映射
+    let csvSeasonMap: Map<string, string> | undefined;
     let csvEpisodeMap: Map<string, string> | undefined;
     if (csvFiles.length > 0) {
       try {
         // 使用第一个CSV文件
         const csvContent = await csvFiles[0].text();
-        csvEpisodeMap = parseCSVForEpisodes(csvContent);
+        const { seasonMap, episodeMap } = parseCSVForSeasonEpisode(csvContent);
+        csvSeasonMap = seasonMap;
+        csvEpisodeMap = episodeMap;
+        console.log('成功解析CSV文件，获得Season映射:', csvSeasonMap.size, '条记录');
         console.log('成功解析CSV文件，获得Episode映射:', csvEpisodeMap.size, '条记录');
       } catch (error) {
         console.error('解析CSV文件失败:', error);
-        alert('CSV文件解析失败，将不使用Episode命名');
+        alert('CSV文件解析失败，将不使用Season/Episode命名');
       }
     }
     
     try {
       for (let i = 0; i < files.length; i++) {
         const file = files[i];
-        const fileDisplayName = csvEpisodeMap && csvEpisodeMap.size > 0 ? 
-          `${file.name} (使用Episode命名)` : file.name;
+        // 动态显示命名模式
+        let namingMode = '';
+        if (csvSeasonMap && csvSeasonMap.size > 0 && csvEpisodeMap && csvEpisodeMap.size > 0) {
+          namingMode = '（使用Season+Episode命名）';
+        } else if (csvEpisodeMap && csvEpisodeMap.size > 0) {
+          namingMode = '（使用Episode命名）';
+        }
+        const fileDisplayName = `${file.name} ${namingMode}`.trim();
         setCurrentFile(fileDisplayName);
         setProgress((i / files.length) * 100);
 
         const processedXML = await processXML(file, {
           width: parseInt(width),
           height: parseInt(height),
+          csvSeasonMap,
           csvEpisodeMap,
           onProgress: (percent) => {
             setProgress(((i + percent / 100) / files.length) * 100);
@@ -401,7 +412,7 @@ const DoubleLoveUploader = () => {
               </div>
               {csvFiles.length > 0 && (
                 <div className="text-xs text-green-500 dark:text-green-400">
-                  ✓ 使用 CSV 数据进行 Episode 命名
+                  ✓ 使用 CSV 数据进行 Season/Episode 命名
                 </div>
               )}
               <div className="w-full bg-gray-200 dark:bg-gray-600 rounded-full h-2.5 relative overflow-hidden">

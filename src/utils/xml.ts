@@ -13,6 +13,7 @@ interface XMLProcessConfig {
        
   onProgress?: (percent: number) => void;
   csvEpisodeMap?: Map<string, string>; // 可选的Episode映射
+  csvSeasonMap?: Map<string, string>; // 可选的Season映射
 }
 
 /**
@@ -321,7 +322,77 @@ function processClipData(elements: ClipElements): ProcessedClipData | null {
 }
 
 /**
- * 解析CSV文件获取Episode映射
+ * 解析CSV文件获取Season和Episode映射
+ * 
+ * @param {string} csvContent - CSV文件内容
+ * @returns {Object} 包含Season和Episode映射的对象
+ */
+export function parseCSVForSeasonEpisode(csvContent: string): {
+  seasonMap: Map<string, string>;
+  episodeMap: Map<string, string>;
+} {
+  const seasonMap = new Map<string, string>();
+  const episodeMap = new Map<string, string>();
+  
+  try {
+    const lines = csvContent.split('\n');
+    if (lines.length < 2) return { seasonMap, episodeMap };
+    
+    // 解析CSV头部，找到Name、Season和Episode列的索引
+    const headers = lines[0].split(',').map(h => h.trim().replace(/"/g, ''));
+    const nameIndex = headers.findIndex(h => h.toLowerCase() === 'name');
+    const seasonIndex = headers.findIndex(h => h.toLowerCase() === 'season');
+    const episodeIndex = headers.findIndex(h => h.toLowerCase() === 'episode');
+    
+    if (nameIndex === -1) {
+      console.warn('CSV文件中未找到Name列');
+      return { seasonMap, episodeMap };
+    }
+    
+    // 解析数据行
+    for (let i = 1; i < lines.length; i++) {
+      const line = lines[i].trim();
+      if (!line) continue;
+      
+      const columns = line.split(',').map(c => c.trim().replace(/"/g, ''));
+      
+      if (columns.length > nameIndex) {
+        const fileName = columns[nameIndex];
+        
+        if (fileName && fileName !== 'Name') {
+          // 提取基础文件名（去除扩展名）
+          const baseName = fileName.replace(/\.(mxf|xml|ale|bin)$/i, '');
+          
+          // 处理Season数据
+          if (seasonIndex !== -1 && columns.length > seasonIndex) {
+            const season = columns[seasonIndex];
+            if (season) {
+              seasonMap.set(baseName, season.padStart(2, '0'));
+            }
+          }
+          
+          // 处理Episode数据
+          if (episodeIndex !== -1 && columns.length > episodeIndex) {
+            const episode = columns[episodeIndex];
+            if (episode) {
+              episodeMap.set(baseName, episode.padStart(3, '0'));
+            }
+          }
+        }
+      }
+    }
+    
+    console.log('解析CSV得到Season映射:', Object.fromEntries(seasonMap));
+    console.log('解析CSV得到Episode映射:', Object.fromEntries(episodeMap));
+  } catch (error) {
+    console.error('解析CSV文件失败:', error);
+  }
+  
+  return { seasonMap, episodeMap };
+}
+
+/**
+ * 解析CSV文件获取Episode映射（保持向后兼容）
  * 
  * @param {string} csvContent - CSV文件内容
  * @returns {Map<string, string>} 文件名到Episode的映射
@@ -379,6 +450,7 @@ export function parseCSVForEpisodes(csvContent: string): Map<string, string> {
  * @returns {string} 生成的文件名
  * 
  * 替换规则：
+ * {season} -> 季数编号（如果存在）
  * {episode} -> 集数编号（如果存在）
  * {scene} -> 场景编号
  * {shot} -> 镜头编号
@@ -389,19 +461,28 @@ export function parseCSVForEpisodes(csvContent: string): Map<string, string> {
 function generateNewName(data: ProcessedClipData, config: XMLProcessConfig, originalFileName: string): string {
   console.log("生成文件名, 评级值:", data.rating);
   
-  // 检查是否有Episode数据
+  // 检查是否有Season和Episode数据
+  const season = config.csvSeasonMap?.get(originalFileName);
   const episode = config.csvEpisodeMap?.get(originalFileName);
   
   // 动态选择命名格式
   let format = config.format || DEFAULT_CONFIG.format;
-  if (episode) {
-    // 有Episode时，在format前加上{episode}_
+  
+  // 根据数据可用性动态构建格式
+  if (season && episode) {
+    // 有Season和Episode时
+    if (!format.startsWith('{season}')) {
+      format = '{season}_{episode}_' + format;
+    }
+  } else if (episode) {
+    // 仅有Episode时
     if (!format.startsWith('{episode}')) {
       format = '{episode}_' + format;
     }
   }
   
   let newName = format
+    .replace('{season}', season || '') // 如果没有season，替换为空
     .replace('{episode}', episode || '') // 如果没有episode，替换为空
     .replace('{scene}', data.sceneFormatted)
     .replace('{shot}', data.shotFormatted)
@@ -409,7 +490,7 @@ function generateNewName(data: ProcessedClipData, config: XMLProcessConfig, orig
     .replace('{camera}', data.cameraId)
     .replace('{Rating}', data.rating ? `_${data.rating}` : '');
   
-  // 清理开头的下划线（当没有episode时可能出现）
+  // 清理开头的下划线（当没有season/episode时可能出现）
   newName = newName.replace(/^_+/, '');
   
   console.log("替换{Rating}后:", newName);
