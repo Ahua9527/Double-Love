@@ -48,10 +48,9 @@ Example:
 
 The processed clip names follow this format:
 ```
-{project_prefix}{scene}_{shot}_{take}{camera}{rating}
+{scene}_{shot}_{take}{camera}{rating}
 ```
 
-- `prefix`: Custom prefix (optional)
 - `scene`: Scene number (3 digits, e.g., 001)
 - `shot`: Shot number (2 digits, e.g., 01)
 - `take`: Take number (2 digits, e.g., 01)
@@ -69,11 +68,7 @@ The processed clip names follow this format:
 
 #### Custom Prefix Examples
 
-1. With prefix "PROJECT_A_":
-   - Input file: `A304C007_250123G3`
-   - Output file: `PROJECT_A_004_01_07a_kp`
-
-2. Without prefix:
+Example:
    - Input file: `A304C007_250123G3`
    - Output file: `004_01_07a_kp`
 

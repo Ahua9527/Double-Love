@@ -18,7 +18,6 @@ import { getVersionDisplay } from '../config/version';
  */
 const DoubleLoveUploader = () => {
   // 组件状态管理
-  const [prefix, setPrefix] = useState(''); // 文件前缀
   const [width, setWidth] = useState('1920'); // 默认宽度
   const [height, setHeight] = useState('1080'); // 默认高度
   const [files, setFiles] = useState<File[]>([]); // 已上传文件列表
@@ -169,7 +168,6 @@ const DoubleLoveUploader = () => {
         setProgress((i / files.length) * 100);
 
         const processedXML = await processXML(file, {
-          prefix,
           width: parseInt(width),
           height: parseInt(height),
           csvEpisodeMap,
@@ -221,22 +219,6 @@ const DoubleLoveUploader = () => {
         {/* 主要内容区域 */}
         
         <div className="space-y-6">
-          {/* 自定义前缀输入 */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2 transition-colors duration-500 ease-in-out">
-              自定义前缀
-            </label>
-            <input
-              type="text"
-              placeholder="输入自定义前缀（可选）"
-              value={prefix}
-              onChange={(e) => setPrefix(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 
-                         bg-light-input dark:bg-dark-input text-gray-900 dark:text-white 
-                         rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent
-                         transition-all duration-500 ease-in-out"
-            />
-          </div>
 
           {/* 分辨率设置 */}
           <div>
@@ -314,13 +296,6 @@ const DoubleLoveUploader = () => {
                       : 'text-blue-500 hover:text-blue-500'
                   }`}>
                     {isDragging ? '松开鼠标上传文件' : '点击或拖拽文件到此处'}
-                  </p>
-                  <p className={`text-xs transition-colors mt-1 ${
-                    isDragging 
-                      ? 'text-selected/80 dark:text-selected/70' 
-                      : 'text-gray-500 dark:text-gray-400'
-                  }`}>
-                    支持 XML 和 CSV 文件，最大 50MB
                   </p>
                 </div>
               </div>

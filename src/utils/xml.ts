@@ -4,14 +4,13 @@
  * @property {number} [width] - 输出视频宽度，默认1920
  * @property {number} [height] - 输出视频高度，默认1080
  * @property {string} [format] - 文件名格式模板，支持{scene}、{shot}等占位符
- * @property {string} [prefix] - 文件名前缀
  * @property {Function} [onProgress] - 进度回调函数
  */
 interface XMLProcessConfig {
   width?: number;        
   height?: number;       
   format?: string;       
-  prefix?: string;       
+       
   onProgress?: (percent: number) => void;
   csvEpisodeMap?: Map<string, string>; // 可选的Episode映射
 }
@@ -102,7 +101,7 @@ const DEFAULT_CONFIG = {
   width: 1920,                
   height: 1080,               
   format: '{scene}_{shot}_{take}{camera}{Rating}',   
-  prefix: '',                 
+                 
   onProgress: () => {}
 } as const;
 
@@ -415,7 +414,7 @@ function generateNewName(data: ProcessedClipData, config: XMLProcessConfig, orig
   
   console.log("替换{Rating}后:", newName);
     
-  newName = (config.prefix || '') + cleanupFileName(newName);
+  newName = cleanupFileName(newName);
   console.log("最终文件名:", newName);
   
   return newName;
