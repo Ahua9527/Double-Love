@@ -123,19 +123,19 @@ cd Double-Love
 2. 安装依赖
 
 ```bash
-npm install
+pnpm install
 ```
 
 3. 本地开发
 
 ```bash
-npm run dev
+pnpm dev
 ```
 
 4. 构建项目
 
 ```bash
-npm run build
+pnpm build
 ```
 
 ## 🔒 安全说明

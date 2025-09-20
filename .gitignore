@@ -4,11 +4,9 @@
 /node_modules
 /.pnp
 .pnp.*
-.yarn/*
-!.yarn/patches
-!.yarn/plugins
-!.yarn/releases
-!.yarn/versions
+
+# pnpm
+.pnpm-store/
 
 # testing
 /coverage
@@ -32,6 +30,10 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
+# Package manager lock files (keep pnpm-lock.yaml)
+package-lock.json
+yarn.lock
+
 # env files (can opt-in for committing if needed)
 .env*
 
@@ -42,6 +44,6 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 .playwright-mcp/
-D_0038_1D0U.xml
-D_0039_1D0U.csv
+*.xml
+*.csv
 CLAUDE.md
