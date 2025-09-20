@@ -124,19 +124,19 @@ cd Double-Love
 2. Install dependencies
 
 ```bash
-npm install
+pnpm install
 ```
 
 3. Development
 
 ```bash
-npm run dev
+pnpm dev
 ```
 
 4. Build
 
 ```bash
-npm run build
+pnpm build
 ```
 
 ## 🔒 Security Notes
