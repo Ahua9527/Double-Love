@@ -67,7 +67,7 @@ E{episode}_{scene}_{shot}_{take}{camera}_{rating}
 
 #### Parameter Descriptions
 - `season`: Season number (2 digits, e.g., 01)
-- `episode`: Episode number (3 digits, e.g., 044)
+- `episode`: Episode number (2 digits, e.g., 44)
 - `scene`: Scene number (3 digits, e.g., 026)
 - `shot`: Shot number (2 digits, e.g., 04)
 - `take`: Take number (2 digits, e.g., 01)
@@ -87,11 +87,11 @@ E{episode}_{scene}_{shot}_{take}{camera}_{rating}
 
 1. **With Season + Episode CSV data**:
    - Input file: `D_0039C001_240808_050950_a1D0U` (Season: 1, Episode: 44)
-   - Output file: `01_044_026_04_01_d`
+   - Output file: `01_44_026_04_01_d`
 
 2. **Episode only CSV data**:
    - Input file: `D_0039C001_240808_050950_a1D0U` (Episode: 44)
-   - Output file: `E044_026_04_01_d`
+   - Output file: `E44_026_04_01_d`
 
 3. **No CSV data (traditional)**:
    - Input file: `D_0039C001_240808_050950_a1D0U`
