@@ -268,7 +268,7 @@ const DoubleLoveUploader = () => {
           {/* 文件上传区域 */}
           <div>
             <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-              上传 XML 文件
+              上传 XML和CSV文件
             </label>
             <div
               className={`border-2 border-dashed rounded-xl p-8 transition-all cursor-pointer

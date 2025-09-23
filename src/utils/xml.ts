@@ -375,7 +375,7 @@ export function parseCSVForSeasonEpisode(csvContent: string): {
           if (episodeIndex !== -1 && columns.length > episodeIndex) {
             const episode = columns[episodeIndex];
             if (episode) {
-              episodeMap.set(baseName, episode.padStart(3, '0'));
+              episodeMap.set(baseName, episode.padStart(2, '0'));
             }
           }
         }
@@ -428,7 +428,7 @@ export function parseCSVForEpisodes(csvContent: string): Map<string, string> {
         if (fileName && episode && fileName !== 'Name') {
           // 提取基础文件名（去除扩展名）
           const baseName = fileName.replace(/\.(mxf|xml|ale|bin)$/i, '');
-          episodeMap.set(baseName, episode.padStart(3, '0'));
+          episodeMap.set(baseName, episode.padStart(2, '0'));
         }
       }
     }
