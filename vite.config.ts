@@ -149,11 +149,11 @@ export default defineConfig({
   },
   // 开发服务器配置
   server: {
-    // HTTPS配置
-    https: {
-      key: fs.readFileSync('localhost-key.pem'), // SSL私钥
-      cert: fs.readFileSync('localhost.pem'), // SSL证书
-    },
+    // 暂时关闭HTTPS配置用于测试
+    // https: {
+    //   key: fs.readFileSync('localhost-key.pem'), // SSL私钥
+    //   cert: fs.readFileSync('localhost.pem'), // SSL证书
+    // },
     
     // 安全响应头配置
     headers: {
