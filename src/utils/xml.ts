@@ -6,7 +6,7 @@
  * @property {string} [format] - 文件名格式模板，支持{scene}、{shot}等占位符
  * @property {Function} [onProgress] - 进度回调函数
  */
-interface XMLProcessConfig {
+export interface XMLProcessConfig {
   width?: number;        
   height?: number;       
   format?: string;       
@@ -16,40 +16,36 @@ interface XMLProcessConfig {
   csvSeasonMap?: Map<string, string>; // 可选的Season映射
 }
 
-/**
- * XML处理错误类型枚举
- * 
- * @enum {string}
- * @property {string} INVALID_XML - XML文件格式无效
- * @property {string} MISSING_REQUIRED_ELEMENTS - 缺少必要元素
- * @property {string} INVALID_FORMAT - 数据格式不符合要求
- */
-enum XMLProcessErrorType {
-  INVALID_XML = 'INVALID_XML',                             
-  MISSING_REQUIRED_ELEMENTS = 'MISSING_REQUIRED_ELEMENTS',   
-  INVALID_FORMAT = 'INVALID_FORMAT'                      
+export type XMLProcessStatus = 'success' | 'partial' | 'failed';
+export type XMLDiagnosticLevel = 'error' | 'warning' | 'info';
+
+export interface XMLDiagnostic {
+  level: XMLDiagnosticLevel;
+  code: string;
+  message: string;
+  clipId?: string;
+  blocksDownload?: boolean;
 }
 
-// CSV文件数据接口 - 备用，当前使用Map代替
-// interface CSVEpisodeData {
-//   fileName: string;
-//   episode: string;
-// }
+export interface XMLProcessCounts {
+  total: number;
+  processed: number;
+  skipped: number;
+  failed: number;
+  csvUnmatched: number;
+}
 
-/**
- * 自定义XML处理错误类
- * 
- * @extends Error
- * @property {XMLProcessErrorType} type - 错误类型
- */
-class XMLProcessError extends Error {
-  constructor(
-    public type: XMLProcessErrorType,
-    message: string
-  ) {
-    super(message);
-    this.name = 'XMLProcessError';
-  }
+export interface XMLProcessResult {
+  status: XMLProcessStatus;
+  counts: XMLProcessCounts;
+  diagnostics: XMLDiagnostic[];
+  xml?: string;
+}
+
+export interface CSVParseResult {
+  seasonMap: Map<string, string>;
+  episodeMap: Map<string, string>;
+  diagnostics: XMLDiagnostic[];
 }
 
 /**
@@ -181,16 +177,13 @@ function cleanupFileName(name: string): string {
  * - 特殊处理: "keep" 或 "kp" 统一返回 "kp"
  * - 其他任何内容都提取并转换为小写
  */
-function getRatingFromLabels(labelsElement: Element | null): string {
+export function getRatingFromLabels(labelsElement: Element | null): string {
   // 如果标签元素不存在，返回空字符串
   if (!labelsElement) return "";
-  
+
   // 获取label元素的文本内容
   const labelElem = labelsElement.querySelector('label');
   const labelText = labelElem?.textContent?.trim() || "";
-  
-  // 调试输出
-  console.log("label内容:", labelText);
   
   // 转换为小写进行比较
   const lowerLabelText = labelText.toLowerCase();
@@ -205,6 +198,11 @@ function getRatingFromLabels(labelsElement: Element | null): string {
     return "kp";
   }
   
+  // 特殊处理: "circle" 统一返回 "ok"（对齐文档声明的评级映射）
+  if (lowerLabelText === "circle") {
+    return "ok";
+  }
+
   // 其他任何内容都提取并转换为小写
   return lowerLabelText;
 }
@@ -258,8 +256,6 @@ function extractClipElements(clip: Element): ClipElements | null {
   const mastercomment2 = comments?.querySelector('mastercomment2');
   const labels = clip.querySelector('labels'); // 直接从clip中提取labels
   
-  console.log("从clip中提取的labels元素:", labels);
-  
   if (!logginginfo || !scene || !shottake || !filmdata || !comments || !mastercomment2) {
     return null;
   }
@@ -279,7 +275,7 @@ function extractClipElements(clip: Element): ClipElements | null {
  * 3. 提取摄影机标识
  * 4. 从labels元素提取拍摄评级
  */
-function processClipData(elements: ClipElements): ProcessedClipData | null {
+export function processClipData(elements: ClipElements): ProcessedClipData | null {
   const { scene, shottake, filmdata, labels } = elements;
   
   const sceneValue = scene.textContent || "";
@@ -291,26 +287,24 @@ function processClipData(elements: ClipElements): ProcessedClipData | null {
   }
   
   // 验证镜头-拍摄格式
-  const shotTakeParts = shottakeValue.split('-');
-  if (shotTakeParts.length !== 2 || 
-      !shotTakeParts[0].trim() || 
-      !shotTakeParts[1].trim()) {
+  const normalizedShotTake = shottakeValue.replace(/\s/g, '');
+  if (!/^\d+-\d+$/.test(normalizedShotTake)) {
     return null;
   }
   
   // 格式化数据
   const sceneFormatted = formatSceneNumber(sceneValue);
-  const [shotFormatted, takeFormatted] = formatShotTake(shottakeValue);
+  const [shotFormatted, takeFormatted] = formatShotTake(normalizedShotTake);
   
   // 提取摄影机标识
   const cameraroll = filmdata.querySelector('cameraroll');
   if (!cameraroll?.textContent) return null;
   
   const cameraId = getCameraIdentifier(cameraroll.textContent);
+  if (!cameraId) return null;
   
   // 提取评级信息 - 使用提取的labels元素
   const rating = getRatingFromLabels(labels);
-  console.log("提取的评级:", rating);
   
   return {
     sceneFormatted,
@@ -322,123 +316,251 @@ function processClipData(elements: ClipElements): ProcessedClipData | null {
 }
 
 /**
- * 解析CSV文件获取Season和Episode映射
- * 
- * @param {string} csvContent - CSV文件内容
- * @returns {Object} 包含Season和Episode映射的对象
+ * 将 CSV Name、XML clip id 和文件名转换为同一个匹配键。
+ * 匹配只使用 basename，并统一大小写和常见媒体扩展名。
  */
-export function parseCSVForSeasonEpisode(csvContent: string): {
-  seasonMap: Map<string, string>;
-  episodeMap: Map<string, string>;
-} {
-  const seasonMap = new Map<string, string>();
-  const episodeMap = new Map<string, string>();
-  
-  try {
-    const lines = csvContent.split('\n');
-    if (lines.length < 2) return { seasonMap, episodeMap };
-    
-    // 解析CSV头部，找到Name、Season和Episode列的索引
-    const headers = lines[0].split(',').map(h => h.trim().replace(/"/g, ''));
-    const nameIndex = headers.findIndex(h => h.toLowerCase() === 'name');
-    const seasonIndex = headers.findIndex(h => h.toLowerCase() === 'season');
-    const episodeIndex = headers.findIndex(h => h.toLowerCase() === 'episode');
-    
-    if (nameIndex === -1) {
-      console.warn('CSV文件中未找到Name列');
-      return { seasonMap, episodeMap };
-    }
-    
-    // 解析数据行
-    for (let i = 1; i < lines.length; i++) {
-      const line = lines[i].trim();
-      if (!line) continue;
-      
-      const columns = line.split(',').map(c => c.trim().replace(/"/g, ''));
-      
-      if (columns.length > nameIndex) {
-        const fileName = columns[nameIndex];
-        
-        if (fileName && fileName !== 'Name') {
-          // 提取基础文件名（去除扩展名）
-          const baseName = fileName.replace(/\.(mxf|xml|ale|bin)$/i, '');
-          
-          // 处理Season数据
-          if (seasonIndex !== -1 && columns.length > seasonIndex) {
-            const season = columns[seasonIndex];
-            if (season) {
-              seasonMap.set(baseName, season.padStart(2, '0'));
-            }
-          }
-          
-          // 处理Episode数据
-          if (episodeIndex !== -1 && columns.length > episodeIndex) {
-            const episode = columns[episodeIndex];
-            if (episode) {
-              episodeMap.set(baseName, episode.padStart(2, '0'));
-            }
-          }
-        }
+export function normalizeMatchKey(value: string): string {
+  const basename = value
+    .replace(/^\uFEFF/, '')
+    .trim()
+    .split(/[\\/]/)
+    .pop() || '';
+
+  return basename
+    .replace(/\.(mxf|mov|mp4|m4v|wav|bwf|aif|aiff|ari|arx|dng|r3d|braw|crm|xml|ale|bin)$/i, '')
+    .trim()
+    .toLocaleLowerCase();
+}
+
+function parseCSVRows(csvContent: string): { rows: string[][]; error?: string } {
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let field = '';
+  let quoted = false;
+  const content = csvContent.replace(/^\uFEFF/, '');
+
+  for (let index = 0; index < content.length; index += 1) {
+    const character = content[index];
+
+    if (character === '"') {
+      if (quoted && content[index + 1] === '"') {
+        field += '"';
+        index += 1;
+      } else {
+        quoted = !quoted;
       }
+      continue;
     }
-    
-    console.log('解析CSV得到Season映射:', Object.fromEntries(seasonMap));
-    console.log('解析CSV得到Episode映射:', Object.fromEntries(episodeMap));
-  } catch (error) {
-    console.error('解析CSV文件失败:', error);
+
+    if (character === ',' && !quoted) {
+      row.push(field);
+      field = '';
+      continue;
+    }
+
+    if ((character === '\n' || character === '\r') && !quoted) {
+      row.push(field);
+      field = '';
+      if (row.some(value => value.trim() !== '')) {
+        rows.push(row);
+      }
+      row = [];
+      if (character === '\r' && content[index + 1] === '\n') {
+        index += 1;
+      }
+      continue;
+    }
+
+    field += character;
   }
-  
-  return { seasonMap, episodeMap };
+
+  if (quoted) {
+    return { rows, error: 'CSV_QUOTED_FIELD_UNTERMINATED' };
+  }
+
+  if (field !== '' || row.length > 0) {
+    row.push(field);
+    if (row.some(value => value.trim() !== '')) {
+      rows.push(row);
+    }
+  }
+
+  return { rows };
+}
+
+function normalizeHeader(value: string): string {
+  return value.replace(/^\uFEFF/, '').trim().toLocaleLowerCase();
+}
+
+function normalizePositiveCode(value: string): string | null {
+  const trimmed = value.trim();
+  if (!/^\d+$/.test(trimmed)) return null;
+
+  const numericValue = Number(trimmed);
+  if (!Number.isSafeInteger(numericValue) || numericValue < 1 || numericValue > 99) return null;
+
+  return String(numericValue).padStart(2, '0');
 }
 
 /**
- * 解析CSV文件获取Episode映射（保持向后兼容）
- * 
- * @param {string} csvContent - CSV文件内容
- * @returns {Map<string, string>} 文件名到Episode的映射
+ * 解析 CSV 文件获取 Season 和 Episode 映射。
+ * 支持引号、字段内逗号、BOM 和 CRLF；非法编号会被拒绝并记录诊断。
  */
-export function parseCSVForEpisodes(csvContent: string): Map<string, string> {
+export function parseCSVForSeasonEpisode(csvContent: string): CSVParseResult {
+  const seasonMap = new Map<string, string>();
   const episodeMap = new Map<string, string>();
-  
-  try {
-    const lines = csvContent.split('\n');
-    if (lines.length < 2) return episodeMap;
-    
-    // 解析CSV头部，找到Name和Episode列的索引
-    const headers = lines[0].split(',').map(h => h.trim().replace(/"/g, ''));
-    const nameIndex = headers.findIndex(h => h.toLowerCase() === 'name');
-    const episodeIndex = headers.findIndex(h => h.toLowerCase() === 'episode');
-    
-    if (nameIndex === -1 || episodeIndex === -1) {
-      console.warn('CSV文件中未找到Name或Episode列');
-      return episodeMap;
+  const diagnostics: XMLDiagnostic[] = [];
+  const parsed = parseCSVRows(csvContent);
+
+  if (parsed.error) {
+    diagnostics.push({
+      level: 'error',
+      code: parsed.error,
+      message: 'CSV 存在未闭合的引号，无法安全解析。',
+      blocksDownload: true,
+    });
+    return { seasonMap, episodeMap, diagnostics };
+  }
+
+  if (parsed.rows.length === 0) {
+    diagnostics.push({
+      level: 'warning',
+      code: 'CSV_EMPTY',
+      message: 'CSV 为空，没有可用于匹配的记录。',
+    });
+    return { seasonMap, episodeMap, diagnostics };
+  }
+
+  const headers = parsed.rows[0].map(normalizeHeader);
+  const seenHeaders = new Set<string>();
+  const duplicateHeader = headers.find(header => {
+    if (!header) return false;
+    if (seenHeaders.has(header)) return true;
+    seenHeaders.add(header);
+    return false;
+  });
+
+  if (duplicateHeader) {
+    diagnostics.push({
+      level: 'error',
+      code: 'CSV_HEADER_DUPLICATE',
+      message: `CSV 表头 ${duplicateHeader} 重复，无法确定应使用哪一列。`,
+      blocksDownload: true,
+    });
+    return { seasonMap, episodeMap, diagnostics };
+  }
+
+  const nameIndex = headers.findIndex(header => header === 'name');
+  const seasonIndex = headers.findIndex(header => header === 'season');
+  const episodeIndex = headers.findIndex(header => header === 'episode');
+
+  if (nameIndex === -1) {
+    diagnostics.push({
+      level: 'error',
+      code: 'CSV_NAME_COLUMN_MISSING',
+      message: 'CSV 缺少 Name 列，无法与 XML clip 匹配。',
+      blocksDownload: true,
+    });
+    return { seasonMap, episodeMap, diagnostics };
+  }
+
+  for (let rowIndex = 1; rowIndex < parsed.rows.length; rowIndex += 1) {
+    if (parsed.rows[rowIndex].length !== headers.length) {
+      diagnostics.push({
+        level: 'error',
+        code: 'CSV_COLUMN_COUNT_MISMATCH',
+        message: `CSV 第 ${rowIndex + 1} 行有 ${parsed.rows[rowIndex].length} 列，表头有 ${headers.length} 列。`,
+        blocksDownload: true,
+      });
+      return { seasonMap, episodeMap, diagnostics };
     }
-    
-    // 解析数据行
-    for (let i = 1; i < lines.length; i++) {
-      const line = lines[i].trim();
-      if (!line) continue;
-      
-      const columns = line.split(',').map(c => c.trim().replace(/"/g, ''));
-      
-      if (columns.length > Math.max(nameIndex, episodeIndex)) {
-        const fileName = columns[nameIndex];
-        const episode = columns[episodeIndex];
-        
-        if (fileName && episode && fileName !== 'Name') {
-          // 提取基础文件名（去除扩展名）
-          const baseName = fileName.replace(/\.(mxf|xml|ale|bin)$/i, '');
-          episodeMap.set(baseName, episode.padStart(2, '0'));
+  }
+
+  if (seasonIndex === -1 && episodeIndex === -1) {
+    diagnostics.push({
+      level: 'warning',
+      code: 'CSV_METADATA_COLUMNS_MISSING',
+      message: 'CSV 只有 Name 列，没有 Season 或 Episode 数据。',
+    });
+  }
+
+  for (let rowIndex = 1; rowIndex < parsed.rows.length; rowIndex += 1) {
+    const columns = parsed.rows[rowIndex];
+    const line = rowIndex + 1;
+    const fileName = columns[nameIndex]?.trim() || '';
+    const matchKey = normalizeMatchKey(fileName);
+
+    if (!matchKey) {
+      diagnostics.push({
+        level: 'warning',
+        code: 'CSV_NAME_EMPTY',
+        message: `第 ${line} 行缺少 Name，已跳过。`,
+      });
+      continue;
+    }
+
+    if (seasonIndex !== -1) {
+      const rawSeason = columns[seasonIndex]?.trim() || '';
+      if (!rawSeason) {
+        diagnostics.push({
+          level: 'warning',
+          code: 'CSV_SEASON_EMPTY',
+          message: `第 ${line} 行 Season 为空，已忽略该值。`,
+        });
+      } else {
+        const season = normalizePositiveCode(rawSeason);
+        if (!season) {
+          diagnostics.push({
+            level: 'error',
+            code: 'CSV_SEASON_INVALID',
+            message: `第 ${line} 行 Season 必须是 1 到 99 的十进制整数。`,
+            blocksDownload: true,
+          });
+        } else {
+          if (seasonMap.has(matchKey)) {
+            diagnostics.push({
+              level: 'warning',
+              code: 'CSV_SEASON_DUPLICATE',
+              message: `Name ${fileName} 存在重复 Season，已采用最后一条记录。`,
+            });
+          }
+          seasonMap.set(matchKey, season);
         }
       }
     }
-    
-    console.log('解析CSV得到Episode映射:', Object.fromEntries(episodeMap));
-  } catch (error) {
-    console.error('解析CSV文件失败:', error);
+
+    if (episodeIndex !== -1) {
+      const rawEpisode = columns[episodeIndex]?.trim() || '';
+      if (!rawEpisode) {
+        diagnostics.push({
+          level: 'warning',
+          code: 'CSV_EPISODE_EMPTY',
+          message: `第 ${line} 行 Episode 为空，已忽略该值。`,
+        });
+      } else {
+        const episode = normalizePositiveCode(rawEpisode);
+        if (!episode) {
+          diagnostics.push({
+            level: 'error',
+            code: 'CSV_EPISODE_INVALID',
+            message: `第 ${line} 行 Episode 必须是 1 到 99 的十进制整数。`,
+            blocksDownload: true,
+          });
+        } else {
+          if (episodeMap.has(matchKey)) {
+            diagnostics.push({
+              level: 'warning',
+              code: 'CSV_EPISODE_DUPLICATE',
+              message: `Name ${fileName} 存在重复 Episode，已采用最后一条记录。`,
+            });
+          }
+          episodeMap.set(matchKey, episode);
+        }
+      }
+    }
   }
-  
-  return episodeMap;
+
+  return { seasonMap, episodeMap, diagnostics };
 }
 
 /**
@@ -458,12 +580,11 @@ export function parseCSVForEpisodes(csvContent: string): Map<string, string> {
  * {camera} -> 摄影机标识
  * {Rating} -> 评级后缀（带下划线）
  */
-function generateNewName(data: ProcessedClipData, config: XMLProcessConfig, originalFileName: string): string {
-  console.log("生成文件名, 评级值:", data.rating);
-  
+export function generateNewName(data: ProcessedClipData, config: XMLProcessConfig, originalFileName: string): string {
   // 检查是否有Season和Episode数据
-  const season = config.csvSeasonMap?.get(originalFileName);
-  const episode = config.csvEpisodeMap?.get(originalFileName);
+  const matchKey = normalizeMatchKey(originalFileName);
+  const season = config.csvSeasonMap?.get(matchKey) || config.csvSeasonMap?.get(originalFileName);
+  const episode = config.csvEpisodeMap?.get(matchKey) || config.csvEpisodeMap?.get(originalFileName);
   
   // 动态选择命名格式
   let format = config.format || DEFAULT_CONFIG.format;
@@ -493,10 +614,7 @@ function generateNewName(data: ProcessedClipData, config: XMLProcessConfig, orig
   // 清理开头的下划线（当没有season/episode时可能出现）
   newName = newName.replace(/^_+/, '');
   
-  console.log("替换{Rating}后:", newName);
-    
   newName = cleanupFileName(newName);
-  console.log("最终文件名:", newName);
   
   return newName;
 }
@@ -520,7 +638,6 @@ function fixLabelsSpelling(labelsElement: Element | null): void {
   // 如果包含"Celurean"，修正为"Cerulean"
   if (label2Text.includes("Celurean")) {
     label2Elem.textContent = label2Text.replace("Celurean", "Cerulean");
-    console.log("已修正拼写: Celurean -> Cerulean");
   }
 }
 
@@ -541,6 +658,13 @@ function fixLabelsSpelling(labelsElement: Element | null): void {
 function updateRelatedElements(clip: Element, xmlDoc: Document, newName: string): void {
   const clipId = clip.getAttribute('id');
   if (!clipId) return;
+
+  // 外部 XML 的 id 可能包含 CSS 选择器特殊字符。通过属性值精确比较，
+  // 并在开始写回前先完成目标查找，避免留下半修改结果。
+  const sequenceElem = Array.from(xmlDoc.getElementsByTagName('sequence')).find(sequence => (
+    sequence.getAttribute('id') === `sequence_id_${clipId}` ||
+    sequence.getAttribute('id') === `sequence_${clipId}_ci`
+  ));
   
   // 获取clip中的labels元素
   const labelsElem = clip.querySelector('labels');
@@ -553,10 +677,6 @@ function updateRelatedElements(clip: Element, xmlDoc: Document, newName: string)
   if (nameElem) {
     nameElem.textContent = newName;
   }
-  
-  // 查找关联的sequence元素
-  const sequenceElem = xmlDoc.querySelector(`sequence[id="sequence_id_${clipId}"]`) ||
-                      xmlDoc.querySelector(`sequence[id="sequence_${clipId}_ci"]`);
   
   if (sequenceElem) {
     // 更新sequence的name元素
@@ -579,7 +699,6 @@ function updateRelatedElements(clip: Element, xmlDoc: Document, newName: string)
         // 如果不存在，则复制并添加到sequence元素的末尾
         const clonedLabels = labelsElem.cloneNode(true);
         sequenceElem.appendChild(clonedLabels);
-        console.log("已复制labels元素到sequence末尾:", clipId);
       }
     }
   }
@@ -644,7 +763,7 @@ function copyLabelsToElement(targetElem: Element, labelsElem: Element | null): v
  * 
  * 更新所有width和height元素的文本内容
  */
-function updateResolution(xmlDoc: Document, config: { width: number; height: number }): void {
+export function updateResolution(xmlDoc: Document, config: { width: number; height: number }): void {
   const widthElems = xmlDoc.getElementsByTagName('width');
   const heightElems = xmlDoc.getElementsByTagName('height');
   
@@ -704,96 +823,178 @@ function processPathURLs(xmlDoc: Document): void {
 
 
 
+export function isStrictPositiveInteger(value: unknown): value is number {
+  return typeof value === 'number' && Number.isInteger(value) && value > 0;
+}
+
+function failedXMLResult(code: string, message: string): XMLProcessResult {
+  return {
+    status: 'failed',
+    counts: {
+      total: 0,
+      processed: 0,
+      skipped: 0,
+      failed: 1,
+      csvUnmatched: 0,
+    },
+    diagnostics: [{ level: 'error', code, message, blocksDownload: true }],
+  };
+}
+
+function getMappedValue(map: Map<string, string> | undefined, originalFileName: string): string | undefined {
+  if (!map) return undefined;
+
+  return map.get(normalizeMatchKey(originalFileName)) || map.get(originalFileName);
+}
+
 /**
- * 主处理函数
- * 
- * @param {File} file - 输入的XML文件
- * @param {XMLProcessConfig} [config] - 配置参数
- * @returns {Promise<string>} 处理后的XML字符串
- * 
- * 处理流程：
- * 1. 合并配置参数
- * 2. 解析XML文件
- * 3. 校验XML有效性
- * 4. 遍历处理所有clip元素
- * 5. 更新分辨率设置
- * 6. 更新DIT信息
- * 7. 序列化输出XML
+ * 处理 XML 文件并返回可审计的结构化结果。
+ * 处理出至少一个合法 clip 时，即使存在跳过或失败，也会提供 partial XML，
+ * 但调用方必须根据 status 和 diagnostics 向用户明确说明结果。
  */
-export async function processXML(file: File, config?: XMLProcessConfig): Promise<string> {
-  // 合并配置
+export async function processXML(file: File, config?: XMLProcessConfig): Promise<XMLProcessResult> {
   const finalConfig = { ...DEFAULT_CONFIG, ...config };
-  
-  // 解析XML文件
-  const text = await file.text();
+
+  if (!isStrictPositiveInteger(finalConfig.width) || !isStrictPositiveInteger(finalConfig.height)) {
+    return failedXMLResult('INVALID_RESOLUTION', '宽度和高度必须是正整数。');
+  }
+
+  let text: string;
+  try {
+    text = await file.text();
+  } catch {
+    return failedXMLResult('FILE_READ_FAILED', '无法读取 XML 文件。');
+  }
+
   const parser = new DOMParser();
   const xmlDoc = parser.parseFromString(text, 'text/xml');
-  
-  // 验证XML有效性
+
   if (xmlDoc.getElementsByTagName('parsererror').length > 0) {
-    throw new XMLProcessError(
-      XMLProcessErrorType.INVALID_XML,
-      '无效的XML文件'
-    );
+    return failedXMLResult('INVALID_XML', '无效的 XML 文件，未生成下载结果。');
   }
-  
-  // 查找并修正所有独立的labels元素（不在clip或sequence内的）
+
+  const diagnostics: XMLDiagnostic[] = [];
+
+  // 查找并修正所有 labels 元素。
   const allLabelsElems = xmlDoc.getElementsByTagName('labels');
   for (const labelsElem of Array.from(allLabelsElems)) {
     fixLabelsSpelling(labelsElem);
   }
-  
-  // 遍历处理所有clip元素
-  const clips = xmlDoc.getElementsByTagName('clip');
-  console.log("找到片段数量:", clips.length);
-  
-  for (const clip of Array.from(clips)) {
-    try {
-      console.log("处理片段:", clip.getAttribute('id'));
-      
-      // 提取必要元素
-      const elements = extractClipElements(clip);
-      if (!elements) {
-        console.log("无法提取必要元素，跳过此片段");
-        continue;
-      }
-      
-      // 处理剪辑数据
-      const processedData = processClipData(elements);
-      if (!processedData) {
-        console.log("处理数据失败，跳过此片段");
-        continue;
-      }
-      
-      // 提取原始文件名用于Episode查找
-      const originalFileName = clip.getAttribute('id') || '';
-      
-      // 生成新文件名
-      const newName = generateNewName(processedData, finalConfig, originalFileName);
-      
-      // 更新相关元素
-      updateRelatedElements(clip, xmlDoc, newName);
-      
-    } catch (error) {
-      console.error('处理clip失败:', error);
+
+  const clips = Array.from(xmlDoc.getElementsByTagName('clip'));
+  const total = clips.length;
+  let processedCount = 0;
+  let skippedCount = 0;
+  let failedCount = 0;
+  let csvUnmatched = 0;
+  const hasCsvMapping = Boolean(finalConfig.csvSeasonMap?.size || finalConfig.csvEpisodeMap?.size);
+
+  if (total === 0) {
+    return failedXMLResult('NO_CLIPS', 'XML 中没有可处理的 clip。');
+  }
+
+  for (let index = 0; index < clips.length; index += 1) {
+    const clip = clips[index];
+    const clipId = clip.getAttribute('id') || undefined;
+
+    if (!clipId) {
+      skippedCount += 1;
+      diagnostics.push({
+        level: 'warning',
+        code: 'MISSING_CLIP_ID',
+        message: 'clip 缺少 id，无法可靠更新关联元素，已跳过。',
+      });
+      finalConfig.onProgress?.(Math.round(((index + 1) / total) * 100));
       continue;
     }
+
+    try {
+      const elements = extractClipElements(clip);
+      if (!elements) {
+        skippedCount += 1;
+        diagnostics.push({
+          level: 'warning',
+          code: 'MISSING_CLIP_FIELDS',
+          message: 'clip 缺少必要字段，已跳过。',
+          clipId,
+        });
+      } else {
+        const processedData = processClipData(elements);
+        if (!processedData) {
+          skippedCount += 1;
+          diagnostics.push({
+            level: 'warning',
+            code: 'INVALID_CLIP_DATA',
+            message: 'clip 的场景、镜头、拍摄或摄影机数据无效，已跳过。',
+            clipId,
+          });
+        } else {
+          const originalFileName = clipId || clip.querySelector('name')?.textContent || '';
+          const season = getMappedValue(finalConfig.csvSeasonMap, originalFileName);
+          const episode = getMappedValue(finalConfig.csvEpisodeMap, originalFileName);
+
+          if (hasCsvMapping && !season && !episode) {
+            csvUnmatched += 1;
+            diagnostics.push({
+              level: 'warning',
+              code: 'CSV_CLIP_UNMATCHED',
+              message: 'clip 没有匹配到 CSV Name，已使用无 CSV 前缀的命名规则。',
+              clipId,
+            });
+          }
+
+          const newName = generateNewName(processedData, finalConfig, originalFileName);
+          updateRelatedElements(clip, xmlDoc, newName);
+          processedCount += 1;
+        }
+      }
+    } catch (error) {
+      failedCount += 1;
+      diagnostics.push({
+        level: 'error',
+        code: 'CLIP_PROCESSING_FAILED',
+        message: error instanceof Error ? error.message : '处理 clip 时发生未知错误。',
+        clipId,
+      });
+    }
+
+    finalConfig.onProgress?.(Math.round(((index + 1) / total) * 100));
   }
-  
-  // 更新分辨率设置
+
   updateResolution(xmlDoc, {
     width: finalConfig.width,
-    height: finalConfig.height
+    height: finalConfig.height,
   });
-  
-  // 更新DIT信息
   updateDITInfo(xmlDoc);
-
-  // 更新PathURL信息
   processPathURLs(xmlDoc);
-  
-  // 序列化输出XML
+
+  const counts: XMLProcessCounts = {
+    total,
+    processed: processedCount,
+    skipped: skippedCount,
+    failed: failedCount,
+    csvUnmatched,
+  };
+
+  if (processedCount === 0) {
+    diagnostics.push({
+      level: 'error',
+      code: 'NO_CLIPS_PROCESSED',
+      message: '没有任何 clip 成功处理，未生成下载结果。',
+      blocksDownload: true,
+    });
+  }
+
   const serializer = new XMLSerializer();
-  return '<?xml version="1.0" encoding="UTF-8"?>\n' + 
-         serializer.serializeToString(xmlDoc.documentElement);
+  const xml = processedCount > 0
+    ? '<?xml version="1.0" encoding="UTF-8"?>\n' + serializer.serializeToString(xmlDoc.documentElement)
+    : undefined;
+  const hasProblems = skippedCount > 0 || failedCount > 0 || csvUnmatched > 0;
+
+  return {
+    status: processedCount === 0 ? 'failed' : hasProblems ? 'partial' : 'success',
+    counts,
+    diagnostics,
+    ...(xml ? { xml } : {}),
+  };
 }

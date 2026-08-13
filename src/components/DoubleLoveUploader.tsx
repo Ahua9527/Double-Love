@@ -10,8 +10,38 @@
  */
 import { useState, useRef } from 'react';
 import { Upload, FileText, X, Github } from 'lucide-react';
-import { processXML, parseCSVForSeasonEpisode } from '../utils/xml';
+import {
+  processXML,
+  parseCSVForSeasonEpisode,
+  isStrictPositiveInteger,
+  type XMLDiagnostic,
+  type XMLProcessResult,
+} from '../utils/xml';
+import { getOutputFileName } from '../utils/download';
 import { getVersionDisplay } from '../config/version';
+
+interface FileProcessingReport {
+  fileName: string;
+  result: XMLProcessResult;
+}
+
+function downloadXML(xml: string, fileName: string): void {
+  const blob = new Blob([xml], { type: 'text/xml' });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = fileName;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
+}
+
+function getStatusLabel(status: XMLProcessResult['status']): string {
+  if (status === 'success') return '成功';
+  if (status === 'partial') return '部分完成';
+  return '失败';
+}
 /**
  * Double LOVE文件上传组件
  * @returns {JSX.Element} 文件上传处理界面
@@ -26,7 +56,27 @@ const DoubleLoveUploader = () => {
   const [processing, setProcessing] = useState(false); // 处理中状态
   const [currentFile, setCurrentFile] = useState<string>(''); // 当前处理文件
   const [progress, setProgress] = useState<number>(0); // 处理进度
+  const [inputError, setInputError] = useState('');
+  const [csvDiagnostics, setCsvDiagnostics] = useState<XMLDiagnostic[]>([]);
+  const [reports, setReports] = useState<FileProcessingReport[]>([]);
+  const [usesCsvNaming, setUsesCsvNaming] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null); // 文件输入引用
+  const fileKeysRef = useRef(new WeakMap<File, string>());
+  const nextFileKeyRef = useRef(0);
+
+  const getStableFileKey = (file: File): string => {
+    const existingKey = fileKeysRef.current.get(file);
+    if (existingKey) return existingKey;
+
+    const key = `upload-${nextFileKeyRef.current}`;
+    nextFileKeyRef.current += 1;
+    fileKeysRef.current.set(file, key);
+    return key;
+  };
+
+  const getFileSignature = (file: File): string => (
+    `${file.name.toLowerCase()}\u0000${file.size}\u0000${file.lastModified}\u0000${file.type}`
+  );
 
   /**
    * 处理拖拽进入事件
@@ -71,40 +121,74 @@ const DoubleLoveUploader = () => {
     handleFiles(droppedFiles);
   };
 
+  const handleUploadKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      fileInputRef.current?.click();
+    }
+  };
+
   /**
    * 处理文件上传
    * @param {File[]} newFiles - 新上传的文件列表
    */
   const handleFiles = (newFiles: File[]) => {
-        if (files.length + newFiles.length > 99) {
-      alert('最多只能上传99个文件');
+    const inputMessages: string[] = [];
+    const candidateFiles = newFiles.filter(file => {
+      const lowerName = file.name.toLowerCase();
+      if (lowerName.endsWith('.xml')) {
+        if (file.size <= 50 * 1024 * 1024) return true;
+        inputMessages.push(`${file.name}：XML 超过 50MB，已忽略。`);
+        return false;
+      }
+      if (lowerName.endsWith('.csv')) {
+        if (file.size <= 10 * 1024 * 1024) return true;
+        inputMessages.push(`${file.name}：CSV 超过 10MB，已忽略。`);
+        return false;
+      }
+      inputMessages.push(`${file.name}：不支持的文件类型，已忽略。`);
+      return false;
+    });
+
+    const seenSignatures = new Set([...files, ...csvFiles].map(getFileSignature));
+    const uniqueFiles = candidateFiles.filter(file => {
+      const signature = getFileSignature(file);
+      if (seenSignatures.has(signature)) {
+        inputMessages.push(`${file.name}：重复文件，已忽略。`);
+        return false;
+      }
+      seenSignatures.add(signature);
+      return true;
+    });
+    const candidateXmlFiles = uniqueFiles.filter(file => file.name.toLowerCase().endsWith('.xml'));
+    const candidateCsvFiles = uniqueFiles.filter(file => file.name.toLowerCase().endsWith('.csv'));
+    const csvCapacity = csvFiles.length === 0 ? 1 : 0;
+    const acceptedCsvFiles = candidateCsvFiles.slice(0, csvCapacity);
+    for (const file of candidateCsvFiles.slice(csvCapacity)) {
+      inputMessages.push(`${file.name}：当前只允许一个 CSV，已忽略。`);
+    }
+
+    const remainingCapacity = Math.max(0, 99 - files.length - csvFiles.length);
+    const acceptedFiles = [...candidateXmlFiles, ...acceptedCsvFiles].slice(0, remainingCapacity);
+    for (const file of [...candidateXmlFiles, ...acceptedCsvFiles].slice(remainingCapacity)) {
+      inputMessages.push(`${file.name}：已达到 99 个文件上限，已忽略。`);
+    }
+    const xmlFiles = acceptedFiles.filter(file => file.name.toLowerCase().endsWith('.xml'));
+    const newCsvFiles = acceptedFiles.filter(file => file.name.toLowerCase().endsWith('.csv'));
+
+    if (xmlFiles.length === 0 && newCsvFiles.length === 0) {
+      setInputError(inputMessages.join(' ') || '请上传 XML 或 CSV 文件，XML 最大 50MB，CSV 最大 10MB。');
       return;
     }
 
-    // 分离XML和CSV文件
-    const xmlFiles = newFiles.filter(file => {
-      const isXML = file.name.toLowerCase().endsWith('.xml');
-      const isValidSize = file.size <= 50 * 1024 * 1024;
-      return isXML && isValidSize;
-    });
-    
-    const csvFiles = newFiles.filter(file => {
-      const isCSV = file.name.toLowerCase().endsWith('.csv');
-      const isValidSize = file.size <= 10 * 1024 * 1024; // CSV文件限制10MB
-      return isCSV && isValidSize;
-    });
-
-    if (xmlFiles.length === 0 && csvFiles.length === 0) {
-      alert('请上传XML或CSV文件，XML文件不超过50MB，CSV文件不超过10MB');
-      return;
-    }
+    setInputError(inputMessages.join(' '));
 
     if (xmlFiles.length > 0) {
       setFiles(prevFiles => [...prevFiles, ...xmlFiles]);
     }
     
-    if (csvFiles.length > 0) {
-      setCsvFiles(prevFiles => [...prevFiles, ...csvFiles]);
+    if (newCsvFiles.length > 0) {
+      setCsvFiles(prevFiles => [...prevFiles, ...newCsvFiles]);
     }
   };
 
@@ -140,79 +224,104 @@ const DoubleLoveUploader = () => {
    * 处理文件处理流程
    */
   const handleProcess = async () => {
-    if (!files.length) return;
-    
+    if (!files.length || processing) return;
+
     setProcessing(true);
     setProgress(0);
-    
+    setInputError('');
+    setReports([]);
+    setUsesCsvNaming(false);
+
     // 解析CSV文件获取Season和Episode映射
     let csvSeasonMap: Map<string, string> | undefined;
     let csvEpisodeMap: Map<string, string> | undefined;
     if (csvFiles.length > 0) {
       try {
-        // 使用第一个CSV文件
+        // 上传契约只允许一个 CSV 文件。
         const csvContent = await csvFiles[0].text();
-        const { seasonMap, episodeMap } = parseCSVForSeasonEpisode(csvContent);
+        const { seasonMap, episodeMap, diagnostics } = parseCSVForSeasonEpisode(csvContent);
         csvSeasonMap = seasonMap;
         csvEpisodeMap = episodeMap;
-        console.log('成功解析CSV文件，获得Season映射:', csvSeasonMap.size, '条记录');
-        console.log('成功解析CSV文件，获得Episode映射:', csvEpisodeMap.size, '条记录');
+        setCsvDiagnostics(diagnostics);
+        setUsesCsvNaming(seasonMap.size > 0 || episodeMap.size > 0);
+
+        if (diagnostics.some(diagnostic => diagnostic.level === 'error')) {
+          setInputError(diagnostics.map(diagnostic => diagnostic.message).join(' '));
+          setProcessing(false);
+          return;
+        }
       } catch (error) {
         console.error('解析CSV文件失败:', error);
-        alert('CSV文件解析失败，将不使用Season/Episode命名');
+        setInputError('CSV 文件读取失败，未开始处理 XML。');
+        setProcessing(false);
+        return;
       }
+    } else {
+      setCsvDiagnostics([]);
+      setUsesCsvNaming(false);
     }
-    
-    try {
-      for (let i = 0; i < files.length; i++) {
-        const file = files[i];
-        // 动态显示命名模式
-        let namingMode = '';
-        if (csvSeasonMap && csvSeasonMap.size > 0 && csvEpisodeMap && csvEpisodeMap.size > 0) {
-          namingMode = '（使用Season+Episode命名）';
-        } else if (csvEpisodeMap && csvEpisodeMap.size > 0) {
-          namingMode = '（使用Episode命名）';
-        }
-        const fileDisplayName = `${file.name} ${namingMode}`.trim();
-        setCurrentFile(fileDisplayName);
-        setProgress((i / files.length) * 100);
 
-        const processedXML = await processXML(file, {
-          width: parseInt(width),
-          height: parseInt(height),
+    // 分辨率输入校验
+    const w = Number(width);
+    const h = Number(height);
+    if (!/^[1-9]\d*$/.test(width) || !/^[1-9]\d*$/.test(height) ||
+        !isStrictPositiveInteger(w) || !isStrictPositiveInteger(h)) {
+      setInputError('分辨率必须是完整的正整数，例如 1920 × 1080。');
+      setProcessing(false);
+      return;
+    }
+
+    const outputNameCounts = new Map<string, number>();
+    for (let index = 0; index < files.length; index += 1) {
+      const file = files[index];
+      let namingMode = '';
+      if (csvSeasonMap?.size && csvEpisodeMap?.size) {
+        namingMode = '（使用 Season + Episode 命名）';
+      } else if (csvEpisodeMap?.size) {
+        namingMode = '（使用 Episode 命名）';
+      }
+
+      setCurrentFile(`${file.name} ${namingMode}`.trim());
+      setProgress((index / files.length) * 100);
+
+      try {
+        const result = await processXML(file, {
+          width: w,
+          height: h,
           csvSeasonMap,
           csvEpisodeMap,
           onProgress: (percent) => {
-            setProgress(((i + percent / 100) / files.length) * 100);
-          }
+            setProgress(((index + percent / 100) / files.length) * 100);
+          },
         });
 
-        const originalName = file.name;
-        const extension = originalName.toLowerCase().endsWith('.xml') ? '' : '.xml';
-        const newFileName = `${originalName.replace('.xml', '')}_Double_LOVE${extension}`;
+        if (result.xml) {
+          const baseOutputName = getOutputFileName(file.name);
+          const previousCount = outputNameCounts.get(baseOutputName) || 0;
+          const duplicateNumber = previousCount + 1;
+          outputNameCounts.set(baseOutputName, duplicateNumber);
+          downloadXML(result.xml, getOutputFileName(file.name, duplicateNumber));
+        }
 
-        const blob = new Blob([processedXML], { type: 'text/xml' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = newFileName;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
-
-        await new Promise(resolve => setTimeout(resolve, 1000));
+        setReports(previous => [...previous, { fileName: file.name, result }]);
+      } catch (error) {
+        const result: XMLProcessResult = {
+          status: 'failed',
+          counts: { total: 0, processed: 0, skipped: 0, failed: 1, csvUnmatched: 0 },
+          diagnostics: [{
+            level: 'error',
+            code: 'UNEXPECTED_PROCESSING_ERROR',
+            message: error instanceof Error ? error.message : '处理文件时发生未知错误。',
+            blocksDownload: true,
+          }],
+        };
+        setReports(previous => [...previous, { fileName: file.name, result }]);
       }
-
-      setProgress(100);
-    } catch (error) {
-      console.error('Processing error:', error);
-      alert('处理文件时发生错误，请检查文件格式是否正确');
-    } finally {
-      setProcessing(false);
-      setCurrentFile('');
-      setProgress(0);
     }
+
+    setProgress(100);
+    setProcessing(false);
+    setCurrentFile('');
   };
 
   /**
@@ -233,13 +342,15 @@ const DoubleLoveUploader = () => {
 
           {/* 分辨率设置 */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-dark-placeholder mb-2 transition-colors duration-500 ease-in-out">
+            <label htmlFor="resolution-width" className="block text-sm font-medium text-gray-700 dark:text-dark-placeholder mb-2 transition-colors duration-500 ease-in-out">
               分辨率
             </label>
             <div className="flex items-center space-x-2">
               <div className="flex-1">
                 <input
+                  id="resolution-width"
                   type="text"
+                  aria-label="视频宽度"
                   value={width}
                   onChange={(e) => setWidth(e.target.value)}
                   className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 
@@ -252,7 +363,9 @@ const DoubleLoveUploader = () => {
               <span className="text-gray-500 dark:text-gray-400 transition-colors duration-500 ease-in-out">×</span>
               <div className="flex-1">
                 <input
+                  id="resolution-height"
                   type="text"
+                  aria-label="视频高度"
                   value={height}
                   onChange={(e) => setHeight(e.target.value)}
                   className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 
@@ -263,11 +376,16 @@ const DoubleLoveUploader = () => {
                 />
               </div>
             </div>
+            {inputError && (
+              <p className="mt-2 text-sm text-red-600 dark:text-red-400" role="alert">
+                {inputError}
+              </p>
+            )}
           </div>
 
           {/* 文件上传区域 */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+            <label htmlFor="file-upload" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
               上传 XML和CSV文件
             </label>
             <div
@@ -276,19 +394,32 @@ const DoubleLoveUploader = () => {
                   ? 'border-selected bg-cyan-50 dark:bg-cyan-900' 
                   : 'border-gray-300 dark:border-gray-600 hover:bg-light-bg dark:hover:bg-dark-bg'
                 }`}
+              role="button"
+              tabIndex={0}
+              aria-label="上传 XML 或 CSV 文件"
               onDragEnter={handleDragEnter}
               onDragLeave={handleDragLeave}
               onDragOver={handleDragOver}
               onDrop={handleDrop}
-              onClick={() => fileInputRef.current?.click()}
+              onKeyDown={handleUploadKeyDown}
+              onClick={(e) => {
+                if ((e.target as HTMLElement).tagName !== 'INPUT') {
+                  fileInputRef.current?.click();
+                }
+              }}
             >
               <input
+                id="file-upload"
                 type="file"
                 className="hidden"
                 ref={fileInputRef}
                 accept=".xml,.csv"
                 multiple
-                onChange={(e) => handleFiles(Array.from(e.target.files || []))}
+                aria-label="选择 XML 或 CSV 文件"
+                onChange={(e) => {
+                  handleFiles(Array.from(e.target.files || []));
+                  e.currentTarget.value = '';
+                }}
               />
               <div className="text-center space-y-2">
                 <Upload className={`mx-auto h-12 w-12 transition-all duration-300 ${
@@ -321,6 +452,7 @@ const DoubleLoveUploader = () => {
                   已上传 XML 文件 ({files.length})
                 </h3>
                 <button
+                  type="button"
                   onClick={() => setFiles([])}
                   className="text-sm text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200"
                 >
@@ -329,7 +461,7 @@ const DoubleLoveUploader = () => {
               </div>
               {files.map((file, index) => (
                 <div
-                  key={index}
+                  key={getStableFileKey(file)}
                   className="group flex items-center justify-between p-3 bg-white dark:bg-gray-700 
                            border border-gray-200 dark:border-gray-600 rounded-lg shadow-sm
                            hover:bg-gray-50 dark:hover:bg-gray-600 transition-colors"
@@ -346,10 +478,12 @@ const DoubleLoveUploader = () => {
                     </div>
                   </div>
                   <button
+                    type="button"
                     onClick={() => removeFile(index)}
                     className="p-1 text-gray-400 dark:text-gray-500 hover:text-red-500 
                               dark:hover:text-red-400 rounded-full transition-colors"
                     title="移除文件"
+                    aria-label={`移除 XML 文件 ${file.name}`}
                   >
                     <X className="w-4 h-4" />
                   </button>
@@ -367,6 +501,7 @@ const DoubleLoveUploader = () => {
                   <span className="text-xs text-green-500 dark:text-green-400 ml-2">• 用于辅助元数据</span>
                 </h3>
                 <button
+                  type="button"
                   onClick={() => setCsvFiles([])}
                   className="text-sm text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200"
                 >
@@ -375,7 +510,7 @@ const DoubleLoveUploader = () => {
               </div>
               {csvFiles.map((file, index) => (
                 <div
-                  key={index}
+                  key={getStableFileKey(file)}
                   className="group flex items-center justify-between p-3 bg-green-50 dark:bg-green-900/20 
                            border border-green-200 dark:border-green-600 rounded-lg shadow-sm
                            hover:bg-green-100 dark:hover:bg-green-900/30 transition-colors"
@@ -392,10 +527,12 @@ const DoubleLoveUploader = () => {
                     </div>
                   </div>
                   <button
+                    type="button"
                     onClick={() => removeCsvFile(index)}
                     className="p-1 text-gray-400 dark:text-gray-500 hover:text-red-500 
                               dark:hover:text-red-400 rounded-full transition-colors"
                     title="移除文件"
+                    aria-label={`移除 CSV 文件 ${file.name}`}
                   >
                     <X className="w-4 h-4" />
                   </button>
@@ -410,12 +547,19 @@ const DoubleLoveUploader = () => {
               <div className="text-sm text-gray-500 dark:text-gray-400">
                 正在处理: {currentFile}
               </div>
-              {csvFiles.length > 0 && (
+              {usesCsvNaming && (
                 <div className="text-xs text-green-500 dark:text-green-400">
                   ✓ 使用 CSV 数据进行 Season/Episode 命名
                 </div>
               )}
-              <div className="w-full bg-gray-200 dark:bg-gray-600 rounded-full h-2.5 relative overflow-hidden">
+              <div
+                className="w-full bg-gray-200 dark:bg-gray-600 rounded-full h-2.5 relative overflow-hidden"
+                role="progressbar"
+                aria-label="XML 处理进度"
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-valuenow={Math.round(progress)}
+              >
                 <div 
                   className="bg-gradient-to-r from-blue-400 to-selected h-full rounded-full 
                              transition-all duration-300 ease-out"
@@ -427,6 +571,51 @@ const DoubleLoveUploader = () => {
                   </span>
                 </div> */}
               </div>
+            </div>
+          )}
+
+          {csvDiagnostics.length > 0 && (
+            <div className="space-y-1 text-xs text-amber-700 dark:text-amber-300" role="status">
+              {csvDiagnostics.map((diagnostic, index) => (
+                <p key={`${diagnostic.code}-${index}`}>{diagnostic.message}</p>
+              ))}
+            </div>
+          )}
+
+          {reports.length > 0 && (
+            <div className="space-y-2" role="status" aria-live="polite">
+              <h3 className="text-sm font-medium text-gray-700 dark:text-gray-300">处理结果</h3>
+              {reports.map(({ fileName, result }, index) => (
+                <div
+                  key={`${fileName}-${index}`}
+                  className="rounded-md border border-gray-200 dark:border-gray-600 p-3 text-sm"
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="truncate text-gray-700 dark:text-gray-300">{fileName}</span>
+                    <span className={
+                      result.status === 'success'
+                        ? 'text-green-600'
+                        : result.status === 'partial'
+                          ? 'text-amber-600'
+                          : 'text-red-600'
+                    }>
+                      {getStatusLabel(result.status)}
+                    </span>
+                  </div>
+                  <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                    共 {result.counts.total} 个 clip：处理 {result.counts.processed}，跳过 {result.counts.skipped}，失败 {result.counts.failed}，XML clip 未匹配 CSV {result.counts.csvUnmatched}
+                  </p>
+                  {result.diagnostics.length > 0 && (
+                    <ul className="mt-2 space-y-1 text-xs text-gray-600 dark:text-gray-300">
+                      {result.diagnostics.map((diagnostic, diagnosticIndex) => (
+                        <li key={`${diagnostic.code}-${diagnostic.clipId || 'file'}-${diagnosticIndex}`}>
+                          {diagnostic.code}{diagnostic.clipId ? ` · ${diagnostic.clipId}` : ''}：{diagnostic.message}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              ))}
             </div>
           )}
 

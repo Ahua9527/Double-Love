@@ -7,12 +7,41 @@
 
 ## [未发布]
 
+### 尚未关闭
+- 生产部署响应头、VoiceOver 和 Premiere 导入/重连/再导出仍需人工验收；本地真实 Chrome 下载、离线与 PWA 更新流程已通过。
+- 独立 `csv2xml` 工作区的 TypeScript 编译链仍由 Format Lab 处理。
+
 ### 新增
 - 更新日志文件，遵循Keep a Changelog规范
+- 引入 Vitest 测试框架，以 62 项测试覆盖 XML/CSV 处理、上传组件、下载名和 PWA 源配置
+- PWA 更新提示接入（registerType 改为 prompt，使用 useRegisterSW）
+- 为 Cloudflare Pages 静态部署增加受测试保护的 CSP、防嵌入和最小权限响应头
 
 ### 变更
+- Web 处理结果改为结构化状态、计数和诊断，部分 XML 结果会明确显示为“部分完成”
+- CSV 解析支持 BOM、CRLF、引号、字段内逗号和转义引号，并统一忽略路径、常见媒体扩展名和大小写的匹配键
+- 上传契约固定为 XML 与 CSV 合计最多 99 个已接受文件，且只允许一个 CSV；重复文件会被忽略
 - 集数号格式从3位数字改为2位数字（如：044 → 44）
 - 更新相关文档说明和示例
+- 评级映射：Circle 显式映射为 ok（原为小写转换输出 circle）
+- processXML 接入真实进度回调（onProgress 按已处理 clip 数回调）
+- PWA 更新策略从 autoUpdate 改为 prompt 模式（需用户确认后更新）
+
+### 修复
+- 移除被 git 跟踪的本地 HTTPS 证书（localhost-key.pem / localhost.pem）
+- 下载文件名大小写处理：支持 .XML 大写后缀
+- 分辨率输入校验：非正整数时阻止处理并提示
+- 更新 Baseline/Browserslist 数据，消除测试和构建中的过期警告
+- 移除多文件处理间 1 秒人为延迟
+- 移除大量调试 console.log 输出
+
+### 移除
+- 无调用方的 parseCSVForEpisodes 死代码
+- 无效且未被引用的 public/manifest.json
+- 未使用的 Vite 模板残留 App.css 与 css.d.ts
+- 未使用的路径别名（@ / @components / @assets）与 cdnjs 运行时缓存配置
+- 未启用的 @tailwindcss/forms、@tailwindcss/typography 依赖
+- 冗余的 XMLProcessErrorType 枚举值（MISSING_REQUIRED_ELEMENTS / INVALID_FORMAT）
 
 ## [0.5.0] - 2025-09-20
 
