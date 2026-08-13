@@ -22,7 +22,7 @@ dist
 # misc
 .idea
 .DS_Store
-# *.pem
+*.pem
 
 # debug
 npm-debug.log*
@@ -46,4 +46,5 @@ next-env.d.ts
 .playwright-mcp/
 *.xml
 *.csv
-CLAUDE.md
+csv2xml/
+TODO.md
