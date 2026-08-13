@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import React, { createContext, useEffect, useState } from 'react';
 
 /**
  * 主题类型定义
@@ -85,20 +85,4 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
       {children}
     </ThemeContext.Provider>
   );
-}
-
-/**
- * 自定义主题Hook
- * @returns {ThemeContext} 当前主题上下文
- * @throws {Error} 当在ThemeProvider外使用时抛出错误
- * 
- * 使用示例：
- * const { theme } = useTheme();
- */
-export function useTheme() {
-  const context = useContext(ThemeContext);
-  if (context === undefined) {
-    throw new Error('useTheme must be used within a ThemeProvider');
-  }
-  return context;
 }
