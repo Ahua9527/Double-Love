@@ -1,0 +1,10 @@
+[package]
+name = "double-love-cli"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+double-love-engine = { path = "../double-love-engine" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

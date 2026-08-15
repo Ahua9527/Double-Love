@@ -1,0 +1,7 @@
+[workspace]
+members = [
+  "src-tauri",
+  "crates/double-love-engine",
+  "crates/double-love-cli",
+]
+resolver = "2"

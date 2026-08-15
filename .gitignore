@@ -46,5 +46,14 @@ next-env.d.ts
 .playwright-mcp/
 *.xml
 *.csv
-csv2xml/
 TODO.md
+.playwright-cli/
+.workbuddy/
+target/
+
+# 独立对比工作区（自有仓库，不属于本项目）
+csv2xml/
+
+# 私有设计资料（不进入公开 PR / Issue）
+Double_Love_Studio_PRD_Full_v1.0.md
+docs/design/reference-visual.png
