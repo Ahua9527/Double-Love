@@ -5,9 +5,7 @@
  * 1. 通过 useRegisterSW 注册 Service Worker（registerType: 'prompt'）
  * 2. 检测到新版本时显示更新提示
  * 3. 处理用户更新操作
- * 4. 首次可离线时提示一次性 toast
  */
-import { useEffect, useState } from 'react'
 import { X } from 'lucide-react'
 import { useRegisterSW } from 'virtual:pwa-register/react'
 
@@ -16,28 +14,16 @@ import { useRegisterSW } from 'virtual:pwa-register/react'
  * @returns {JSX.Element | null} 更新提示界面或null（当不需要更新时）
  */
 const PWAUpdatePrompt = () => {
-  // useRegisterSW：注册 SW 并在有新版本（needRefresh）或可离线（offlineReady）时置位
+  // useRegisterSW：注册 SW 并在有新版本（needRefresh）时置位
   const {
-    offlineReady: [offlineReady, setOfflineReady],
     needRefresh: [needRefresh, setNeedRefresh],
     updateServiceWorker,
   } = useRegisterSW()
 
-  // 首次可离线时显示一次性提示
-  const [showOfflineTip, setShowOfflineTip] = useState(false)
-  useEffect(() => {
-    if (offlineReady) {
-      setShowOfflineTip(true)
-      setOfflineReady(false)
-    }
-  }, [offlineReady, setOfflineReady])
-
-  // 无更新且无离线提示时返回null
-  if (!needRefresh && !showOfflineTip) return null
+  if (!needRefresh) return null
 
   const close = () => {
     setNeedRefresh(false)
-    setShowOfflineTip(false)
   }
 
   return (
@@ -50,7 +36,7 @@ const PWAUpdatePrompt = () => {
     >
       {/* 提示信息区域 */}
       <p className="text-sm text-gray-700 dark:text-gray-300">
-        {needRefresh ? '新版本可用，是否更新？' : '已可离线使用'}
+        新版本可用，是否更新？
       </p>
 
       {/* 按钮操作区域 */}

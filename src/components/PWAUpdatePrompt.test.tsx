@@ -23,6 +23,9 @@ beforeEach(() => {
   swState.offlineReady = false
   swState.needRefresh = false
   vi.clearAllMocks()
+  swState.setNeedRefresh.mockImplementation((value: boolean) => {
+    swState.needRefresh = value
+  })
 })
 
 afterEach(() => cleanup())
@@ -37,13 +40,21 @@ describe('PWAUpdatePrompt', () => {
     expect(swState.updateServiceWorker).toHaveBeenCalledWith(true)
   })
 
-  it('离线资源准备完成后显示一次提示并允许关闭', () => {
+  it('离线资源准备完成后不显示悬浮提示', () => {
     swState.offlineReady = true
     render(<PWAUpdatePrompt />)
 
-    expect(screen.getByRole('alert').textContent).toContain('已可离线使用')
-    expect(swState.setOfflineReady).toHaveBeenCalledWith(false)
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(swState.setOfflineReady).not.toHaveBeenCalled()
+  })
+
+  it('关闭更新提示后消失', () => {
+    swState.needRefresh = true
+    const { rerender } = render(<PWAUpdatePrompt />)
+
     fireEvent.click(screen.getByRole('button', { name: '关闭提示' }))
+    expect(swState.setNeedRefresh).toHaveBeenCalledWith(false)
+    rerender(<PWAUpdatePrompt />)
     expect(screen.queryByRole('alert')).toBeNull()
   })
 })

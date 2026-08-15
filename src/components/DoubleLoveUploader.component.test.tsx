@@ -11,6 +11,12 @@ function makeTextFile(content: string, name: string, lastModified = 1): File {
   return file
 }
 
+function makeCsvFile(content: string, name: string): File {
+  const file = new File([content], name, { type: 'text/csv' })
+  Object.defineProperty(file, 'text', { value: async () => content })
+  return file
+}
+
 beforeEach(() => {
   downloadedNames.length = 0
   Object.defineProperty(URL, 'createObjectURL', {
@@ -106,6 +112,88 @@ describe('DoubleLoveUploader', () => {
     expect(alert.textContent).toContain('Episode 必须是 1 到 99')
     expect(downloadedNames).toEqual([])
     expect(screen.queryByText('成功')).toBeNull()
+  })
+
+  it('清空 XML 会移除结果但保留 CSV，重新添加后可再次处理', async () => {
+    render(<DoubleLoveUploader />)
+
+    const fileInput = screen.getByLabelText('选择 XML 或 CSV 文件')
+    const csv = makeCsvFile(
+      'Name,Season,Episode\nSYNTHETIC_CLIP_A001,1,2\n',
+      'metadata.csv'
+    )
+    const firstXml = makeTextFile(SYNTHETIC_PREMIERE_XML, 'first.xml')
+    fireEvent.change(fileInput, { target: { files: [firstXml, csv] } })
+    fireEvent.click(screen.getByRole('button', { name: /处理 1 个XML文件/ }))
+
+    await screen.findByText('成功')
+    expect(screen.getByText('metadata.csv')).toBeTruthy()
+
+    fireEvent.click(screen.getAllByRole('button', { name: '清空' })[0])
+    expect(screen.queryByText('处理结果')).toBeNull()
+    expect(screen.queryByText('first.xml')).toBeNull()
+    expect(screen.getByText('metadata.csv')).toBeTruthy()
+
+    const secondXml = makeTextFile(SYNTHETIC_PREMIERE_XML, 'second.xml', 2)
+    fireEvent.change(fileInput, { target: { files: [secondXml] } })
+    fireEvent.click(screen.getByRole('button', { name: /处理 1 个XML文件/ }))
+
+    await screen.findByText('成功')
+    expect(screen.getByText('second.xml', { selector: 'span' })).toBeTruthy()
+    expect(screen.queryByText('first.xml')).toBeNull()
+  })
+
+  it('清空 CSV 会移除结果和 CSV 诊断但保留 XML', async () => {
+    render(<DoubleLoveUploader />)
+
+    const fileInput = screen.getByLabelText('选择 XML 或 CSV 文件')
+    const xml = makeTextFile(SYNTHETIC_PREMIERE_XML, 'kept.xml')
+    const csv = makeCsvFile(
+      'Name,Season,Episode\nSYNTHETIC_CLIP_A001,,\n',
+      'warning.csv'
+    )
+    fireEvent.change(fileInput, { target: { files: [xml, csv] } })
+    fireEvent.click(screen.getByRole('button', { name: /处理 1 个XML文件/ }))
+
+    await screen.findByText('成功')
+    expect(screen.getByText(/Season 为空/)).toBeTruthy()
+
+    fireEvent.click(screen.getAllByRole('button', { name: '清空' })[1])
+    expect(screen.queryByText('处理结果')).toBeNull()
+    expect(screen.queryByText(/Season 为空/)).toBeNull()
+    expect(screen.queryByText('warning.csv')).toBeNull()
+    expect(screen.getByText('kept.xml')).toBeTruthy()
+  })
+
+  it('处理中原生禁用 XML 和 CSV 清空按钮', async () => {
+    render(<DoubleLoveUploader />)
+
+    let resolveText: (value: string) => void = () => undefined
+    const pendingText = new Promise<string>(resolve => {
+      resolveText = resolve
+    })
+    const xml = new File(['pending'], 'pending.xml', { type: 'text/xml' })
+    Object.defineProperty(xml, 'text', { value: () => pendingText })
+    const csv = makeCsvFile(
+      'Name,Season,Episode\nSYNTHETIC_CLIP_A001,1,2\n',
+      'metadata.csv'
+    )
+
+    fireEvent.change(screen.getByLabelText('选择 XML 或 CSV 文件'), {
+      target: { files: [xml, csv] },
+    })
+    fireEvent.click(screen.getByRole('button', { name: /处理 1 个XML文件/ }))
+
+    await screen.findByRole('progressbar', { name: 'XML 处理进度' })
+    const clearButtons = screen.getAllByRole('button', { name: '清空' })
+    expect(clearButtons).toHaveLength(2)
+    clearButtons.forEach(button => {
+      expect((button as HTMLButtonElement).disabled).toBe(true)
+      expect(button.className).toContain('cursor-not-allowed')
+    })
+
+    await act(async () => resolveText(SYNTHETIC_PREMIERE_XML))
+    await waitFor(() => expect(screen.queryByRole('progressbar')).toBeNull())
   })
 
   it('忽略重复选择的同一个文件，并保留一条稳定记录', () => {
