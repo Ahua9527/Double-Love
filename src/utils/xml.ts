@@ -30,6 +30,7 @@ export interface XMLDiagnostic {
 export interface XMLProcessCounts {
   total: number;
   processed: number;
+  ignored: number;
   skipped: number;
   failed: number;
   csvUnmatched: number;
@@ -74,9 +75,9 @@ interface ClipElements {
  * 处理后的剪辑数据接口
  * 
  * @interface
- * @property {string} sceneFormatted - 格式化后的场景编号（3位数字）
- * @property {string} shotFormatted - 格式化后的镜头编号（2位数字）
- * @property {string} takeFormatted - 格式化后的拍摄编号（2位数字）
+ * @property {string} sceneFormatted - 格式化后的场景值（数字段至少3位，兼容非纯数字场景值）
+ * @property {string} shotFormatted - 格式化后的镜头段（Unicode字母/数字，数字段补到2位）
+ * @property {string} takeFormatted - 格式化后的拍次段（Unicode字母/数字，数字段补到2位）
  * @property {string} cameraId - 摄影机标识符（2位字母）
  * @property {string} rating - 拍摄评级（ok/kp/ng）
  */
@@ -113,19 +114,32 @@ const DEFAULT_CONFIG = {
  * 2. 不能全为连字符
  * 3. 不能是" - "格式
  */
-function isValidValue(value: string): boolean {
-  value = value.trim();
-  if (!value) return false;
-  if (/^-+$/.test(value)) return false;
-  if (/^\s*-\s*$/.test(value)) return false;
-  return true;
+type ClipDataValidationCode = 'INVALID_SCENE' | 'INVALID_SHOT_TAKE' | 'INVALID_CAMERA_ROLL';
+
+interface ClipDataValidationResult {
+  data: ProcessedClipData | null;
+  code?: ClipDataValidationCode;
+}
+
+function isValidSceneValue(value: string): boolean {
+  const normalized = value.trim();
+  return Boolean(normalized) && !/^-+$/.test(normalized);
+}
+
+function splitShotTake(value: string): [string, string] | null {
+  const normalized = value.replace(/\s/g, '');
+  const parts = normalized.split('-');
+  if (parts.length !== 2 || parts.some(part => !part)) return null;
+  if (!parts.every(part => /^[\p{L}\p{N}]+$/u.test(part))) return null;
+  if (!parts.every(part => /\p{Nd}/u.test(part))) return null;
+  return [parts[0], parts[1]];
 }
 
 /**
  * 格式化场景编号
  * 
  * @param {string} scene - 原始场景编号
- * @returns {string} 格式化后的场景编号（3位数字，大写）
+ * @returns {string} 格式化后的场景值（数字段至少3位，拉丁字母大写）
  * 
  * @example
  * formatSceneNumber("A12") => "A012"
@@ -138,16 +152,20 @@ function formatSceneNumber(scene: string): string {
  * 格式化镜头和拍摄编号
  * 
  * @param {string} value - 原始镜头拍摄字符串（格式：镜头-拍摄）
- * @returns {[string, string]} 格式化后的镜头和拍摄编号（各2位数字，小写）
+ * @returns {[string, string]} 格式化后的镜头/拍次段（各段数字补到2位，拉丁字母小写）
  * 
  * @example
  * formatShotTake("3-5") => ["03", "05"]
  */
 function formatShotTake(value: string): [string, string] {
-  const [shot, take] = value.replace(/\s/g, '').split('-');
+  const [shot, take] = splitShotTake(value)!;
   return [
-    shot.replace(/(\d+)/g, match => match.padStart(2, '0')).toLowerCase(),
-    take.replace(/(\d+)/g, match => match.padStart(2, '0')).toLowerCase()
+    shot
+      .replace(/\p{Decimal_Number}+/gu, match => match.padStart(2, '0'))
+      .replace(/[A-Z]/g, letter => letter.toLowerCase()),
+    take
+      .replace(/\p{Decimal_Number}+/gu, match => match.padStart(2, '0'))
+      .replace(/[A-Z]/g, letter => letter.toLowerCase())
   ];
 }
 
@@ -275,44 +293,51 @@ function extractClipElements(clip: Element): ClipElements | null {
  * 3. 提取摄影机标识
  * 4. 从labels元素提取拍摄评级
  */
-export function processClipData(elements: ClipElements): ProcessedClipData | null {
+function validateClipData(elements: ClipElements): ClipDataValidationResult {
   const { scene, shottake, filmdata, labels } = elements;
   
   const sceneValue = scene.textContent || "";
   const shottakeValue = shottake.textContent || "";
   
-  // 验证数据有效性
-  if (!isValidValue(sceneValue) || !isValidValue(shottakeValue)) {
-    return null;
+  if (!isValidSceneValue(sceneValue)) {
+    return { data: null, code: 'INVALID_SCENE' };
   }
   
-  // 验证镜头-拍摄格式
-  const normalizedShotTake = shottakeValue.replace(/\s/g, '');
-  if (!/^\d+-\d+$/.test(normalizedShotTake)) {
-    return null;
+  if (!splitShotTake(shottakeValue)) {
+    return { data: null, code: 'INVALID_SHOT_TAKE' };
   }
   
   // 格式化数据
   const sceneFormatted = formatSceneNumber(sceneValue);
-  const [shotFormatted, takeFormatted] = formatShotTake(normalizedShotTake);
+  const [shotFormatted, takeFormatted] = formatShotTake(shottakeValue);
   
   // 提取摄影机标识
   const cameraroll = filmdata.querySelector('cameraroll');
-  if (!cameraroll?.textContent) return null;
+  if (!cameraroll?.textContent) {
+    return { data: null, code: 'INVALID_CAMERA_ROLL' };
+  }
   
   const cameraId = getCameraIdentifier(cameraroll.textContent);
-  if (!cameraId) return null;
+  if (!cameraId) {
+    return { data: null, code: 'INVALID_CAMERA_ROLL' };
+  }
   
   // 提取评级信息 - 使用提取的labels元素
   const rating = getRatingFromLabels(labels);
   
   return {
-    sceneFormatted,
-    shotFormatted,
-    takeFormatted,
-    cameraId,
-    rating
+    data: {
+      sceneFormatted,
+      shotFormatted,
+      takeFormatted,
+      cameraId,
+      rating
+    },
   };
+}
+
+export function processClipData(elements: ClipElements): ProcessedClipData | null {
+  return validateClipData(elements).data;
 }
 
 /**
@@ -833,8 +858,9 @@ function failedXMLResult(code: string, message: string): XMLProcessResult {
     counts: {
       total: 0,
       processed: 0,
+      ignored: 0,
       skipped: 0,
-      failed: 1,
+      failed: 0,
       csvUnmatched: 0,
     },
     diagnostics: [{ level: 'error', code, message, blocksDownload: true }],
@@ -845,6 +871,41 @@ function getMappedValue(map: Map<string, string> | undefined, originalFileName: 
   if (!map) return undefined;
 
   return map.get(normalizeMatchKey(originalFileName)) || map.get(originalFileName);
+}
+
+function getClipValidationMessage(code: ClipDataValidationCode): string {
+  if (code === 'INVALID_SCENE') return 'clip 的场景号无效，已跳过。';
+  if (code === 'INVALID_SHOT_TAKE') return 'clip 的镜头/拍次格式无效，已跳过。';
+  return 'clip 的摄影机卷号无效，已跳过。';
+}
+
+function isPlaceholderValue(value: string): boolean {
+  const normalized = value.trim().toLocaleLowerCase();
+  return !normalized || /^-+$/.test(normalized) || ['n/a', 'na', 'null', '(null)', 'none'].includes(normalized);
+}
+
+function getIgnoredClipCode(clip: Element): 'IGNORED_AUDIO_ONLY' | 'IGNORED_STILL_IMAGE' | null {
+  const media = Array.from(clip.children).find(child => child.tagName === 'media');
+  const hasAudio = Boolean(media?.querySelector('audio'));
+  const hasVideo = Boolean(media?.querySelector('video'));
+  if (hasAudio && !hasVideo) return 'IGNORED_AUDIO_ONLY';
+
+  const references = Array.from(clip.querySelectorAll('name, pathurl'))
+    .map(element => element.textContent?.trim() || '');
+  const referencesStillImage = references.some(reference => /\.(?:jpg|jpeg)$/i.test(reference));
+  if (!referencesStillImage) return null;
+
+  const scene = clip.querySelector('logginginfo scene')?.textContent || '';
+  const shottake = clip.querySelector('logginginfo shottake')?.textContent || '';
+  return isPlaceholderValue(scene) || isPlaceholderValue(shottake)
+    ? 'IGNORED_STILL_IMAGE'
+    : null;
+}
+
+function getIgnoredClipMessage(code: 'IGNORED_AUDIO_ONLY' | 'IGNORED_STILL_IMAGE'): string {
+  return code === 'IGNORED_AUDIO_ONLY'
+    ? '纯音频 clip 不参与命名和标签写回，节点保留在 XML。'
+    : '缺少有效场景或镜头拍次的 JPEG 静帧不参与命名和标签写回，节点保留在 XML。';
 }
 
 /**
@@ -875,15 +936,10 @@ export async function processXML(file: File, config?: XMLProcessConfig): Promise
 
   const diagnostics: XMLDiagnostic[] = [];
 
-  // 查找并修正所有 labels 元素。
-  const allLabelsElems = xmlDoc.getElementsByTagName('labels');
-  for (const labelsElem of Array.from(allLabelsElems)) {
-    fixLabelsSpelling(labelsElem);
-  }
-
   const clips = Array.from(xmlDoc.getElementsByTagName('clip'));
   const total = clips.length;
   let processedCount = 0;
+  let ignoredCount = 0;
   let skippedCount = 0;
   let failedCount = 0;
   let csvUnmatched = 0;
@@ -896,6 +952,19 @@ export async function processXML(file: File, config?: XMLProcessConfig): Promise
   for (let index = 0; index < clips.length; index += 1) {
     const clip = clips[index];
     const clipId = clip.getAttribute('id') || undefined;
+
+    const ignoredCode = getIgnoredClipCode(clip);
+    if (ignoredCode) {
+      ignoredCount += 1;
+      diagnostics.push({
+        level: 'info',
+        code: ignoredCode,
+        message: getIgnoredClipMessage(ignoredCode),
+        ...(clipId ? { clipId } : {}),
+      });
+      finalConfig.onProgress?.(Math.round(((index + 1) / total) * 100));
+      continue;
+    }
 
     if (!clipId) {
       skippedCount += 1;
@@ -919,13 +988,13 @@ export async function processXML(file: File, config?: XMLProcessConfig): Promise
           clipId,
         });
       } else {
-        const processedData = processClipData(elements);
-        if (!processedData) {
+        const validation = validateClipData(elements);
+        if (!validation.data) {
           skippedCount += 1;
           diagnostics.push({
             level: 'warning',
-            code: 'INVALID_CLIP_DATA',
-            message: 'clip 的场景、镜头、拍摄或摄影机数据无效，已跳过。',
+            code: validation.code || 'INVALID_SCENE',
+            message: getClipValidationMessage(validation.code || 'INVALID_SCENE'),
             clipId,
           });
         } else {
@@ -943,7 +1012,7 @@ export async function processXML(file: File, config?: XMLProcessConfig): Promise
             });
           }
 
-          const newName = generateNewName(processedData, finalConfig, originalFileName);
+          const newName = generateNewName(validation.data, finalConfig, originalFileName);
           updateRelatedElements(clip, xmlDoc, newName);
           processedCount += 1;
         }
@@ -971,6 +1040,7 @@ export async function processXML(file: File, config?: XMLProcessConfig): Promise
   const counts: XMLProcessCounts = {
     total,
     processed: processedCount,
+    ignored: ignoredCount,
     skipped: skippedCount,
     failed: failedCount,
     csvUnmatched,
@@ -979,8 +1049,10 @@ export async function processXML(file: File, config?: XMLProcessConfig): Promise
   if (processedCount === 0) {
     diagnostics.push({
       level: 'error',
-      code: 'NO_CLIPS_PROCESSED',
-      message: '没有任何 clip 成功处理，未生成下载结果。',
+      code: total > 0 && ignoredCount === total ? 'NO_PROCESSABLE_VIDEO_CLIPS' : 'NO_CLIPS_PROCESSED',
+      message: total > 0 && ignoredCount === total
+        ? 'XML 中没有可处理的视频 clip，未生成下载结果。'
+        : '没有任何 clip 成功处理，未生成下载结果。',
       blocksDownload: true,
     });
   }
