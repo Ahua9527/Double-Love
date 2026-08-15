@@ -195,8 +195,8 @@ describe('DoubleLoveUploader', () => {
     await screen.findByText('部分完成')
     expect(screen.getByText('成功')).toBeTruthy()
     expect(screen.getByText('失败')).toBeTruthy()
-    expect(screen.getByText(/共 2 个 clip：处理 1，跳过 1，失败 0/)).toBeTruthy()
-    expect(screen.getByText(/共 0 个 clip：处理 0，跳过 0，失败 1/)).toBeTruthy()
+    expect(screen.getByText(/共 2 个 clip：处理 1，忽略 0，跳过 1，失败 0/)).toBeTruthy()
+    expect(screen.getByText(/共 0 个 clip：处理 0，忽略 0，跳过 0，失败 0/)).toBeTruthy()
     expect(screen.getByText(/MISSING_CLIP_FIELDS.*clip 缺少必要字段/)).toBeTruthy()
     expect(screen.getByText(/INVALID_XML.*无效的 XML 文件/)).toBeTruthy()
     await waitFor(() => {
@@ -205,6 +205,127 @@ describe('DoubleLoveUploader', () => {
         'partial_Double_LOVE.xml',
       ])
     })
+  })
+
+  it('显示 ignored 统计、无 ID 数量，并将相同诊断折叠为可展开的有序 ID 列表', async () => {
+    render(<DoubleLoveUploader />)
+
+    const groupedXml = SYNTHETIC_PREMIERE_XML.replace(
+      '</media>',
+      [
+        '<clip id="audio-1"><name>音频 1</name><media><audio /></media></clip>',
+        '<clip id="audio-2"><name>音频 2</name><media><audio /></media></clip>',
+        '<clip id="audio-3"><name>音频 3</name><media><audio /></media></clip>',
+        '<clip id="audio-4"><name>音频 4</name><media><audio /></media></clip>',
+        '<clip><name>无 ID 1</name><media><audio /></media></clip>',
+        '<clip><name>无 ID 2</name><media><audio /></media></clip>',
+        '</media>',
+      ].join('')
+    )
+    const fileInput = screen.getByLabelText('选择 XML 或 CSV 文件')
+    fireEvent.change(fileInput, {
+      target: { files: [makeTextFile(groupedXml, 'grouped.xml')] },
+    })
+    fireEvent.click(screen.getByRole('button', { name: /处理 1 个XML文件/ }))
+
+    await screen.findByText('成功')
+    expect(screen.getByText(/共 7 个 clip：处理 1，忽略 6，跳过 0，失败 0/)).toBeTruthy()
+
+    const ignoredSummary = screen.getByText(/IGNORED_AUDIO_ONLY.*数量：6/) as HTMLElement
+    const ignoredDetails = ignoredSummary.closest('details') as HTMLDetailsElement | null
+    expect(ignoredDetails?.open).toBe(false)
+    expect(ignoredSummary.textContent).toContain('audio-1')
+    expect(ignoredSummary.textContent).toContain('audio-2')
+    expect(ignoredSummary.textContent).toContain('audio-3')
+    expect(ignoredSummary.textContent).not.toContain('audio-4')
+    expect(ignoredSummary.textContent).toContain('无 clip ID 2 项')
+    expect(ignoredSummary.textContent?.match(/无 clip ID 2 项/g)).toHaveLength(1)
+    expect(ignoredDetails?.closest('[aria-live]')).toBeNull()
+
+    fireEvent.click(ignoredSummary)
+    expect(ignoredDetails?.open).toBe(true)
+    expect(ignoredDetails?.textContent).toContain('无 clip ID 2 项')
+    expect(ignoredDetails?.textContent?.match(/无 clip ID 2 项/g)).toHaveLength(1)
+    expect(ignoredDetails?.textContent).toContain('audio-1')
+    expect(ignoredDetails?.textContent).toContain('audio-2')
+    expect(ignoredDetails?.textContent).toContain('audio-3')
+    expect(ignoredDetails?.textContent).toContain('audio-4')
+    expect(ignoredDetails?.textContent?.indexOf('audio-1')).toBeLessThan(
+      ignoredDetails?.textContent?.indexOf('audio-4') ?? -1
+    )
+  })
+
+  it('仅有 ignored clip 时显示失败且不触发下载', async () => {
+    render(<DoubleLoveUploader />)
+
+    const ignoredOnlyXml = '<project><media>'
+      + '<clip id="audio-only"><media><audio /></media></clip>'
+      + '<clip id="still-only"><name>still.jpg</name><file><name>still.jpg</name></file>'
+      + '<logginginfo><scene /><shottake>-</shottake></logginginfo>'
+      + '<filmdata><cameraroll>STILL001</cameraroll></filmdata>'
+      + '<comments><mastercomment2>still</mastercomment2></comments></clip>'
+      + '</media></project>'
+    const fileInput = screen.getByLabelText('选择 XML 或 CSV 文件')
+    fireEvent.change(fileInput, {
+      target: { files: [makeTextFile(ignoredOnlyXml, 'ignored-only.xml')] },
+    })
+    fireEvent.click(screen.getByRole('button', { name: /处理 1 个XML文件/ }))
+
+    await screen.findByText('失败')
+    expect(screen.getByText(/共 2 个 clip：处理 0，忽略 2，跳过 0，失败 0/)).toBeTruthy()
+    expect(screen.getByText(/NO_PROCESSABLE_VIDEO_CLIPS/)).toBeTruthy()
+    expect(downloadedNames).toEqual([])
+  })
+
+  it('用可访问级别文本和颜色区分 info、warning、error 诊断', async () => {
+    render(<DoubleLoveUploader />)
+
+    const infoXml = SYNTHETIC_PREMIERE_XML.replace(
+      '</media>',
+      '<clip id="audio-info"><name>音频</name><media><audio /></media></clip></media>'
+    )
+    const warningXml = SYNTHETIC_PREMIERE_XML.replace(
+      '</media>',
+      '<clip id="missing-fields"><name>缺字段</name></clip></media>'
+    )
+    const errorXml = '<project><broken></project>'
+    const fileInput = screen.getByLabelText('选择 XML 或 CSV 文件')
+    fireEvent.change(fileInput, {
+      target: { files: [
+        makeTextFile(infoXml, 'info.xml'),
+        makeTextFile(warningXml, 'warning.xml'),
+        makeTextFile(errorXml, 'error.xml'),
+      ] },
+    })
+    fireEvent.click(screen.getByRole('button', { name: /处理 3 个XML文件/ }))
+
+    const infoSummary = await screen.findByText(/提示 · IGNORED_AUDIO_ONLY/)
+    const warningSummary = await screen.findByText(/警告 · MISSING_CLIP_FIELDS/)
+    const errorSummary = await screen.findByText(/错误 · INVALID_XML/)
+
+    expect(infoSummary.textContent).toContain('提示')
+    expect(warningSummary.textContent).toContain('警告')
+    expect(errorSummary.textContent).toContain('错误')
+    expect(infoSummary.className).toContain('text-slate')
+    expect(warningSummary.className).toContain('text-amber')
+    expect(errorSummary.className).toContain('text-red')
+  })
+
+  it('意外异常显示文件级诊断且不伪装成 clip 失败', async () => {
+    render(<DoubleLoveUploader />)
+
+    vi.spyOn(DOMParser.prototype, 'parseFromString').mockImplementation(() => {
+      throw new Error('synthetic parser crash')
+    })
+    const fileInput = screen.getByLabelText('选择 XML 或 CSV 文件')
+    fireEvent.change(fileInput, {
+      target: { files: [makeTextFile(SYNTHETIC_PREMIERE_XML, 'unexpected.xml')] },
+    })
+    fireEvent.click(screen.getByRole('button', { name: /处理 1 个XML文件/ }))
+
+    const summary = await screen.findByText(/错误 · UNEXPECTED_PROCESSING_ERROR/)
+    expect(summary.textContent).toContain('文件级处理异常')
+    expect(screen.getByText(/共 0 个 clip：处理 0，忽略 0，跳过 0，失败 0/)).toBeTruthy()
   })
 
   it('CSV 没有可用 Season/Episode 时显示诊断，不宣称正在使用 CSV 命名', async () => {
