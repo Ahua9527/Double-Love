@@ -42,6 +42,56 @@ function getStatusLabel(status: XMLProcessResult['status']): string {
   if (status === 'partial') return '部分完成';
   return '失败';
 }
+
+interface DiagnosticGroup {
+  level: XMLDiagnostic['level'];
+  code: string;
+  message: string;
+  count: number;
+  missingClipIdCount: number;
+  clipIds: string[];
+}
+
+function groupDiagnostics(diagnostics: XMLDiagnostic[]): DiagnosticGroup[] {
+  const groups = new Map<string, DiagnosticGroup>();
+
+  for (const diagnostic of diagnostics) {
+    const key = `${diagnostic.level}\u0000${diagnostic.code}\u0000${diagnostic.message}`;
+    const existing = groups.get(key);
+    if (existing) {
+      existing.count += 1;
+      if (diagnostic.clipId) {
+        existing.clipIds.push(diagnostic.clipId);
+      } else {
+        existing.missingClipIdCount += 1;
+      }
+      continue;
+    }
+
+    groups.set(key, {
+      level: diagnostic.level,
+      code: diagnostic.code,
+      message: diagnostic.message,
+      count: 1,
+      missingClipIdCount: diagnostic.clipId ? 0 : 1,
+      clipIds: diagnostic.clipId ? [diagnostic.clipId] : [],
+    });
+  }
+
+  return Array.from(groups.values());
+}
+
+function getDiagnosticLevelLabel(level: XMLDiagnostic['level']): string {
+  if (level === 'error') return '错误';
+  if (level === 'warning') return '警告';
+  return '提示';
+}
+
+function getDiagnosticLevelClass(level: XMLDiagnostic['level']): string {
+  if (level === 'error') return 'text-red-700 dark:text-red-300';
+  if (level === 'warning') return 'text-amber-700 dark:text-amber-300';
+  return 'text-slate-600 dark:text-slate-300';
+}
 /**
  * Double LOVE文件上传组件
  * @returns {JSX.Element} 文件上传处理界面
@@ -208,6 +258,25 @@ const DoubleLoveUploader = () => {
     setCsvFiles(prev => prev.filter((_, i) => i !== index));
   };
 
+  const resetProcessingOutput = () => {
+    setReports([]);
+    setCsvDiagnostics([]);
+    setInputError('');
+    setUsesCsvNaming(false);
+    setProgress(0);
+    setCurrentFile('');
+  };
+
+  const handleClearXmlFiles = () => {
+    setFiles([]);
+    resetProcessingOutput();
+  };
+
+  const handleClearCsvFiles = () => {
+    setCsvFiles([]);
+    resetProcessingOutput();
+  };
+
 
   /**
    * 格式化文件大小
@@ -307,11 +376,13 @@ const DoubleLoveUploader = () => {
       } catch (error) {
         const result: XMLProcessResult = {
           status: 'failed',
-          counts: { total: 0, processed: 0, skipped: 0, failed: 1, csvUnmatched: 0 },
+          counts: { total: 0, processed: 0, ignored: 0, skipped: 0, failed: 0, csvUnmatched: 0 },
           diagnostics: [{
             level: 'error',
             code: 'UNEXPECTED_PROCESSING_ERROR',
-            message: error instanceof Error ? error.message : '处理文件时发生未知错误。',
+            message: error instanceof Error
+              ? `文件级处理异常：${error.message}`
+              : '文件级处理异常：处理文件时发生未知错误。',
             blocksDownload: true,
           }],
         };
@@ -453,8 +524,11 @@ const DoubleLoveUploader = () => {
                 </h3>
                 <button
                   type="button"
-                  onClick={() => setFiles([])}
-                  className="text-sm text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200"
+                  onClick={handleClearXmlFiles}
+                  disabled={processing}
+                  className={`text-sm text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 ${
+                    processing ? 'cursor-not-allowed opacity-50' : ''
+                  }`}
                 >
                   清空
                 </button>
@@ -502,8 +576,11 @@ const DoubleLoveUploader = () => {
                 </h3>
                 <button
                   type="button"
-                  onClick={() => setCsvFiles([])}
-                  className="text-sm text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200"
+                  onClick={handleClearCsvFiles}
+                  disabled={processing}
+                  className={`text-sm text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 ${
+                    processing ? 'cursor-not-allowed opacity-50' : ''
+                  }`}
                 >
                   清空
                 </button>
@@ -583,36 +660,58 @@ const DoubleLoveUploader = () => {
           )}
 
           {reports.length > 0 && (
-            <div className="space-y-2" role="status" aria-live="polite">
+            <div className="space-y-2">
               <h3 className="text-sm font-medium text-gray-700 dark:text-gray-300">处理结果</h3>
               {reports.map(({ fileName, result }, index) => (
                 <div
                   key={`${fileName}-${index}`}
                   className="rounded-md border border-gray-200 dark:border-gray-600 p-3 text-sm"
                 >
-                  <div className="flex items-center justify-between gap-3">
-                    <span className="truncate text-gray-700 dark:text-gray-300">{fileName}</span>
-                    <span className={
-                      result.status === 'success'
-                        ? 'text-green-600'
-                        : result.status === 'partial'
-                          ? 'text-amber-600'
-                          : 'text-red-600'
-                    }>
-                      {getStatusLabel(result.status)}
-                    </span>
+                  <div role="status" aria-live="polite">
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="truncate text-gray-700 dark:text-gray-300">{fileName}</span>
+                      <span className={
+                        result.status === 'success'
+                          ? 'text-green-600'
+                          : result.status === 'partial'
+                            ? 'text-amber-600'
+                            : 'text-red-600'
+                      }>
+                        {getStatusLabel(result.status)}
+                      </span>
+                    </div>
+                    <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                      共 {result.counts.total} 个 clip：处理 {result.counts.processed}，忽略 {result.counts.ignored}，跳过 {result.counts.skipped}，失败 {result.counts.failed}，XML clip 未匹配 CSV {result.counts.csvUnmatched}
+                    </p>
                   </div>
-                  <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                    共 {result.counts.total} 个 clip：处理 {result.counts.processed}，跳过 {result.counts.skipped}，失败 {result.counts.failed}，XML clip 未匹配 CSV {result.counts.csvUnmatched}
-                  </p>
                   {result.diagnostics.length > 0 && (
-                    <ul className="mt-2 space-y-1 text-xs text-gray-600 dark:text-gray-300">
-                      {result.diagnostics.map((diagnostic, diagnosticIndex) => (
-                        <li key={`${diagnostic.code}-${diagnostic.clipId || 'file'}-${diagnosticIndex}`}>
-                          {diagnostic.code}{diagnostic.clipId ? ` · ${diagnostic.clipId}` : ''}：{diagnostic.message}
-                        </li>
+                    <div className="mt-2 space-y-1 text-xs text-gray-600 dark:text-gray-300">
+                      {groupDiagnostics(result.diagnostics).map(group => (
+                        <details key={`${group.level}-${group.code}-${group.message}`}>
+                          <summary className={`cursor-pointer ${getDiagnosticLevelClass(group.level)}`}>
+                            {getDiagnosticLevelLabel(group.level)} · {group.code} · 数量：{group.count} · {group.message}
+                            {group.missingClipIdCount > 0 && (
+                              <span> · 无 clip ID {group.missingClipIdCount} 项</span>
+                            )}
+                            {group.clipIds.length > 0 && (
+                              <span> · 示例 ID：{group.clipIds.slice(0, 3).join('、')}</span>
+                            )}
+                          </summary>
+                          {group.clipIds.length > 0 ? (
+                            <>
+                              <p className="mt-1 pl-4">完整 clip ID 列表（按 XML 顺序）：</p>
+                              <ol className="mt-1 list-decimal pl-5">
+                                {group.clipIds.map((clipId, clipIndex) => (
+                                  <li key={`${clipId}-${clipIndex}`}>{clipId}</li>
+                                ))}
+                              </ol>
+                            </>
+                          ) : (
+                            <p className="mt-1 pl-4">没有可列出的 clip ID。</p>
+                          )}
+                        </details>
                       ))}
-                    </ul>
+                    </div>
                   )}
                 </div>
               ))}
