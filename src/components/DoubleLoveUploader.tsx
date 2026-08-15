@@ -258,6 +258,25 @@ const DoubleLoveUploader = () => {
     setCsvFiles(prev => prev.filter((_, i) => i !== index));
   };
 
+  const resetProcessingOutput = () => {
+    setReports([]);
+    setCsvDiagnostics([]);
+    setInputError('');
+    setUsesCsvNaming(false);
+    setProgress(0);
+    setCurrentFile('');
+  };
+
+  const handleClearXmlFiles = () => {
+    setFiles([]);
+    resetProcessingOutput();
+  };
+
+  const handleClearCsvFiles = () => {
+    setCsvFiles([]);
+    resetProcessingOutput();
+  };
+
 
   /**
    * 格式化文件大小
@@ -505,8 +524,11 @@ const DoubleLoveUploader = () => {
                 </h3>
                 <button
                   type="button"
-                  onClick={() => setFiles([])}
-                  className="text-sm text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200"
+                  onClick={handleClearXmlFiles}
+                  disabled={processing}
+                  className={`text-sm text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 ${
+                    processing ? 'cursor-not-allowed opacity-50' : ''
+                  }`}
                 >
                   清空
                 </button>
@@ -554,8 +576,11 @@ const DoubleLoveUploader = () => {
                 </h3>
                 <button
                   type="button"
-                  onClick={() => setCsvFiles([])}
-                  className="text-sm text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200"
+                  onClick={handleClearCsvFiles}
+                  disabled={processing}
+                  className={`text-sm text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 ${
+                    processing ? 'cursor-not-allowed opacity-50' : ''
+                  }`}
                 >
                   清空
                 </button>
