@@ -1,0 +1,14 @@
+[workspace]
+members = [
+  "crates/double-love-engine",
+  "crates/double-love-cli",
+  "src-tauri",
+]
+resolver = "2"
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+ts-rs = "12"
+uuid = { version = "1", features = ["serde", "v4"] }

@@ -1,0 +1,42 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* 主题化表面色：亮/暗两套，经 tailwind.config.js 的 var() 颜色暴露给原子类 */
+:root {
+  --surface: #F1F1F1;
+  --card: #F9F9F9;
+  --fg: #1A1A1A;
+  --muted-fg: #6E6E6E;
+  --line: rgb(0 0 0 / 0.10);
+  --sidebar: #F6F6F6;
+  --sidebar-line: rgb(0 0 0 / 0.08);
+  --sidebar-accent: rgb(0 0 0 / 0.05);
+  --table: #FCFCFC;
+  --table-head: rgb(0 0 0 / 0.03);
+  --table-head-fg: #6E6E6E;
+  --table-line: rgb(0 0 0 / 0.06);
+  --table-hover: rgb(0 0 0 / 0.04);
+}
+
+.dark {
+  --surface: #212121;
+  --card: #171717;
+  --fg: #ECECEC;
+  --muted-fg: #9A9A9A;
+  --line: rgb(255 255 255 / 0.10);
+  --sidebar: #1B1B1B;
+  --sidebar-line: rgb(255 255 255 / 0.08);
+  --sidebar-accent: rgb(255 255 255 / 0.06);
+  --table: #1A1A1A;
+  --table-head: rgb(255 255 255 / 0.04);
+  --table-head-fg: #9A9A9A;
+  --table-line: rgb(255 255 255 / 0.07);
+  --table-hover: rgb(255 255 255 / 0.05);
+}
+
+body {
+  background-color: var(--surface);
+  color: var(--fg);
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Arial, sans-serif;
+}

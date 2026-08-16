@@ -1,0 +1,14 @@
+[package]
+name = "double-love-cli"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "double-love"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+double-love-engine = { path = "../double-love-engine" }
+serde.workspace = true
+serde_json.workspace = true
