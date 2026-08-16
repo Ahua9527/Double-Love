@@ -6,7 +6,7 @@
 | --- | --- | --- |
 | [Web/PWA Stabilization](https://github.com/Ahua9527/Double-Love/issues/17) | 收口现有浏览器工具的正确性、可访问性、PWA 和测试门槛 | DL-001～DL-014 |
 | [csv2xml & Format Lab](https://github.com/Ahua9527/Double-Love/issues/25) | 冻结时间基、字段映射、Golden Fixture 和 NLE 语义 Diff | DL-015～DL-028 |
-| [Rust/GPUI Desktop Foundation](https://github.com/Ahua9527/Double-Love/issues/18) | 建立 Rust Engine、权限、项目目录、SQLite、统一契约与 GPUI 原生桌面基础；DL-029 D0 设计确认是界面代码前置依赖 | DL-029～DL-033、DL-074 |
+| [Rust Desktop Foundation](https://github.com/Ahua9527/Double-Love/issues/18) | 建立 Rust Engine、权限、项目目录、SQLite、统一契约与 Tauri 2 + React 桌面基础；DL-029 D0 设计确认是界面代码前置依赖 | DL-029～DL-033、DL-074 |
 | [Silverstack→Premiere Metadata MVP](https://github.com/Ahua9527/Double-Love/issues/19) | 完成第一个 Metadata round-trip 闭环 | 后续按 DL-034 起拆分；DL-042 已拆分为 #42，被 DL-029 D0 阻断 |
 | [Speech Core](https://github.com/Ahua9527/Double-Love/issues/20) | 本地转录、对齐和说话人能力 | Metadata MVP 通过后再拆 |
 | [Editorial Intelligence](https://github.com/Ahua9527/Double-Love/issues/21) | Proposal、Search、Selects 和 Soft Edit | Speech Core 通过后再拆 |
@@ -42,7 +42,7 @@
 
 ## 第二轮可执行 Issue（Studio 桌面方向，2026-08-15）
 
-- DL-029（治理/门槛）：[#41](https://github.com/Ahua9527/Double-Love/issues/41)——D1 Engine·CLI 边界 / D2 GPUI 技术原型；D0 设计确认已于 2026-08-15 由产品负责人豁免（跳过设计稿阶段，视觉方向以参照截图为准），实现分支 `codex/gpui-foundation`。
+- DL-029（治理/门槛）：[#41](https://github.com/Ahua9527/Double-Love/issues/41)——D1 Engine·CLI 边界 / D2 桌面技术原型（Tauri 2 + React）；D0 设计确认已于 2026-08-15 由产品负责人豁免（跳过设计稿阶段，视觉方向以参照截图为准）。桌面 UI 方向 2026-08-16 由 GPUI 回调为 Tauri 2 + React，实现分支 `codex/tauri-studio`；GPUI 骨架留档于 `codex/gpui-foundation` 分支与已关闭的 PR #44。
 - DL-042（基础 GUI 工作区）：[#42](https://github.com/Ahua9527/Double-Love/issues/42)——原被 DL-029 D0 阻断，已随豁免解除；界面按参照截图方向实现。
 - DL-074（桌面无障碍）：[#43](https://github.com/Ahua9527/Double-Love/issues/43)——首阶段暂缓；不阻断内部 Metadata MVP，阻断第一个外部测试版。
 
