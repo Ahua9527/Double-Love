@@ -127,6 +127,16 @@ pub struct TranscriptSegment {
     pub partially_omitted: bool,
 }
 
+/// TranscriptView 一次渲染所需的全部数据（segment.rs::transcript_view 装配）。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct TranscriptViewData {
+    pub words: Vec<WordAnchor>,
+    pub segments: Vec<TranscriptSegment>,
+    /// 当前活跃的 omit 操作（恢复操作的入口）。
+    pub omits: Vec<EditOperation>,
+}
+
 /// TimelineIR 中的一个片段：源素材的连续帧区间 → 输出时间线的连续帧区间。
 /// 帧区间均为 [in, out) 半开。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
