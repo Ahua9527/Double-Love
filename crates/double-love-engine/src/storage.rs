@@ -535,6 +535,38 @@ impl ProjectStore {
             .ok_or_else(|| StorageError::MissingRow(op_id.to_string()))
     }
 
+    /// 导出落账：开修订 + 写 export_artifact + 记日志（单事务），返回修订号。
+    pub fn apply_export_artifact(
+        &self,
+        artifact_id: &str,
+        asset_id: &str,
+        kind: &str,
+        path: &str,
+        sha256: &str,
+    ) -> Result<u64, StorageError> {
+        let tx = self.connection.unchecked_transaction()?;
+        let revision = Self::insert_revision_in(&tx, "export_roughcut")?;
+        tx.execute(
+            "INSERT INTO export_artifact(id, revision, asset_id, kind, path, sha256)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![artifact_id, revision, asset_id, kind, path, sha256],
+        )?;
+        Self::log_operation_in(
+            &tx,
+            revision,
+            "export_roughcut",
+            &serde_json::json!({
+                "id": artifact_id,
+                "asset_id": asset_id,
+                "kind": kind,
+                "path": path,
+                "sha256": sha256,
+            }),
+        )?;
+        tx.commit()?;
+        Ok(revision)
+    }
+
     /// restore：supersede 原 omit + 写 restore 操作 + 按需拆分段（单事务）。
     /// `pieces` 为拆分后仍活跃的 omit 区间（含原 handles）。
     #[allow(clippy::too_many_arguments)]

@@ -96,7 +96,9 @@ pub fn export_xmeml(input: &XmemlInput) -> String {
     let file_id = format!(
         "video_file_{}_{}",
         safe,
-        pseudo_uuid(input.source_path).replace('-', "").to_uppercase()
+        pseudo_uuid(input.source_path)
+            .replace('-', "")
+            .to_uppercase()
     );
     let stem = input
         .file_name
@@ -113,39 +115,44 @@ pub fn export_xmeml(input: &XmemlInput) -> String {
         }};
     }
 
-    out.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE xmeml>\n<xmeml version=\"4\">\n");
+    out.push_str(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE xmeml>\n<xmeml version=\"4\">\n",
+    );
     line!(1, format!("<sequence id=\"sequence_id_{safe}\">"));
-    line!(2, "<updatebehaviour>add</updatebehaviour>".to_string());
+    line!(2, "<updatebehaviour>add</updatebehaviour>");
     line!(2, format!("<name>{}</name>", xml_escape(&ir.name)));
-    line!(2, format!("<duration>{}</duration>", ir.output_duration_frames));
-    line!(2, "<rate>".to_string());
+    line!(
+        2,
+        format!("<duration>{}</duration>", ir.output_duration_frames)
+    );
+    line!(2, "<rate>");
     line!(3, format!("<ntsc>{ntsc}</ntsc>"));
     line!(3, format!("<timebase>{timebase}</timebase>"));
-    line!(2, "</rate>".to_string());
-    line!(2, "<timecode>".to_string());
-    line!(3, "<rate>".to_string());
+    line!(2, "</rate>");
+    line!(2, "<timecode>");
+    line!(3, "<rate>");
     line!(4, format!("<ntsc>{ntsc}</ntsc>"));
     line!(4, format!("<timebase>{timebase}</timebase>"));
-    line!(3, "</rate>".to_string());
-    line!(3, "<frame>0</frame>".to_string());
-    line!(3, "<source>source</source>".to_string());
-    line!(2, "</timecode>".to_string());
-    line!(2, "<in>-1</in>".to_string());
-    line!(2, "<out>-1</out>".to_string());
-    line!(2, "<media>".to_string());
-    line!(3, "<video>".to_string());
-    line!(4, "<format>".to_string());
-    line!(5, "<samplecharacteristics>".to_string());
+    line!(3, "</rate>");
+    line!(3, "<frame>0</frame>");
+    line!(3, "<source>source</source>");
+    line!(2, "</timecode>");
+    line!(2, "<in>-1</in>");
+    line!(2, "<out>-1</out>");
+    line!(2, "<media>");
+    line!(3, "<video>");
+    line!(4, "<format>");
+    line!(5, "<samplecharacteristics>");
     if let Some(width) = input.width {
         line!(6, format!("<width>{width}</width>"));
     }
     if let Some(height) = input.height {
         line!(6, format!("<height>{height}</height>"));
     }
-    line!(6, "<pixelaspectratio>Square</pixelaspectratio>".to_string());
-    line!(5, "</samplecharacteristics>".to_string());
-    line!(4, "</format>".to_string());
-    line!(4, "<track>".to_string());
+    line!(6, "<pixelaspectratio>Square</pixelaspectratio>");
+    line!(5, "</samplecharacteristics>");
+    line!(4, "</format>");
+    line!(4, "<track>");
 
     for (index, clip) in ir.clips.iter().enumerate() {
         let clip_name = format!("{stem}_{:03}", index + 1);
@@ -153,90 +160,105 @@ pub fn export_xmeml(input: &XmemlInput) -> String {
         let audio_ref = format!("{safe}_ci_{:03}_a", index + 1);
         line!(5, format!("<clipitem id=\"{video_ref}\">"));
         line!(6, format!("<name>{}</name>", xml_escape(&clip_name)));
-        line!(6, format!("<duration>{}</duration>", ir.source_duration_frames));
+        line!(
+            6,
+            format!("<duration>{}</duration>", ir.source_duration_frames)
+        );
         line!(6, format!("<in>{}</in>", clip.source_in_frame));
         line!(6, format!("<out>{}</out>", clip.source_out_frame));
         line!(6, format!("<start>{}</start>", clip.timeline_start_frame));
         line!(6, format!("<end>{}</end>", clip.timeline_end_frame));
-        line!(6, "<pixelaspectratio>Square</pixelaspectratio>".to_string());
+        line!(6, "<pixelaspectratio>Square</pixelaspectratio>");
         if index == 0 {
             // 首个 clipitem 内嵌完整 file 定义；其余按 id 引用
             line!(6, format!("<file id=\"{file_id}\">"));
             line!(7, format!("<name>{}</name>", xml_escape(input.file_name)));
-            line!(7, format!("<pathurl>{}</pathurl>", path_url(input.source_path)));
-            line!(7, "<rate>".to_string());
+            line!(
+                7,
+                format!("<pathurl>{}</pathurl>", path_url(input.source_path))
+            );
+            line!(7, "<rate>");
             line!(8, format!("<ntsc>{ntsc}</ntsc>"));
             line!(8, format!("<timebase>{timebase}</timebase>"));
-            line!(7, "</rate>".to_string());
-            line!(7, format!("<duration>{}</duration>", ir.source_duration_frames));
-            line!(7, "<timecode>".to_string());
+            line!(7, "</rate>");
+            line!(
+                7,
+                format!("<duration>{}</duration>", ir.source_duration_frames)
+            );
+            line!(7, "<timecode>");
             line!(
                 8,
-                format!("<frame>{}</frame>", input.source_tc_start_frame.unwrap_or(0)),
+                format!(
+                    "<frame>{}</frame>",
+                    input.source_tc_start_frame.unwrap_or(0)
+                ),
             );
-            line!(8, "<displayformat>NDF</displayformat>".to_string());
-            line!(8, "<source>source</source>".to_string());
-            line!(7, "</timecode>".to_string());
-            line!(7, "<media>".to_string());
-            line!(8, "<video>".to_string());
-            line!(9, "<samplecharacteristics>".to_string());
+            line!(8, "<displayformat>NDF</displayformat>");
+            line!(8, "<source>source</source>");
+            line!(7, "</timecode>");
+            line!(7, "<media>");
+            line!(8, "<video>");
+            line!(9, "<samplecharacteristics>");
             if let Some(width) = input.width {
                 line!(10, format!("<width>{width}</width>"));
             }
             if let Some(height) = input.height {
                 line!(10, format!("<height>{height}</height>"));
             }
-            line!(10, "<pixelaspectratio>Square</pixelaspectratio>".to_string());
-            line!(9, "</samplecharacteristics>".to_string());
-            line!(8, "</video>".to_string());
-            line!(8, "<audio>".to_string());
-            line!(9, "<samplecharacteristics>".to_string());
-            line!(10, "<depth>16</depth>".to_string());
-            line!(10, format!("<samplerate>{}</samplerate>", input.audio_sample_rate));
-            line!(9, "</samplecharacteristics>".to_string());
+            line!(10, "<pixelaspectratio>Square</pixelaspectratio>");
+            line!(9, "</samplecharacteristics>");
+            line!(8, "</video>");
+            line!(8, "<audio>");
+            line!(9, "<samplecharacteristics>");
+            line!(10, "<depth>16</depth>");
+            line!(
+                10,
+                format!("<samplerate>{}</samplerate>", input.audio_sample_rate)
+            );
+            line!(9, "</samplecharacteristics>");
             if let Some(channels) = input.audio_channels {
                 line!(9, format!("<channelcount>{channels}</channelcount>"));
             }
-            line!(8, "</audio>".to_string());
-            line!(7, "</media>".to_string());
-            line!(6, "</file>".to_string());
+            line!(8, "</audio>");
+            line!(7, "</media>");
+            line!(6, "</file>");
         } else {
             line!(6, format!("<file id=\"{file_id}\"/>"));
         }
-        line!(6, "<sourcetrack>".to_string());
-        line!(7, "<mediatype>video</mediatype>".to_string());
-        line!(6, "</sourcetrack>".to_string());
-        line!(6, "<link>".to_string());
+        line!(6, "<sourcetrack>");
+        line!(7, "<mediatype>video</mediatype>");
+        line!(6, "</sourcetrack>");
+        line!(6, "<link>");
         line!(7, format!("<linkclipref>{video_ref}</linkclipref>"));
-        line!(7, "<mediatype>video</mediatype>".to_string());
-        line!(7, "<trackindex>1</trackindex>".to_string());
-        line!(7, "<clipindex>1</clipindex>".to_string());
-        line!(6, "</link>".to_string());
-        line!(6, "<link>".to_string());
+        line!(7, "<mediatype>video</mediatype>");
+        line!(7, "<trackindex>1</trackindex>");
+        line!(7, "<clipindex>1</clipindex>");
+        line!(6, "</link>");
+        line!(6, "<link>");
         line!(7, format!("<linkclipref>{audio_ref}</linkclipref>"));
-        line!(7, "<mediatype>audio</mediatype>".to_string());
-        line!(7, "<trackindex>2</trackindex>".to_string());
-        line!(7, "<clipindex>1</clipindex>".to_string());
-        line!(6, "</link>".to_string());
-        line!(5, "</clipitem>".to_string());
+        line!(7, "<mediatype>audio</mediatype>");
+        line!(7, "<trackindex>2</trackindex>");
+        line!(7, "<clipindex>1</clipindex>");
+        line!(6, "</link>");
+        line!(5, "</clipitem>");
     }
 
-    line!(4, "</track>".to_string());
-    line!(3, "</video>".to_string());
-    line!(3, "<audio>".to_string());
-    line!(4, "<outputs>".to_string());
-    line!(5, "<group>".to_string());
-    line!(6, "<index>1</index>".to_string());
-    line!(6, "<numchannels>1</numchannels>".to_string());
-    line!(6, "<downmix>0</downmix>".to_string());
-    line!(6, "<channel>".to_string());
-    line!(7, "<index>1</index>".to_string());
-    line!(6, "</channel>".to_string());
-    line!(5, "</group>".to_string());
-    line!(4, "</outputs>".to_string());
-    line!(4, "<in>-1</in>".to_string());
-    line!(4, "<out>-1</out>".to_string());
-    line!(4, "<track>".to_string());
+    line!(4, "</track>");
+    line!(3, "</video>");
+    line!(3, "<audio>");
+    line!(4, "<outputs>");
+    line!(5, "<group>");
+    line!(6, "<index>1</index>");
+    line!(6, "<numchannels>1</numchannels>");
+    line!(6, "<downmix>0</downmix>");
+    line!(6, "<channel>");
+    line!(7, "<index>1</index>");
+    line!(6, "</channel>");
+    line!(5, "</group>");
+    line!(4, "</outputs>");
+    line!(4, "<in>-1</in>");
+    line!(4, "<out>-1</out>");
+    line!(4, "<track>");
 
     for (index, clip) in ir.clips.iter().enumerate() {
         let clip_name = format!("{stem}_{:03}", index + 1);
@@ -244,35 +266,38 @@ pub fn export_xmeml(input: &XmemlInput) -> String {
         let audio_ref = format!("{safe}_ci_{:03}_a", index + 1);
         line!(5, format!("<clipitem id=\"{audio_ref}\">"));
         line!(6, format!("<name>{}</name>", xml_escape(&clip_name)));
-        line!(6, format!("<duration>{}</duration>", ir.source_duration_frames));
+        line!(
+            6,
+            format!("<duration>{}</duration>", ir.source_duration_frames)
+        );
         line!(6, format!("<in>{}</in>", clip.source_in_frame));
         line!(6, format!("<out>{}</out>", clip.source_out_frame));
         line!(6, format!("<start>{}</start>", clip.timeline_start_frame));
         line!(6, format!("<end>{}</end>", clip.timeline_end_frame));
         line!(6, format!("<file id=\"{file_id}\"/>"));
-        line!(6, "<sourcetrack>".to_string());
-        line!(7, "<mediatype>audio</mediatype>".to_string());
-        line!(7, "<trackindex>1</trackindex>".to_string());
-        line!(6, "</sourcetrack>".to_string());
-        line!(6, "<link>".to_string());
+        line!(6, "<sourcetrack>");
+        line!(7, "<mediatype>audio</mediatype>");
+        line!(7, "<trackindex>1</trackindex>");
+        line!(6, "</sourcetrack>");
+        line!(6, "<link>");
         line!(7, format!("<linkclipref>{video_ref}</linkclipref>"));
-        line!(7, "<mediatype>video</mediatype>".to_string());
-        line!(7, "<trackindex>1</trackindex>".to_string());
-        line!(7, "<clipindex>1</clipindex>".to_string());
-        line!(6, "</link>".to_string());
-        line!(6, "<link>".to_string());
+        line!(7, "<mediatype>video</mediatype>");
+        line!(7, "<trackindex>1</trackindex>");
+        line!(7, "<clipindex>1</clipindex>");
+        line!(6, "</link>");
+        line!(6, "<link>");
         line!(7, format!("<linkclipref>{audio_ref}</linkclipref>"));
-        line!(7, "<mediatype>audio</mediatype>".to_string());
-        line!(7, "<trackindex>2</trackindex>".to_string());
-        line!(7, "<clipindex>1</clipindex>".to_string());
-        line!(6, "</link>".to_string());
-        line!(5, "</clipitem>".to_string());
+        line!(7, "<mediatype>audio</mediatype>");
+        line!(7, "<trackindex>2</trackindex>");
+        line!(7, "<clipindex>1</clipindex>");
+        line!(6, "</link>");
+        line!(5, "</clipitem>");
     }
 
-    line!(4, "</track>".to_string());
-    line!(3, "</audio>".to_string());
-    line!(2, "</media>".to_string());
-    line!(1, "</sequence>".to_string());
+    line!(4, "</track>");
+    line!(3, "</audio>");
+    line!(2, "</media>");
+    line!(1, "</sequence>");
     out.push_str("</xmeml>\n");
     out
 }
@@ -285,16 +310,16 @@ mod tests {
 
     #[test]
     fn xml_escape_covers_five_entities() {
-        assert_eq!(xml_escape("a&b\"c'd<e>f"), "a&amp;b&quot;c&apos;d&lt;e&gt;f");
+        assert_eq!(
+            xml_escape("a&b\"c'd<e>f"),
+            "a&amp;b&quot;c&apos;d&lt;e&gt;f"
+        );
     }
 
     #[test]
     fn pseudo_uuid_matches_md5_reference() {
         // md5("test") = 098f6bcd4621d373cade4e832627b4f6
-        assert_eq!(
-            pseudo_uuid("test"),
-            "098f6bcd-4621-d373-cade-4e832627b4f6"
-        );
+        assert_eq!(pseudo_uuid("test"), "098f6bcd-4621-d373-cade-4e832627b4f6");
     }
 
     #[test]
@@ -395,7 +420,10 @@ mod tests {
             source_tc_start_frame: None,
         });
         std::fs::write(
-            concat!(env!("CARGO_MANIFEST_DIR"), "/src/export/xmeml_golden_25fps.xml"),
+            concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/src/export/xmeml_golden_25fps.xml"
+            ),
             xml,
         )
         .expect("golden rewritten");
@@ -421,8 +449,9 @@ mod tests {
                 source_tc_start_frame: None,
             });
             assert!(
-                xml.contains(&format!("<ntsc>{ntsc}</ntsc>\n            <timebase>{timebase}</timebase>"))
-                    || xml.contains(&format!("<ntsc>{ntsc}</ntsc>")),
+                xml.contains(&format!(
+                    "<ntsc>{ntsc}</ntsc>\n            <timebase>{timebase}</timebase>"
+                )) || xml.contains(&format!("<ntsc>{ntsc}</ntsc>")),
                 "ntsc flag for {rate:?}"
             );
             assert!(xml.contains(&format!("<timebase>{timebase}</timebase>")));
