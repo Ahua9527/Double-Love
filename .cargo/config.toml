@@ -1,3 +1,6 @@
 [env]
 TS_RS_EXPORT_DIR = { value = "bindings", relative = true }
 TS_RS_LARGE_INT = "bigint"
+# gpui 构建需编译 Metal shader；Command Line Tools 不含 metal 工具，
+# 指向完整 Xcode（项目仅支持 macOS，要求已安装 Xcode.app）。
+DEVELOPER_DIR = { value = "/Applications/Xcode.app/Contents/Developer", force = false }
