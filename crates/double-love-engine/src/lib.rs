@@ -2,6 +2,7 @@ mod contracts;
 mod media;
 mod project;
 mod rational;
+mod sidecar;
 mod storage;
 
 pub use contracts::{
@@ -11,6 +12,10 @@ pub use contracts::{
 pub use media::{FfmpegTools, PREPARED_SAMPLE_RATE, import_media};
 pub use project::{ProjectError, ProjectSummary, create_project, open_project};
 pub use rational::{FrameRate, Rational, Round, frame_to_samples, samples_to_frame};
+pub use sidecar::{
+    SIDECAR_PROTOCOL_VERSION, Sidecar, SidecarCommand, SidecarError, SidecarEvent, SidecarWord,
+    resolve_python,
+};
 pub use storage::{MediaAssetRow, NewMediaAsset, ProjectStore, StorageError};
 
 use serde::{Deserialize, Serialize};
