@@ -1,24 +1,28 @@
-import type { FixtureSet } from '../fixtures'
+import type { MediaAssetSummary } from '../../../bindings/MediaAssetSummary'
+import type { ProjectSummary } from '../../../bindings/ProjectSummary'
+import { assetStatusLabel } from '../utils'
 
-export function StatusBar({ fixtures }: { fixtures: FixtureSet }) {
-  const { counts, diagnostics, revisions, episodeLabel, csvSummary } = fixtures
-  const errors = diagnostics.filter((d) => d.level === 'error').length
-  const warnings = diagnostics.filter((d) => d.level === 'warning').length
-  const infos = diagnostics.filter((d) => d.level === 'info').length
+interface StatusBarProps {
+  project: ProjectSummary | null
+  assetCount: number
+  asset: MediaAssetSummary | null
+}
 
+export function StatusBar({ project, assetCount, asset }: StatusBarProps) {
   return (
     <footer className="h-7 flex-none px-3 flex items-center justify-between border-t border-line text-xs text-mutedfg">
-      <div className="flex items-center gap-2">
-        <span className="text-danger">⛔ {errors} 错误</span>
-        <span className="text-warning">{warnings} 警告</span>
-        <span>{infos} 提示</span>
-        <span>
-          ｜共 {counts.total} 片段：{counts.processed} 处理 · {counts.ignored} 忽略 ·{' '}
-          {counts.skipped} 跳过 · {counts.failed} 失败
-        </span>
+      <div className="flex items-center gap-2 min-w-0">
+        {project ? (
+          <>
+            <span className="truncate" title={project.root}>{project.root}</span>
+            <span className="flex-none">｜资产 {assetCount}</span>
+          </>
+        ) : (
+          <span>未打开项目</span>
+        )}
       </div>
-      <span>
-        {episodeLabel} ｜ {csvSummary} ｜ rev {revisions[0]?.revision ?? 0}
+      <span className="flex-none">
+        {asset ? `${asset.display_name} · ${assetStatusLabel(asset.status)}` : '未选择资产'}
       </span>
     </footer>
   )

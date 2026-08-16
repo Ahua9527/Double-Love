@@ -10,8 +10,8 @@ use double_love_engine::{
     DEFAULT_HANDLES_MS, EditOperation, ExportOutcome, FfmpegTools, MediaAssetSummary,
     OperationResult, ProgressEvent, ProgressSink, ProjectStore, ProjectSummary, SharedSink,
     TaskRegistry, TaskState, TranscribeConfig, TranscriptViewData, create_project,
-    export_rough_cut, export_rough_cut_to, import_media as engine_import_media, omit_words,
-    open_project, restore_words, start_transcription, transcript_view,
+    export_rough_cut, export_rough_cut_to, import_media as engine_import_media, list_media_assets,
+    omit_words, open_project, restore_words, start_transcription, transcript_view,
 };
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -139,6 +139,12 @@ fn import_media(state: State<AppState>, path: String) -> OperationResult<MediaAs
         let prepared_dir = Path::new(&summary.root).join(".doublelove/prepared");
         engine_import_media(store, &prepared_dir, &tools, Path::new(&path))
     })
+}
+
+/// 列出全部已导入资产（资产列表首屏与刷新）。
+#[tauri::command]
+fn assets_list(state: State<AppState>) -> OperationResult<Vec<MediaAssetSummary>> {
+    with_store(&state, |store, _| list_media_assets(store))
 }
 
 /// 启动转录（异步）：立即返回 task_id，进度走 dl://progress，终态走 dl://task-state。
@@ -309,6 +315,7 @@ pub fn run() {
             project_create,
             project_open,
             import_media,
+            assets_list,
             transcribe_start,
             task_cancel,
             transcript_get,
