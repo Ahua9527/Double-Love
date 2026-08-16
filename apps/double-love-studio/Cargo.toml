@@ -1,0 +1,13 @@
+[package]
+name = "double-love-studio"
+version = "0.1.0"
+edition = "2024"
+description = "GPUI native desktop app for Double Love Studio"
+license = "MIT"
+
+[dependencies]
+gpui = "=0.2.2"
+gpui-component = "=0.5.1"
+double-love-engine = { path = "../../crates/double-love-engine" }
+serde.workspace = true
+serde_json.workspace = true
