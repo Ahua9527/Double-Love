@@ -96,6 +96,99 @@ export function omitRangesToSeconds(
   return ranges.sort((a, b) => a[0] - b[0])
 }
 
+// ---- 转录文本视图：选区 / 词高亮 / omit 判定 ----
+
+/** 词序选区：anchor/focus 为词序（ordinal）；dragging 标记指针按下后的拖动过程。 */
+export interface WordSelection {
+  anchor: number | null
+  focus: number | null
+  dragging: boolean
+}
+
+export const EMPTY_SELECTION: WordSelection = { anchor: null, focus: null, dragging: false }
+
+export type SelectionAction =
+  | { type: 'down'; ordinal: number }
+  | { type: 'enter'; ordinal: number }
+  | { type: 'up' }
+  | { type: 'clear' }
+
+/**
+ * 选区 reducer（纯函数）：
+ * down 起锚点并进入拖动；enter 仅在拖动中移动焦点；up 结束拖动，
+ * 锚点==焦点视为单击（选区清空，由调用方转成 seek）；clear 强制清空。
+ */
+export function selectionReducer(state: WordSelection, action: SelectionAction): WordSelection {
+  switch (action.type) {
+    case 'down':
+      return { anchor: action.ordinal, focus: action.ordinal, dragging: true }
+    case 'enter':
+      if (!state.dragging || state.anchor === null) return state
+      return { ...state, focus: action.ordinal }
+    case 'up': {
+      if (!state.dragging) return state
+      // 单击（无拖动）不形成选区
+      if (state.anchor === state.focus) return EMPTY_SELECTION
+      return { ...state, dragging: false }
+    }
+    case 'clear':
+      return EMPTY_SELECTION
+  }
+}
+
+/** 有效选区的词序闭区间 [start, end]；无选区为 null。 */
+export function selectionRange(selection: WordSelection): [number, number] | null {
+  if (selection.anchor === null || selection.focus === null) return null
+  if (selection.anchor === selection.focus) return null
+  return [
+    Math.min(selection.anchor, selection.focus),
+    Math.max(selection.anchor, selection.focus),
+  ]
+}
+
+/** 某词序是否被任一活跃 omit 覆盖。 */
+export function omitCovers(omits: EditOperation[], ordinal: number): boolean {
+  return omits.some(
+    (op) => ordinal >= num(op.start_ordinal) && ordinal <= num(op.end_ordinal),
+  )
+}
+
+/** 找出覆盖某词序的第一个活跃 omit（restore 的入口）；无则 null。 */
+export function omitCovering(omits: EditOperation[], ordinal: number): EditOperation | null {
+  return (
+    omits.find((op) => ordinal >= num(op.start_ordinal) && ordinal <= num(op.end_ordinal)) ??
+    null
+  )
+}
+
+/** 播放头时刻命中的词序（start<=t<end）；词间隙返回 null（不高亮）。 */
+export function wordOrdinalAtTime(
+  words: WordAnchor[],
+  seconds: number,
+  sampleRate: number,
+): number | null {
+  if (sampleRate <= 0) return null
+  const sample = seconds * sampleRate
+  for (const word of words) {
+    if (num(word.start_sample) <= sample && sample < num(word.end_sample)) {
+      return num(word.ordinal)
+    }
+  }
+  return null
+}
+
+/** 相邻两词都是 ASCII 字母数字边界时中间需要补空格（与引擎 segment.rs 同规则）。 */
+export function needsSpaceBetween(previous: string, next: string): boolean {
+  const prevLast = previous[previous.length - 1]
+  const nextFirst = next[0]
+  return (
+    prevLast !== undefined &&
+    nextFirst !== undefined &&
+    /[A-Za-z0-9]/.test(prevLast) &&
+    /[A-Za-z0-9]/.test(nextFirst)
+  )
+}
+
 // ---- 展示标签 ----
 
 const FRAME_RATE_LABELS: Record<FrameRate, string> = {

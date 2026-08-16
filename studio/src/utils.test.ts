@@ -3,6 +3,7 @@ import type { Diagnostic } from '../../bindings/Diagnostic'
 import type { EditOperation } from '../../bindings/EditOperation'
 import type { WordAnchor } from '../../bindings/WordAnchor'
 import {
+  EMPTY_SELECTION,
   PANEL_STORAGE_KEY,
   TIMELINE_LEFT_INSET,
   TIMELINE_RIGHT_INSET,
@@ -10,11 +11,17 @@ import {
   exportBlockMessage,
   formatClock,
   loadPanelState,
+  needsSpaceBetween,
+  omitCovers,
+  omitCovering,
   omitRangesToSeconds,
   playheadClock,
   rulerTicks,
   savePanelState,
   seekFractionFromClientX,
+  selectionRange,
+  selectionReducer,
+  wordOrdinalAtTime,
 } from './utils'
 
 describe('播放头时钟', () => {
@@ -141,6 +148,69 @@ describe('omit 区间换算', () => {
 
   it('采样率为 0 不产出区间', () => {
     expect(omitRangesToSeconds(words, [omit(0, 0)], 0)).toEqual([])
+  })
+})
+
+describe('词选区 reducer', () => {
+  it('按下并拖动形成闭区间选区（含反向拖动）', () => {
+    let state = EMPTY_SELECTION
+    state = selectionReducer(state, { type: 'down', ordinal: 5 })
+    state = selectionReducer(state, { type: 'enter', ordinal: 2 })
+    state = selectionReducer(state, { type: 'up' })
+    expect(selectionRange(state)).toEqual([2, 5])
+    expect(state.dragging).toBe(false)
+  })
+
+  it('单击（按下未拖动）不形成选区', () => {
+    let state = EMPTY_SELECTION
+    state = selectionReducer(state, { type: 'down', ordinal: 3 })
+    state = selectionReducer(state, { type: 'up' })
+    expect(selectionRange(state)).toBeNull()
+    expect(state.anchor).toBeNull()
+  })
+
+  it('enter 只在拖动中生效；clear 强制清空', () => {
+    let state = selectionReducer(EMPTY_SELECTION, { type: 'enter', ordinal: 7 })
+    expect(selectionRange(state)).toBeNull()
+    state = selectionReducer(state, { type: 'down', ordinal: 1 })
+    state = selectionReducer(state, { type: 'enter', ordinal: 4 })
+    state = selectionReducer(state, { type: 'clear' })
+    expect(selectionRange(state)).toBeNull()
+  })
+})
+
+describe('omit 覆盖判定', () => {
+  const omits = [omit(2, 4), omit(8, 8)]
+
+  it('词序命中任一区间', () => {
+    expect(omitCovers(omits, 3)).toBe(true)
+    expect(omitCovers(omits, 8)).toBe(true)
+    expect(omitCovers(omits, 5)).toBe(false)
+  })
+
+  it('omitCovering 返回覆盖该词序的操作', () => {
+    expect(omitCovering(omits, 4)?.id).toBe('op2')
+    expect(omitCovering(omits, 0)).toBeNull()
+  })
+})
+
+describe('当前词高亮', () => {
+  // 48kHz：词0 [0s, 1s)，词1 [1s, 2s)
+  const words = [word(0, 0, 48_000), word(1, 48_000, 96_000)]
+
+  it('命中区间返回词序，间隙返回 null', () => {
+    expect(wordOrdinalAtTime(words, 0.5, 48_000)).toBe(0)
+    expect(wordOrdinalAtTime(words, 1.0, 48_000)).toBe(1)
+    expect(wordOrdinalAtTime(words, 5.0, 48_000)).toBeNull()
+  })
+})
+
+describe('ASCII 补空格', () => {
+  it('两侧都是字母数字才补', () => {
+    expect(needsSpaceBetween('hello', 'world')).toBe(true)
+    expect(needsSpaceBetween('你好', '世界')).toBe(false)
+    expect(needsSpaceBetween('你好a', '世界')).toBe(false)
+    expect(needsSpaceBetween('', 'a')).toBe(false)
   })
 })
 
