@@ -1,7 +1,9 @@
 use std::path::PathBuf;
 
 use clap::Parser;
-use double_love_engine::{OperationResult, create_project, open_project};
+use double_love_engine::{
+    FfmpegTools, OperationResult, ProjectStore, create_project, import_media, open_project,
+};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -30,6 +32,12 @@ struct Cli {
 enum Command {
     ProjectCreate,
     ProjectOpen,
+    /// 导入本地媒体：ffprobe 探测 + 校验 + 抽取 16kHz 准备音频
+    ImportMedia {
+        /// 媒体文件路径（原始媒体只读引用）
+        #[arg(long)]
+        file: PathBuf,
+    },
 }
 
 fn main() {
@@ -59,17 +67,22 @@ fn main() {
         return;
     }
 
-    let result = match cli.command {
-        Command::ProjectCreate => create_project(project)
-            .map(OperationResult::success)
-            .unwrap_or_else(|error| {
-                OperationResult::failed("PROJECT_CREATE_FAILED", error.to_string())
-            }),
-        Command::ProjectOpen => open_project(project)
-            .map(OperationResult::success)
-            .unwrap_or_else(|error| {
-                OperationResult::failed("PROJECT_OPEN_FAILED", error.to_string())
-            }),
+    let result = match &cli.command {
+        Command::ProjectCreate => into_json(
+            create_project(project)
+                .map(OperationResult::success)
+                .unwrap_or_else(|error| {
+                    OperationResult::failed("PROJECT_CREATE_FAILED", error.to_string())
+                }),
+        ),
+        Command::ProjectOpen => into_json(
+            open_project(project)
+                .map(OperationResult::success)
+                .unwrap_or_else(|error| {
+                    OperationResult::failed("PROJECT_OPEN_FAILED", error.to_string())
+                }),
+        ),
+        Command::ImportMedia { file } => into_json(import_media_command(project, file)),
     };
 
     let failed = matches!(result.status, double_love_engine::OperationStatus::Failed);
@@ -77,6 +90,50 @@ fn main() {
     if failed {
         std::process::exit(1);
     }
+}
+
+fn into_json<T: serde::Serialize>(
+    result: OperationResult<T>,
+) -> OperationResult<serde_json::Value> {
+    OperationResult {
+        status: result.status,
+        revision: result.revision,
+        data: result
+            .data
+            .map(|data| serde_json::to_value(data).expect("data serializes")),
+        counts: result.counts,
+        diagnostics: result.diagnostics,
+        outputs: result.outputs,
+    }
+}
+
+fn import_media_command(
+    project: &std::path::Path,
+    file: &std::path::Path,
+) -> OperationResult<double_love_engine::MediaAssetSummary> {
+    let summary = match open_project(project) {
+        Ok(summary) => summary,
+        Err(error) => {
+            return OperationResult::failed(
+                "PROJECT_OPEN_FAILED",
+                format!("{error}（请先运行 project-create）"),
+            );
+        }
+    };
+    let store = match ProjectStore::open(std::path::Path::new(&summary.database)) {
+        Ok(store) => store,
+        Err(error) => return OperationResult::failed("STORAGE_ERROR", error.to_string()),
+    };
+    let tools = match FfmpegTools::discover() {
+        Ok(tools) => tools,
+        Err(diagnostic) => {
+            let mut result = OperationResult::failed(&diagnostic.code, &diagnostic.cause);
+            result.diagnostics[0].suggested_action = diagnostic.suggested_action.clone();
+            return result;
+        }
+    };
+    let prepared_dir = std::path::Path::new(&summary.root).join(".doublelove/prepared");
+    import_media(&store, &prepared_dir, &tools, file)
 }
 
 fn emit<T: serde::Serialize>(cli: &Cli, result: &OperationResult<T>) {
