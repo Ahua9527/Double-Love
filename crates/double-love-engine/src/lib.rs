@@ -18,7 +18,7 @@ pub use contracts::{
 };
 pub use edit::{DEFAULT_HANDLES_MS, omit_words, restore_words};
 pub use export::roughcut::{ExportOutcome, export_rough_cut, export_rough_cut_to};
-pub use media::{FfmpegTools, PREPARED_SAMPLE_RATE, import_media};
+pub use media::{FfmpegTools, PREPARED_SAMPLE_RATE, import_media, list_media_assets};
 pub use project::{ProjectError, ProjectSummary, create_project, open_project};
 pub use rational::{FrameRate, Rational, Round, frame_to_samples, samples_to_frame};
 pub use segment::{segment_words, transcript_view};

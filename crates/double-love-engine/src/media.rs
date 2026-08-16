@@ -388,6 +388,14 @@ fn storage_failure<T>(error: StorageError) -> OperationResult<T> {
     OperationResult::failed("STORAGE_ERROR", error.to_string())
 }
 
+/// 列出全部已导入资产（GUI 资产列表；FrameRate 无法识别的行跳过）。
+pub fn list_media_assets(store: &ProjectStore) -> OperationResult<Vec<MediaAssetSummary>> {
+    match store.media_assets() {
+        Ok(rows) => OperationResult::success(rows.into_iter().filter_map(row_to_summary).collect()),
+        Err(error) => storage_failure(error),
+    }
+}
+
 /// 导入一个本地媒体文件：探测 → 校验 → 落库 → 抽取准备音频。
 /// 原始媒体只读引用；重复导入同一路径复用既有资产并给出 info 诊断。
 pub fn import_media(

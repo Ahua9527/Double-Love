@@ -1,8 +1,13 @@
-import { useEffect, useState } from 'react'
-import { aozoraDiary } from './fixtures'
+import { useEffect, useRef, useState } from 'react'
+import type { MediaAssetSummary } from '../../bindings/MediaAssetSummary'
+import type { ProjectSummary } from '../../bindings/ProjectSummary'
+import type { TranscriptViewData } from '../../bindings/TranscriptViewData'
+import * as api from './tauri'
 import {
-  exportBlockMessage,
+  clampSeconds,
   loadPanelState,
+  num,
+  omitRangesToSeconds,
   playheadClock,
   savePanelState,
   type PanelState,
@@ -11,20 +16,25 @@ import { TitleBar } from './components/TitleBar'
 import { Sidebar } from './components/Sidebar'
 import { PreviewHero } from './components/PreviewHero'
 import { Transport } from './components/Transport'
-import { ScrubStrip } from './components/ScrubStrip'
-import { ClipTable } from './components/ClipTable'
 import { Inspector } from './components/Inspector'
 import { Timeline } from './components/Timeline'
 import { StatusBar } from './components/StatusBar'
 
-const fixtures = aozoraDiary
-
 export default function App() {
-  const [selected, setSelected] = useState(0)
-  const [playhead, setPlayhead] = useState(0.35)
+  const [project, setProject] = useState<ProjectSummary | null>(null)
+  const [assets, setAssets] = useState<MediaAssetSummary[]>([])
+  const [currentId, setCurrentId] = useState<string | null>(null)
+  const [view, setView] = useState<TranscriptViewData | null>(null)
+  const [playheadSec, setPlayheadSec] = useState(0)
+  const [playing, setPlaying] = useState(false)
   const [notice, setNotice] = useState<string | null>(null)
   // 面板收起状态（左侧栏/检查器/时间线），重启后保持
   const [panels, setPanels] = useState<PanelState>(() => loadPanelState(window.localStorage))
+  const videoRef = useRef<HTMLVideoElement>(null)
+
+  const asset = assets.find((candidate) => candidate.id === currentId) ?? null
+  const durationSec = asset ? num(asset.duration_samples) / num(asset.audio_sample_rate) : 0
+  const sampleRate = asset ? num(asset.audio_sample_rate) : 0
 
   useEffect(() => {
     savePanelState(window.localStorage, panels)
@@ -43,54 +53,123 @@ export default function App() {
     return () => media.removeEventListener('change', apply)
   }, [])
 
-  // Finder 拖入：仅在 Tauri 壳内有效；只记录数量并提示，不解析（真实解析属后续迭代）
+  const refreshAssets = async (selectId?: string) => {
+    const result = await api.assetsList()
+    if (result.status === 'failed') {
+      setNotice(result.diagnostics[0]?.cause ?? '读取资产列表失败')
+      return
+    }
+    const list = result.data ?? []
+    setAssets(list)
+    if (selectId) {
+      setCurrentId(selectId)
+    } else {
+      setCurrentId((previous) =>
+        previous && list.some((candidate) => candidate.id === previous)
+          ? previous
+          : (list[0]?.id ?? null),
+      )
+    }
+  }
+
+  const openProject = async (create: boolean) => {
+    if (!api.isTauri) {
+      setNotice('打开项目需要在 Double Love Studio 桌面应用中运行')
+      return
+    }
+    const picked = await api.pickDirectory(create ? '选择新项目所在目录' : '选择项目目录')
+    if (!picked) return // 用户取消
+    const result = create ? await api.projectCreate(picked) : await api.projectOpen(picked)
+    if (result.status === 'failed' || !result.data) {
+      setNotice(result.diagnostics[0]?.cause ?? '打开项目失败')
+      return
+    }
+    setProject(result.data)
+    setAssets([])
+    setCurrentId(null)
+    setView(null)
+    setPlayheadSec(0)
+    setPlaying(false)
+    setNotice(null)
+    await refreshAssets()
+  }
+
+  const importMedia = async () => {
+    if (!api.isTauri) {
+      setNotice('导入媒体需要在 Double Love Studio 桌面应用中运行')
+      return
+    }
+    const picked = await api.pickMediaFile()
+    if (!picked || Array.isArray(picked)) return // 用户取消
+    const result = await api.importMedia(picked)
+    if (result.status === 'failed' || !result.data) {
+      const diagnostic = result.diagnostics[0]
+      setNotice(
+        diagnostic
+          ? `${diagnostic.cause}${diagnostic.suggested_action ? `（${diagnostic.suggested_action}）` : ''}`
+          : '导入失败',
+      )
+      return
+    }
+    await refreshAssets(result.data.id)
+    setNotice(
+      result.diagnostics.some((d) => d.code === 'MEDIA_ALREADY_IMPORTED')
+        ? '该文件之前导入过，已选中现有资产'
+        : `已导入 ${result.data.display_name}`,
+    )
+  }
+
+  // 选中资产 → 拉转录视图（omit 红条数据；转录文本界面属下一步）
   useEffect(() => {
-    if (!('__TAURI_INTERNALS__' in window)) return
-    let unlisten: (() => void) | undefined
+    setPlayheadSec(0)
+    setPlaying(false)
+    if (!currentId || !api.isTauri) {
+      setView(null)
+      return
+    }
     let cancelled = false
-    import('@tauri-apps/api/webview')
-      .then(({ getCurrentWebview }) => {
+    api
+      .transcriptGet(currentId)
+      .then((result) => {
         if (cancelled) return
-        void getCurrentWebview()
-          .onDragDropEvent((event) => {
-            if (event.payload.type !== 'drop') return
-            const media = event.payload.paths.filter((p) => /\.(xml|csv)$/i.test(p))
-            if (media.length > 0) {
-              setNotice(`已收到 ${media.length} 个拖入文件（仅记录数量，解析属后续迭代）`)
-            }
-          })
-          .then((fn) => {
-            if (cancelled) fn()
-            else unlisten = fn
-          })
+        setView(result.status === 'failed' ? null : result.data)
       })
-      .catch(() => undefined)
+      .catch(() => {
+        if (!cancelled) setView(null)
+      })
     return () => {
       cancelled = true
-      unlisten?.()
     }
-  }, [])
+  }, [currentId])
 
-  const selectClip = (index: number) => {
-    setSelected(index)
-    // 原型联动：选中行把播放头带到示意位置，接真实数据时移除
-    setPlayhead((index + 0.5) / fixtures.clips.length)
+  const seek = (seconds: number) => {
+    const target = clampSeconds(seconds, durationSec)
+    if (videoRef.current) videoRef.current.currentTime = target
+    setPlayheadSec(target)
   }
 
-  const handleExport = () => {
-    setNotice(exportBlockMessage(fixtures.diagnostics) ?? '导出预演属后续迭代')
+  const togglePlay = () => {
+    const video = videoRef.current
+    if (!video) return
+    if (video.paused) {
+      void video.play()
+    } else {
+      video.pause()
+    }
   }
 
-  const clip = fixtures.clips[selected]
+  const omitRanges = view ? omitRangesToSeconds(view.words, view.omits, sampleRate) : []
 
   return (
     <div className="h-full flex flex-col bg-surface text-fg">
       <TitleBar
-        fixtures={fixtures}
+        projectName={project ? (project.root.split('/').filter(Boolean).pop() ?? null) : null}
         panels={panels}
         onToggle={togglePanel}
-        onImport={() => setNotice('导入向导将在后续迭代接入真实解析')}
-        onExport={handleExport}
+        onImport={importMedia}
+        onExport={() => setNotice('导出流程属下一步：预览 → 保存')}
+        importDisabled={!project || !api.isTauri}
+        exportDisabled={!asset}
       />
       {notice && (
         <div className="h-7 flex-none px-3 flex items-center bg-info/10 border-b border-line text-xs">
@@ -104,22 +183,68 @@ export default function App() {
             panels.left ? 'w-52' : 'w-0'
           }`}
         >
-          {panels.left && <Sidebar fixtures={fixtures} />}
+          {panels.left && (
+            <Sidebar
+              project={project}
+              assets={assets}
+              currentId={currentId}
+              onSelect={setCurrentId}
+              onImport={importMedia}
+            />
+          )}
         </div>
         <main className="flex-1 min-w-0 h-full flex flex-col">
-          <PreviewHero clip={clip} />
-          <Transport clock={playheadClock(playhead)} onNotice={setNotice} />
-          <ScrubStrip playhead={playhead} />
-          <ClipTable clips={fixtures.clips} selected={selected} onSelect={selectClip} />
+          {!project ? (
+            <div className="flex-1 flex flex-col items-center justify-center gap-3">
+              <div className="text-sm font-semibold">从本地项目开始</div>
+              <div className="text-xs text-mutedfg max-w-72 text-center">
+                项目是一个本地文件夹，保存转录文本与剪辑记录；原始媒体只读引用，不会被修改。
+              </div>
+              <div className="flex items-center gap-2 mt-1">
+                <button
+                  type="button"
+                  onClick={() => void openProject(false)}
+                  className="h-8 px-4 rounded-md bg-selected hover:bg-selected/85 text-sm font-semibold text-white"
+                >
+                  打开项目…
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void openProject(true)}
+                  className="h-8 px-4 rounded-md border border-line text-sm hover:bg-sidebaraccent"
+                >
+                  新建项目…
+                </button>
+              </div>
+            </div>
+          ) : (
+            <>
+              <PreviewHero
+                src={currentId ? `media://localhost/${currentId}` : null}
+                label={asset?.display_name ?? null}
+                videoRef={videoRef}
+                onTimeUpdate={setPlayheadSec}
+                onPlayState={setPlaying}
+              />
+              <Transport
+                playing={playing}
+                clock={playheadClock(playheadSec, durationSec)}
+                disabled={!asset}
+                onTogglePlay={togglePlay}
+                onSkip={(delta) => seek(playheadSec + delta)}
+              />
+              <div className="flex-1 min-h-0 mx-3 mb-2 rounded-md border border-line flex items-center justify-center">
+                <span className="text-xs text-mutedfg">转录文本视图属下一步</span>
+              </div>
+            </>
+          )}
         </main>
         <div
           className={`flex-none overflow-hidden transition-[width] duration-200 ${
             panels.right ? 'w-80' : 'w-0'
           }`}
         >
-          {panels.right && (
-            <Inspector fixtures={fixtures} clip={clip} onNotice={setNotice} onExport={handleExport} />
-          )}
+          {panels.right && <Inspector asset={asset} />}
         </div>
       </div>
       <div
@@ -127,9 +252,16 @@ export default function App() {
           panels.bottom ? 'h-32' : 'h-0'
         }`}
       >
-        {panels.bottom && <Timeline playhead={playhead} onSeek={setPlayhead} />}
+        {panels.bottom && (
+          <Timeline
+            durationSec={durationSec}
+            playheadSec={playheadSec}
+            omitRanges={omitRanges}
+            onSeek={seek}
+          />
+        )}
       </div>
-      <StatusBar fixtures={fixtures} />
+      <StatusBar project={project} assetCount={assets.length} asset={asset} />
     </div>
   )
 }

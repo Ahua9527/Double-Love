@@ -298,6 +298,17 @@ impl ProjectStore {
             .map_err(StorageError::from)
     }
 
+    /// 全部媒体资产（导入时间升序，同事按 id 稳定）。
+    pub fn media_assets(&self) -> Result<Vec<MediaAssetRow>, StorageError> {
+        let mut statement = self.connection.prepare(&format!(
+            "SELECT {MEDIA_ASSET_COLUMNS} FROM media_asset ORDER BY imported_at, id"
+        ))?;
+        let rows = statement
+            .query_map([], map_media_asset)?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
     pub fn set_asset_prepared(&self, id: &str, wav_path: &str) -> Result<(), StorageError> {
         self.connection.execute(
             "UPDATE media_asset SET prepared_wav_path = ?2, status = 'prepared' WHERE id = ?1",
