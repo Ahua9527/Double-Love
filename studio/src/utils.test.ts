@@ -10,6 +10,7 @@ import {
   clampSeconds,
   exportBlockMessage,
   formatClock,
+  frameRateFps,
   loadPanelState,
   needsSpaceBetween,
   omitCovers,
@@ -211,6 +212,15 @@ describe('ASCII 补空格', () => {
     expect(needsSpaceBetween('你好', '世界')).toBe(false)
     expect(needsSpaceBetween('你好a', '世界')).toBe(false)
     expect(needsSpaceBetween('', 'a')).toBe(false)
+  })
+})
+
+describe('帧率数值（帧→秒显示换算）', () => {
+  it('整数帧率原样，NTSC 走 1000/1001', () => {
+    expect(frameRateFps('fps_25')).toBe(25)
+    expect(frameRateFps('fps_60')).toBe(60)
+    expect(frameRateFps('fps_24_ntsc')).toBeCloseTo(23.976, 3)
+    expect(frameRateFps('fps_30_ntsc')).toBeCloseTo(29.97, 2)
   })
 })
 
