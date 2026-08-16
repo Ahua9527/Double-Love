@@ -40,6 +40,28 @@ pub enum EditType {
     Trim,
 }
 
+impl EditType {
+    /// 与 serde 名一致的存储字符串。
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Omit => "omit",
+            Self::Restore => "restore",
+            Self::Move => "move",
+            Self::Trim => "trim",
+        }
+    }
+
+    pub fn parse(text: &str) -> Option<Self> {
+        match text {
+            "omit" => Some(Self::Omit),
+            "restore" => Some(Self::Restore),
+            "move" => Some(Self::Move),
+            "trim" => Some(Self::Trim),
+            _ => None,
+        }
+    }
+}
+
 /// 编辑行为。切片只实现 RippleAv（连带音视频联动）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export)]
@@ -48,6 +70,25 @@ pub enum EditBehavior {
     TextOnly,
     SubtitleOnly,
     RippleAv,
+}
+
+impl EditBehavior {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::TextOnly => "text_only",
+            Self::SubtitleOnly => "subtitle_only",
+            Self::RippleAv => "ripple_av",
+        }
+    }
+
+    pub fn parse(text: &str) -> Option<Self> {
+        match text {
+            "text_only" => Some(Self::TextOnly),
+            "subtitle_only" => Some(Self::SubtitleOnly),
+            "ripple_av" => Some(Self::RippleAv),
+            _ => None,
+        }
+    }
 }
 
 /// 一条编辑操作：词序闭区间 [start_ordinal, end_ordinal]。
@@ -68,6 +109,22 @@ pub struct EditOperation {
     pub superseded_by: Option<String>,
     pub revision: i64,
     pub created_at: String,
+}
+
+/// 文本视图分段（TranscriptView 的渲染单元）。
+/// 由词序列纯函数生成（segment.rs），不落表。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct TranscriptSegment {
+    pub index: i64,
+    pub start_ordinal: i64,
+    pub end_ordinal: i64,
+    pub text: String,
+    pub start_sample: i64,
+    pub end_sample: i64,
+    /// 整段被活跃 omit 覆盖（UI 划线）。
+    pub omitted: bool,
+    pub partially_omitted: bool,
 }
 
 /// TimelineIR 中的一个片段：源素材的连续帧区间 → 输出时间线的连续帧区间。
