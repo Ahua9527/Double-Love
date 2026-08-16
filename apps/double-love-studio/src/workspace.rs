@@ -4,7 +4,9 @@
 use gpui::{prelude::FluentBuilder as _, *};
 use gpui_component::{button::*, *};
 
-use crate::controller::StudioController;
+use crate::controller::{
+    StudioController, TIMELINE_LEFT_INSET, TIMELINE_RIGHT_INSET, TIMELINE_TOTAL_SEC,
+};
 use crate::fixtures::{ClipStatus, FixtureClip, Rating};
 
 /// 品牌粉：仅品牌标识与关键操作。
@@ -103,6 +105,18 @@ impl Render for StudioController {
             .on_drop::<ExternalPaths>(cx.listener(|this, paths: &ExternalPaths, _, cx| {
                 this.receive_dropped_paths(paths.paths(), cx);
             }))
+            // 拖出时间线后仍能继续拖动播放头：move/up 挂在根节点，用 dragging() 判断左键状态。
+            .on_mouse_move(cx.listener(|this, ev: &MouseMoveEvent, _, cx| {
+                if ev.dragging() {
+                    this.scrub_to(ev.position.x, cx);
+                }
+            }))
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(|this, _, _, _| {
+                    this.end_scrub();
+                }),
+            )
     }
 }
 
@@ -325,6 +339,7 @@ impl StudioController {
 
     fn render_transport(&self, cx: &Context<Self>) -> impl IntoElement {
         let muted_foreground = cx.theme().muted_foreground;
+        let mono = cx.theme().mono_font_family.clone();
 
         h_flex()
             .h_9()
@@ -372,6 +387,13 @@ impl StudioController {
                         this.set_notice("镜头导航属后续迭代", cx);
                     })),
             )
+            .child(
+                div()
+                    .text_xs()
+                    .font_family(mono)
+                    .text_color(muted_foreground)
+                    .child(self.playhead_clock()),
+            )
     }
 
     fn render_scrub_strip(&self, cx: &Context<Self>) -> impl IntoElement {
@@ -404,7 +426,7 @@ impl StudioController {
                     .absolute()
                     .top_0()
                     .bottom_0()
-                    .left(relative(0.35))
+                    .left(relative(self.playhead()))
                     .w(px(2.))
                     .bg(playhead_red()),
             )
@@ -771,7 +793,7 @@ impl StudioController {
         let theme = cx.theme();
         let export_blocked = self.fixtures().export_blocked;
 
-        card("操作", cx).child(
+        card("项目操作", cx).child(
             v_flex()
                 .gap_2()
                 .child(
@@ -815,7 +837,13 @@ impl StudioController {
                             .text_color(theme.danger)
                             .child("⛔ 导出被 1 条错误诊断阻断，需先在诊断中处理 c21"),
                     )
-                }),
+                })
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(theme.muted_foreground)
+                        .child("以上动作用于整个项目"),
+                ),
         )
     }
 
@@ -857,6 +885,8 @@ impl StudioController {
 
     fn render_timeline(&self, cx: &Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
+        let timeline_bounds = self.timeline_bounds_handle();
+        let playhead = self.playhead();
 
         v_flex()
             .h_32()
@@ -882,13 +912,22 @@ impl StudioController {
             )
             .child(
                 div()
+                    .id("timeline")
                     .flex_1()
                     .min_h_0()
                     .relative()
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, ev: &MouseDownEvent, _, cx| {
+                            this.begin_scrub(ev.position.x, cx);
+                        }),
+                    )
                     .child(
                         canvas(
-                            |_, _, _| (),
-                            |bounds, _, window, cx| paint_sync_timeline(bounds, window, cx),
+                            move |bounds, _, _| *timeline_bounds.borrow_mut() = bounds,
+                            move |bounds, _, window, cx| {
+                                paint_sync_timeline(bounds, playhead, window, cx)
+                            },
                         )
                         .size_full(),
                     )
@@ -1112,10 +1151,10 @@ fn pseudo_random(index: usize) -> f32 {
 }
 
 /// 底部对位时间线的 custom paint：波形 + A/B 机轨 + 音频轨 + 红播放头。
-fn paint_sync_timeline(bounds: Bounds<Pixels>, window: &mut Window, cx: &mut App) {
+fn paint_sync_timeline(bounds: Bounds<Pixels>, playhead: f32, window: &mut Window, cx: &mut App) {
     let theme = cx.theme();
-    let x0 = bounds.left() + px(28.);
-    let width: f32 = (bounds.size.width - px(40.)).into();
+    let x0 = bounds.left() + px(TIMELINE_LEFT_INSET);
+    let width: f32 = (bounds.size.width - px(TIMELINE_LEFT_INSET + TIMELINE_RIGHT_INSET)).into();
     let width = width.max(0.);
     let px_per_sec = width / TIMELINE_TOTAL_SEC;
     let top: f32 = bounds.top().into();
@@ -1194,7 +1233,7 @@ fn paint_sync_timeline(bounds: Bounds<Pixels>, window: &mut Window, cx: &mut App
     }
 
     // 红色播放头
-    let playhead_x = x0 + px(width * PLAYHEAD_POSITION);
+    let playhead_x = x0 + px(width * playhead);
     window.paint_quad(fill(
         Bounds {
             origin: point(playhead_x, px(top)),
@@ -1211,8 +1250,6 @@ fn paint_sync_timeline(bounds: Bounds<Pixels>, window: &mut Window, cx: &mut App
     ));
 }
 
-const TIMELINE_TOTAL_SEC: f32 = 120.;
-const PLAYHEAD_POSITION: f32 = 0.35;
 const A_TRACK_CLIPS: [(f32, f32); 6] = [
     (0., 14.),
     (16., 9.),
