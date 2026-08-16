@@ -141,6 +141,19 @@ pub struct MediaAssetRow {
     pub status: String,
 }
 
+/// 新转录词（写入用；synthetic 恒 0，source_word_ids 恒 NULL——切片不产合成词）。
+pub struct NewTranscriptWord {
+    pub word_id: String,
+    pub asset_id: String,
+    pub ordinal: i64,
+    pub raw_text: String,
+    pub display_text: String,
+    pub language: Option<String>,
+    pub start_sample: i64,
+    pub end_sample: i64,
+    pub confidence: Option<f64>,
+}
+
 const MEDIA_ASSET_COLUMNS: &str = "
     id, kind, original_path, display_name, duration_samples, audio_sample_rate,
     fps_num, fps_den, video_timebase, is_ntsc, width, height, audio_channels,
@@ -289,6 +302,62 @@ impl ProjectStore {
             params![id, wav_path],
         )?;
         Ok(())
+    }
+
+    pub fn set_asset_status(&self, id: &str, status: &str) -> Result<(), StorageError> {
+        self.connection.execute(
+            "UPDATE media_asset SET status = ?2 WHERE id = ?1",
+            params![id, status],
+        )?;
+        Ok(())
+    }
+
+    /// 批量写入转录词（单事务）；调用方保证 ordinal 从 0 连续。
+    pub fn insert_transcript_words(&self, words: &[NewTranscriptWord]) -> Result<(), StorageError> {
+        let tx = self.connection.unchecked_transaction()?;
+        {
+            let mut statement = tx.prepare(
+                "INSERT INTO transcript_word(
+                    word_id, asset_id, ordinal, raw_text, display_text, language,
+                    start_sample, end_sample, confidence, synthetic, source_word_ids_json
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 0, NULL)",
+            )?;
+            for word in words {
+                statement.execute(params![
+                    word.word_id,
+                    word.asset_id,
+                    word.ordinal,
+                    word.raw_text,
+                    word.display_text,
+                    word.language,
+                    word.start_sample,
+                    word.end_sample,
+                    word.confidence,
+                ])?;
+            }
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// 删除某资产全部转录词（重复转录的全量替换语义），返回删除条数。
+    pub fn delete_transcript_words(&self, asset_id: &str) -> Result<usize, StorageError> {
+        self.connection
+            .execute(
+                "DELETE FROM transcript_word WHERE asset_id = ?1",
+                params![asset_id],
+            )
+            .map_err(StorageError::from)
+    }
+
+    pub fn count_transcript_words(&self, asset_id: &str) -> Result<u64, StorageError> {
+        self.connection
+            .query_row(
+                "SELECT COUNT(*) FROM transcript_word WHERE asset_id = ?1",
+                params![asset_id],
+                |row| row.get(0),
+            )
+            .map_err(StorageError::from)
     }
 }
 

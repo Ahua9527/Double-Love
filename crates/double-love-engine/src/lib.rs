@@ -5,6 +5,7 @@ mod rational;
 mod sidecar;
 mod storage;
 mod task;
+mod transcribe;
 
 pub use contracts::{
     AssetStatus, EditBehavior, EditOperation, EditType, IrClip, MapSegment, MediaAssetSummary,
@@ -17,8 +18,9 @@ pub use sidecar::{
     SIDECAR_PROTOCOL_VERSION, Sidecar, SidecarCommand, SidecarError, SidecarEvent, SidecarWord,
     resolve_python,
 };
-pub use storage::{MediaAssetRow, NewMediaAsset, ProjectStore, StorageError};
+pub use storage::{MediaAssetRow, NewMediaAsset, NewTranscriptWord, ProjectStore, StorageError};
 pub use task::{CancellationToken, ProgressSink, SharedSink, TaskRegistry};
+pub use transcribe::{TranscribeConfig, start_transcription};
 
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
