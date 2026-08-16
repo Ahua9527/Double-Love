@@ -1,7 +1,9 @@
 mod contracts;
+mod edit;
 mod media;
 mod project;
 mod rational;
+mod segment;
 mod sidecar;
 mod storage;
 mod task;
@@ -9,11 +11,13 @@ mod transcribe;
 
 pub use contracts::{
     AssetStatus, EditBehavior, EditOperation, EditType, IrClip, MapSegment, MediaAssetSummary,
-    TIMELINE_IR_SCHEMA_VERSION, TimelineIR, WordAnchor,
+    TIMELINE_IR_SCHEMA_VERSION, TimelineIR, TranscriptSegment, WordAnchor,
 };
+pub use edit::{DEFAULT_HANDLES_MS, omit_words, restore_words};
 pub use media::{FfmpegTools, PREPARED_SAMPLE_RATE, import_media};
 pub use project::{ProjectError, ProjectSummary, create_project, open_project};
 pub use rational::{FrameRate, Rational, Round, frame_to_samples, samples_to_frame};
+pub use segment::segment_words;
 pub use sidecar::{
     SIDECAR_PROTOCOL_VERSION, Sidecar, SidecarCommand, SidecarError, SidecarEvent, SidecarWord,
     resolve_python,
