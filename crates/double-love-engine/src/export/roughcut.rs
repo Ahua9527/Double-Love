@@ -1,7 +1,7 @@
 //! 粗剪导出编排：compile → XMEML →（apply 时）写文件 + sha256 + export_artifact。
 //! Preview 先于 Apply（PRD 不变量）：preview 不落盘、不写库，返回同一份 IR。
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
@@ -26,11 +26,33 @@ fn storage_failure<T>(error: StorageError) -> OperationResult<T> {
 }
 
 /// 编译并（可选）落盘。apply=false → preview：只算不写。
+/// 落盘路径：`exports_dir/{片名}_ROUGH_CUT.xml`。
 pub fn export_rough_cut(
     store: &ProjectStore,
     asset_id: &str,
     exports_dir: &Path,
     apply: bool,
+) -> OperationResult<ExportOutcome> {
+    run(store, asset_id, apply, |stem| {
+        exports_dir.join(format!("{stem}_ROUGH_CUT.xml"))
+    })
+}
+
+/// 同 export_rough_cut，但落盘路径由调用方精确指定（GUI 保存对话框选的全路径）。
+pub fn export_rough_cut_to(
+    store: &ProjectStore,
+    asset_id: &str,
+    target: &Path,
+    apply: bool,
+) -> OperationResult<ExportOutcome> {
+    run(store, asset_id, apply, |_| target.to_path_buf())
+}
+
+fn run(
+    store: &ProjectStore,
+    asset_id: &str,
+    apply: bool,
+    resolve_target: impl FnOnce(&str) -> PathBuf,
 ) -> OperationResult<ExportOutcome> {
     let asset = match store.media_asset(asset_id) {
         Ok(Some(asset)) => asset,
@@ -90,13 +112,15 @@ pub fn export_rough_cut(
         audio_channels: asset.audio_channels,
         source_tc_start_frame: asset.source_tc_start_frame,
     });
-    if let Err(error) = std::fs::create_dir_all(exports_dir) {
+    let artifact_path = resolve_target(&stem);
+    if let Some(parent) = artifact_path.parent()
+        && let Err(error) = std::fs::create_dir_all(parent)
+    {
         return OperationResult::failed(
             "EXPORT_WRITE_FAILED",
             format!("无法创建导出目录：{error}"),
         );
     }
-    let artifact_path = exports_dir.join(format!("{stem}_ROUGH_CUT.xml"));
     if let Err(error) = std::fs::write(&artifact_path, &xml) {
         return OperationResult::failed(
             "EXPORT_WRITE_FAILED",

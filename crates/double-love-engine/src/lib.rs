@@ -14,14 +14,14 @@ mod transcribe;
 pub use compile::{CompileOptions, compile_rough_cut, output_to_source, source_to_output};
 pub use contracts::{
     AssetStatus, EditBehavior, EditOperation, EditType, IrClip, MapSegment, MediaAssetSummary,
-    TIMELINE_IR_SCHEMA_VERSION, TimelineIR, TranscriptSegment, WordAnchor,
+    TIMELINE_IR_SCHEMA_VERSION, TimelineIR, TranscriptSegment, TranscriptViewData, WordAnchor,
 };
 pub use edit::{DEFAULT_HANDLES_MS, omit_words, restore_words};
-pub use export::roughcut::{ExportOutcome, export_rough_cut};
+pub use export::roughcut::{ExportOutcome, export_rough_cut, export_rough_cut_to};
 pub use media::{FfmpegTools, PREPARED_SAMPLE_RATE, import_media};
 pub use project::{ProjectError, ProjectSummary, create_project, open_project};
 pub use rational::{FrameRate, Rational, Round, frame_to_samples, samples_to_frame};
-pub use segment::segment_words;
+pub use segment::{segment_words, transcript_view};
 pub use sidecar::{
     SIDECAR_PROTOCOL_VERSION, Sidecar, SidecarCommand, SidecarError, SidecarEvent, SidecarWord,
     resolve_python,

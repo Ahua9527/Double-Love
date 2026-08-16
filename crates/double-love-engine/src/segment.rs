@@ -91,6 +91,47 @@ pub fn segment_words(
     segments
 }
 
+/// 视图装配：词 + 活跃 omit + 分段一次取齐（TranscriptView 的首屏数据）。
+pub fn transcript_view(
+    store: &crate::storage::ProjectStore,
+    asset_id: &str,
+) -> crate::OperationResult<crate::contracts::TranscriptViewData> {
+    let asset = match store.media_asset(asset_id) {
+        Ok(Some(asset)) => asset,
+        Ok(None) => {
+            return crate::OperationResult::failed(
+                "MEDIA_ASSET_MISSING",
+                format!("资产不存在：{asset_id}"),
+            );
+        }
+        Err(error) => {
+            return crate::OperationResult::failed("STORAGE_ERROR", error.to_string());
+        }
+    };
+    let words = match store.transcript_words(asset_id) {
+        Ok(words) => words,
+        Err(error) => {
+            return crate::OperationResult::failed("STORAGE_ERROR", error.to_string());
+        }
+    };
+    let omits = match store.active_omit_operations(asset_id) {
+        Ok(omits) => omits,
+        Err(error) => {
+            return crate::OperationResult::failed("STORAGE_ERROR", error.to_string());
+        }
+    };
+    let ranges: Vec<(i64, i64)> = omits
+        .iter()
+        .map(|op| (op.start_ordinal, op.end_ordinal))
+        .collect();
+    let segments = segment_words(&words, asset.audio_sample_rate, &ranges);
+    crate::OperationResult::success(crate::contracts::TranscriptViewData {
+        words,
+        segments,
+        omits,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -186,5 +227,92 @@ mod tests {
         assert!(!segments[0].partially_omitted);
         assert!(!segments[1].omitted);
         assert!(segments[1].partially_omitted);
+    }
+
+    fn view_fixture() -> (crate::storage::ProjectStore, std::path::PathBuf) {
+        // macOS 系统时钟只到微秒，并行测试可能同刻：纳秒 + pid + 原子序号三重去重。
+        static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock after epoch")
+            .as_nanos();
+        let sequence = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let path = std::env::temp_dir().join(format!(
+            "double-love-segment-{}-{unique}-{sequence}.sqlite",
+            std::process::id()
+        ));
+        let store = crate::storage::ProjectStore::open(&path).expect("store");
+        store
+            .insert_media_asset(&crate::storage::NewMediaAsset {
+                id: "a1".to_string(),
+                kind: "video".to_string(),
+                original_path: format!("/tmp/segment-view-{unique}-{sequence}.mp4"),
+                display_name: "segment.mp4".to_string(),
+                duration_samples: 480_000,
+                audio_sample_rate: SR,
+                fps_num: 25,
+                fps_den: 1,
+                video_timebase: 25,
+                is_ntsc: false,
+                width: None,
+                height: None,
+                audio_channels: Some(2),
+                source_tc_start_frame: None,
+                ffprobe_json: "{}".to_string(),
+            })
+            .expect("asset");
+        store
+            .insert_transcript_words(&[
+                crate::storage::NewTranscriptWord {
+                    word_id: "w0".to_string(),
+                    asset_id: "a1".to_string(),
+                    ordinal: 0,
+                    raw_text: "第一条开始。".to_string(),
+                    display_text: "第一条开始。".to_string(),
+                    language: Some("zh".to_string()),
+                    start_sample: 0,
+                    end_sample: 40_000,
+                    confidence: Some(0.99),
+                },
+                crate::storage::NewTranscriptWord {
+                    word_id: "w1".to_string(),
+                    asset_id: "a1".to_string(),
+                    ordinal: 1,
+                    raw_text: "再来一条".to_string(),
+                    display_text: "再来一条".to_string(),
+                    language: Some("zh".to_string()),
+                    start_sample: 88_000,
+                    end_sample: 120_000,
+                    confidence: Some(0.99),
+                },
+            ])
+            .expect("words");
+        (store, path)
+    }
+
+    #[test]
+    fn transcript_view_assembles_words_segments_and_omits() {
+        let (store, db) = view_fixture();
+        crate::edit::omit_words(&store, "a1", 1, 1, 120, 120);
+        let result = transcript_view(&store, "a1");
+        assert_eq!(result.status, crate::OperationStatus::Success);
+        let data = result.data.expect("view data");
+        assert_eq!(data.words.len(), 2);
+        assert_eq!(data.segments.len(), 2);
+        assert_eq!(data.omits.len(), 1);
+        assert!(!data.segments[0].omitted);
+        assert!(data.segments[1].omitted);
+        drop(store);
+        std::fs::remove_file(db).ok();
+    }
+
+    #[test]
+    fn transcript_view_missing_asset_fails() {
+        let (store, db) = view_fixture();
+        let result = transcript_view(&store, "nobody");
+        assert_eq!(result.status, crate::OperationStatus::Failed);
+        assert_eq!(result.diagnostics[0].code, "MEDIA_ASSET_MISSING");
+        drop(store);
+        std::fs::remove_file(db).ok();
     }
 }
