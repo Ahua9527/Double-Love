@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import type { ExportOutcome } from '../../bindings/ExportOutcome'
 import type { MediaAssetSummary } from '../../bindings/MediaAssetSummary'
+import type { OperationResult } from '../../bindings/OperationResult'
 import type { ProgressEvent } from '../../bindings/ProgressEvent'
 import type { ProjectSummary } from '../../bindings/ProjectSummary'
 import type { TaskState } from '../../bindings/TaskState'
@@ -22,6 +24,7 @@ import { Inspector } from './components/Inspector'
 import { Timeline } from './components/Timeline'
 import { StatusBar } from './components/StatusBar'
 import { TranscriptView, type TranscriptionProgress } from './components/TranscriptView'
+import { ExportPreviewDialog } from './components/ExportPreviewDialog'
 
 interface RunningTask extends TranscriptionProgress {
   id: string
@@ -37,6 +40,8 @@ export default function App() {
   const [playing, setPlaying] = useState(false)
   const [notice, setNotice] = useState<string | null>(null)
   const [task, setTask] = useState<RunningTask | null>(null)
+  const [exportPreview, setExportPreview] = useState<OperationResult<ExportOutcome> | null>(null)
+  const [exportBusy, setExportBusy] = useState(false)
   // 面板收起状态（左侧栏/检查器/时间线），重启后保持
   const [panels, setPanels] = useState<PanelState>(() => loadPanelState(window.localStorage))
   const videoRef = useRef<HTMLVideoElement>(null)
@@ -254,6 +259,29 @@ export default function App() {
     if (asset) await refreshView(asset.id)
   }
 
+  // 导出：preview（不落盘）→ 摘要对话框 → 保存位置 → apply
+  const handleExport = async () => {
+    if (!asset) return
+    const result = await api.roughcutPreview(asset.id)
+    setExportPreview(result)
+  }
+
+  const confirmExport = async () => {
+    if (!asset || !exportPreview) return
+    const stem = asset.display_name.replace(/\.[^.]+$/, '')
+    const target = await api.pickSavePath(`${stem}_ROUGH_CUT.xml`)
+    if (!target) return // 用户取消保存对话框
+    setExportBusy(true)
+    const result = await api.exportRoughcutApply(asset.id, target)
+    setExportBusy(false)
+    setExportPreview(null)
+    if (result.status === 'failed') {
+      setNotice(result.diagnostics[0]?.cause ?? '导出失败')
+      return
+    }
+    setNotice(`已导出：${result.data?.artifact_path ?? target}`)
+  }
+
   const omitRanges = view ? omitRangesToSeconds(view.words, view.omits, sampleRate) : []
 
   return (
@@ -263,9 +291,9 @@ export default function App() {
         panels={panels}
         onToggle={togglePanel}
         onImport={importMedia}
-        onExport={() => setNotice('导出流程属下一步：预览 → 保存')}
+        onExport={handleExport}
         importDisabled={!project || !api.isTauri}
-        exportDisabled={!asset}
+        exportDisabled={!asset || !api.isTauri}
       />
       {notice && (
         <div className="h-7 flex-none px-3 flex items-center bg-info/10 border-b border-line text-xs">
@@ -372,6 +400,14 @@ export default function App() {
         )}
       </div>
       <StatusBar project={project} assetCount={assets.length} asset={asset} />
+      {exportPreview && (
+        <ExportPreviewDialog
+          result={exportPreview}
+          busy={exportBusy}
+          onConfirm={confirmExport}
+          onCancel={() => setExportPreview(null)}
+        />
+      )}
     </div>
   )
 }

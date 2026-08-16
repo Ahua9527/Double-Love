@@ -206,6 +206,20 @@ export function frameRateLabel(rate: FrameRate): string {
   return FRAME_RATE_LABELS[rate]
 }
 
+/** 帧率数值（仅 UI 显示层换算帧→秒；引擎计算不经过这里）。 */
+export function frameRateFps(rate: FrameRate): number {
+  switch (rate) {
+    case 'fps_24': return 24
+    case 'fps_24_ntsc': return 24000 / 1001
+    case 'fps_25': return 25
+    case 'fps_30': return 30
+    case 'fps_30_ntsc': return 30000 / 1001
+    case 'fps_50': return 50
+    case 'fps_60': return 60
+    case 'fps_60_ntsc': return 60000 / 1001
+  }
+}
+
 const ASSET_STATUS_LABELS = {
   imported: '已导入',
   prepared: '已准备',
