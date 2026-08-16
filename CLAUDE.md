@@ -29,6 +29,7 @@ pnpm preview
 - 构建命令会先运行 TypeScript 编译检查，然后使用 Vite 构建
 - 测试框架为 Vitest，测试文件位于 src/**/*.{test,spec}.{ts,tsx}
 - 根项目 lint 不扫描本机独立的 `csv2xml/` 对比工作区；该项目必须在自己的仓库运行质量门槛。
+- 根项目 lint 同样不扫描独立的 `studio/` 桌面界面工作区（Tauri 2 + React，开发端口 5174）；它有自己的 package.json/lockfile，须在其目录内运行 lint/test/build 门槛。
 
 ## 核心架构
 
