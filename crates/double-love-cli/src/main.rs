@@ -3,8 +3,9 @@ use std::sync::{Arc, Mutex};
 
 use clap::Parser;
 use double_love_engine::{
-    FfmpegTools, OperationResult, ProgressSink, ProjectStore, TaskRegistry, TranscribeConfig,
-    create_project, import_media, open_project, start_transcription,
+    DEFAULT_HANDLES_MS, FfmpegTools, OperationResult, ProgressSink, ProjectStore, TaskRegistry,
+    TranscribeConfig, create_project, export_rough_cut, import_media, omit_words, open_project,
+    restore_words, start_transcription,
 };
 
 #[derive(Debug, Parser)]
@@ -60,6 +61,48 @@ enum Command {
         /// double_love_asr 包目录
         #[arg(long, default_value = "sidecars/asr")]
         sidecar_dir: PathBuf,
+    },
+    /// 删除词区间（omit）：删除文字 ≠ 删除底层词，可用 edit-restore 恢复
+    EditOmit {
+        /// 资产 id
+        #[arg(long)]
+        asset: String,
+        /// 起始词序（含）
+        #[arg(long)]
+        start: i64,
+        /// 结束词序（含）
+        #[arg(long)]
+        end: i64,
+        /// 切点前保留毫秒（默认 120）
+        #[arg(long, default_value_t = DEFAULT_HANDLES_MS)]
+        handles_before: i64,
+        /// 切点后保留毫秒（默认 120）
+        #[arg(long, default_value_t = DEFAULT_HANDLES_MS)]
+        handles_after: i64,
+    },
+    /// 恢复某个 omit 的词区间（完全覆盖则整条恢复，部分覆盖自动拆段）
+    EditRestore {
+        /// 原 omit 操作 id
+        #[arg(long)]
+        operation: String,
+        /// 起始词序（含）
+        #[arg(long)]
+        start: i64,
+        /// 结束词序（含）
+        #[arg(long)]
+        end: i64,
+    },
+    /// 编译粗剪时间线：默认 preview 只算不写；--apply 落盘 XMEML + sha256 + export_artifact
+    ExportRoughcut {
+        /// 资产 id
+        #[arg(long)]
+        asset: String,
+        /// 实际写入导出文件（不带此旗标为 preview，不落盘不写库）
+        #[arg(long)]
+        apply: bool,
+        /// 导出目录（默认 <project>/.doublelove/exports）
+        #[arg(long)]
+        out: Option<PathBuf>,
     },
 }
 
@@ -122,6 +165,40 @@ fn main() {
             *chunk_seconds,
             sidecar_dir,
         ),
+        Command::EditOmit {
+            asset,
+            start,
+            end,
+            handles_before,
+            handles_after,
+        } => match open_store(project) {
+            Ok(store) => into_json(omit_words(
+                &store,
+                asset,
+                *start,
+                *end,
+                *handles_before,
+                *handles_after,
+            )),
+            Err(result) => *result,
+        },
+        Command::EditRestore {
+            operation,
+            start,
+            end,
+        } => match open_store(project) {
+            Ok(store) => into_json(restore_words(&store, operation, *start, *end)),
+            Err(result) => *result,
+        },
+        Command::ExportRoughcut { asset, apply, out } => match open_store(project) {
+            Ok(store) => {
+                let exports_dir = out
+                    .clone()
+                    .unwrap_or_else(|| project.join(".doublelove/exports"));
+                into_json(export_rough_cut(&store, asset, &exports_dir, *apply))
+            }
+            Err(result) => *result,
+        },
     };
 
     let failed = matches!(result.status, double_love_engine::OperationStatus::Failed);
@@ -144,6 +221,20 @@ fn into_json<T: serde::Serialize>(
         diagnostics: result.diagnostics,
         outputs: result.outputs,
     }
+}
+
+/// 打开项目库；失败时给出可直接 emit 的错误结果。
+fn open_store(
+    project: &std::path::Path,
+) -> Result<ProjectStore, Box<OperationResult<serde_json::Value>>> {
+    let summary = open_project(project).map_err(|error| {
+        Box::new(OperationResult::failed(
+            "PROJECT_OPEN_FAILED",
+            format!("{error}（请先运行 project-create）"),
+        ))
+    })?;
+    ProjectStore::open(std::path::Path::new(&summary.database))
+        .map_err(|error| Box::new(OperationResult::failed("STORAGE_ERROR", error.to_string())))
 }
 
 fn import_media_command(

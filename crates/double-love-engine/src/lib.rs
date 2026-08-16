@@ -17,6 +17,7 @@ pub use contracts::{
     TIMELINE_IR_SCHEMA_VERSION, TimelineIR, TranscriptSegment, WordAnchor,
 };
 pub use edit::{DEFAULT_HANDLES_MS, omit_words, restore_words};
+pub use export::roughcut::{ExportOutcome, export_rough_cut};
 pub use media::{FfmpegTools, PREPARED_SAMPLE_RATE, import_media};
 pub use project::{ProjectError, ProjectSummary, create_project, open_project};
 pub use rational::{FrameRate, Rational, Round, frame_to_samples, samples_to_frame};
