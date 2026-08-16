@@ -4,17 +4,17 @@
   "version": "0.1.0",
   "identifier": "space.ahua.doublelove.studio",
   "build": {
-    "beforeDevCommand": "pnpm dev -- --host 127.0.0.1",
-    "devUrl": "http://localhost:5173",
-    "beforeBuildCommand": "pnpm build",
-    "frontendDist": "../dist"
+    "beforeDevCommand": "pnpm studio:dev",
+    "devUrl": "http://localhost:5174",
+    "beforeBuildCommand": "pnpm studio:build",
+    "frontendDist": "../studio/dist"
   },
   "app": {
     "windows": [
       {
         "title": "Double Love Studio",
-        "width": 1280,
-        "height": 860,
+        "width": 1440,
+        "height": 900,
         "minWidth": 960,
         "minHeight": 640
       }

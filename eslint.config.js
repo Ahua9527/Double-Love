@@ -10,8 +10,8 @@ import reactRefresh from 'eslint-plugin-react-refresh'
 import tseslint from 'typescript-eslint'
 
 export default tseslint.config(
-  // 基础配置：忽略构建产物和独立 csv2xml 工作区
-  { ignores: ['dist', 'target/**', 'csv2xml/**'] },
+  // 基础配置：忽略构建产物和独立 csv2xml/studio 工作区
+  { ignores: ['dist', 'target/**', 'csv2xml/**', 'studio/**'] },
   // 主配置对象
   {
     // 继承的规则集：ESLint推荐 + TypeScript推荐
