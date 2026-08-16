@@ -4,6 +4,7 @@ mod project;
 mod rational;
 mod sidecar;
 mod storage;
+mod task;
 
 pub use contracts::{
     AssetStatus, EditBehavior, EditOperation, EditType, IrClip, MapSegment, MediaAssetSummary,
@@ -17,6 +18,7 @@ pub use sidecar::{
     resolve_python,
 };
 pub use storage::{MediaAssetRow, NewMediaAsset, ProjectStore, StorageError};
+pub use task::{CancellationToken, ProgressSink, SharedSink, TaskRegistry};
 
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
