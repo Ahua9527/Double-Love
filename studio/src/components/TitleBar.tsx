@@ -1,15 +1,49 @@
+import { PanelBottom, PanelLeft, PanelRight } from 'lucide-react'
 import type { FixtureSet } from '../fixtures'
+import type { PanelState } from '../utils'
 
 interface TitleBarProps {
   fixtures: FixtureSet
+  panels: PanelState
+  onToggle: (key: keyof PanelState) => void
   onImport: () => void
   onExport: () => void
 }
 
-export function TitleBar({ fixtures, onImport, onExport }: TitleBarProps) {
+function PanelToggle({
+  label,
+  pressed,
+  onClick,
+  children,
+}: {
+  label: string
+  pressed: boolean
+  onClick: () => void
+  children: React.ReactNode
+}) {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      aria-pressed={pressed}
+      title={label}
+      onClick={onClick}
+      className={`w-7 h-7 rounded-md flex items-center justify-center ${
+        pressed ? 'bg-sidebaraccent text-selected' : 'text-mutedfg hover:text-fg'
+      }`}
+    >
+      {children}
+    </button>
+  )
+}
+
+export function TitleBar({ fixtures, panels, onToggle, onImport, onExport }: TitleBarProps) {
   return (
     <header className="h-10 flex-none flex items-center justify-between pr-3 border-b border-line">
-      <div className="flex items-center gap-2 px-3">
+      <div className="flex items-center gap-2 pl-1.5 pr-3">
+        <PanelToggle label="切换左侧栏" pressed={panels.left} onClick={() => onToggle('left')}>
+          <PanelLeft size={15} />
+        </PanelToggle>
         <span className="w-2 h-2 flex-none rounded-full bg-love" />
         <span className="text-sm font-semibold">Double Love Studio</span>
         <span className="text-sm text-mutedfg">{fixtures.projectName}</span>
@@ -35,6 +69,12 @@ export function TitleBar({ fixtures, onImport, onExport }: TitleBarProps) {
         >
           导出 Premiere XML
         </button>
+        <PanelToggle label="切换时间线" pressed={panels.bottom} onClick={() => onToggle('bottom')}>
+          <PanelBottom size={15} />
+        </PanelToggle>
+        <PanelToggle label="切换检查器" pressed={panels.right} onClick={() => onToggle('right')}>
+          <PanelRight size={15} />
+        </PanelToggle>
       </div>
     </header>
   )

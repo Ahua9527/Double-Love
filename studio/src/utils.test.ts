@@ -1,13 +1,16 @@
 import { describe, expect, it } from 'vitest'
 import { aozoraDiary } from './fixtures'
 import {
+  PANEL_STORAGE_KEY,
   TIMELINE_LEFT_INSET,
   TIMELINE_RIGHT_INSET,
   countsConsistent,
   exportBlockMessage,
   formatClock,
+  loadPanelState,
   playheadClock,
   ratingLabel,
+  savePanelState,
   seekFractionFromClientX,
 } from './utils'
 
@@ -80,5 +83,57 @@ describe('导出阻断提示', () => {
 
   it('无阻断诊断时为 null', () => {
     expect(exportBlockMessage([])).toBeNull()
+  })
+})
+
+describe('面板状态持久化', () => {
+  function memoryStorage(initial?: string) {
+    let value = initial ?? null
+    return {
+      getItem: () => value,
+      setItem: (_key: string, next: string) => {
+        value = next
+      },
+    }
+  }
+
+  it('无存储时回退默认（全部展开）', () => {
+    expect(loadPanelState(memoryStorage())).toEqual({ left: true, right: true, bottom: true })
+  })
+
+  it('坏 JSON 回退默认', () => {
+    expect(loadPanelState(memoryStorage('{oops'))).toEqual({
+      left: true,
+      right: true,
+      bottom: true,
+    })
+  })
+
+  it('字段类型损坏回退默认', () => {
+    expect(loadPanelState(memoryStorage('{"left":"yes","right":true,"bottom":true}'))).toEqual({
+      left: true,
+      right: true,
+      bottom: true,
+    })
+    expect(loadPanelState(memoryStorage('{"left":false}'))).toEqual({
+      left: true,
+      right: true,
+      bottom: true,
+    })
+  })
+
+  it('合法值原样返回，保存后可再读出', () => {
+    const storage = memoryStorage()
+    savePanelState(storage, { left: false, right: true, bottom: false })
+    expect(loadPanelState(storage)).toEqual({ left: false, right: true, bottom: false })
+  })
+
+  it('保存使用固定 key', () => {
+    const writes: string[] = []
+    savePanelState(
+      { setItem: (key: string) => writes.push(key) },
+      { left: true, right: true, bottom: true },
+    )
+    expect(writes).toEqual([PANEL_STORAGE_KEY])
   })
 })
