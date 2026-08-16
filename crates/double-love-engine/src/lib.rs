@@ -1,7 +1,14 @@
+mod contracts;
 mod project;
+mod rational;
 mod storage;
 
+pub use contracts::{
+    AssetStatus, EditBehavior, EditOperation, EditType, IrClip, MapSegment, MediaAssetSummary,
+    TIMELINE_IR_SCHEMA_VERSION, TimelineIR, WordAnchor,
+};
 pub use project::{ProjectError, ProjectSummary, create_project, open_project};
+pub use rational::{FrameRate, Rational, Round, frame_to_samples, samples_to_frame};
 pub use storage::{ProjectStore, StorageError};
 
 use serde::{Deserialize, Serialize};
