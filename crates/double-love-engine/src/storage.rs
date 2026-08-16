@@ -102,6 +102,72 @@ pub struct ProjectStore {
     connection: Connection,
 }
 
+/// 新导入的媒体资产（写入用）。
+pub struct NewMediaAsset {
+    pub id: String,
+    pub kind: String,
+    pub original_path: String,
+    pub display_name: String,
+    pub duration_samples: i64,
+    pub audio_sample_rate: i64,
+    pub fps_num: i64,
+    pub fps_den: i64,
+    pub video_timebase: i64,
+    pub is_ntsc: bool,
+    pub width: Option<i64>,
+    pub height: Option<i64>,
+    pub audio_channels: Option<i64>,
+    pub source_tc_start_frame: Option<i64>,
+    pub ffprobe_json: String,
+}
+
+/// 媒体资产行（读出用）。
+pub struct MediaAssetRow {
+    pub id: String,
+    pub kind: String,
+    pub original_path: String,
+    pub display_name: String,
+    pub duration_samples: i64,
+    pub audio_sample_rate: i64,
+    pub fps_num: i64,
+    pub fps_den: i64,
+    pub video_timebase: i64,
+    pub is_ntsc: bool,
+    pub width: Option<i64>,
+    pub height: Option<i64>,
+    pub audio_channels: Option<i64>,
+    pub source_tc_start_frame: Option<i64>,
+    pub prepared_wav_path: Option<String>,
+    pub status: String,
+}
+
+const MEDIA_ASSET_COLUMNS: &str = "
+    id, kind, original_path, display_name, duration_samples, audio_sample_rate,
+    fps_num, fps_den, video_timebase, is_ntsc, width, height, audio_channels,
+    source_tc_start_frame, prepared_wav_path, status
+";
+
+fn map_media_asset(row: &rusqlite::Row<'_>) -> rusqlite::Result<MediaAssetRow> {
+    Ok(MediaAssetRow {
+        id: row.get("id")?,
+        kind: row.get("kind")?,
+        original_path: row.get("original_path")?,
+        display_name: row.get("display_name")?,
+        duration_samples: row.get("duration_samples")?,
+        audio_sample_rate: row.get("audio_sample_rate")?,
+        fps_num: row.get("fps_num")?,
+        fps_den: row.get("fps_den")?,
+        video_timebase: row.get("video_timebase")?,
+        is_ntsc: row.get("is_ntsc")?,
+        width: row.get("width")?,
+        height: row.get("height")?,
+        audio_channels: row.get("audio_channels")?,
+        source_tc_start_frame: row.get("source_tc_start_frame")?,
+        prepared_wav_path: row.get("prepared_wav_path")?,
+        status: row.get("status")?,
+    })
+}
+
 impl ProjectStore {
     pub fn open(path: &Path) -> Result<Self, StorageError> {
         let mut connection = Connection::open(path)?;
@@ -162,6 +228,67 @@ impl ProjectStore {
                 |row| row.get::<_, u64>(0),
             )
             .map_err(StorageError::from)
+    }
+
+    pub fn insert_media_asset(&self, asset: &NewMediaAsset) -> Result<(), StorageError> {
+        self.connection.execute(
+            "INSERT INTO media_asset(
+                id, kind, original_path, display_name, duration_samples, audio_sample_rate,
+                fps_num, fps_den, video_timebase, is_ntsc, width, height, audio_channels,
+                source_tc_start_frame, ffprobe_json
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+            params![
+                asset.id,
+                asset.kind,
+                asset.original_path,
+                asset.display_name,
+                asset.duration_samples,
+                asset.audio_sample_rate,
+                asset.fps_num,
+                asset.fps_den,
+                asset.video_timebase,
+                asset.is_ntsc,
+                asset.width,
+                asset.height,
+                asset.audio_channels,
+                asset.source_tc_start_frame,
+                asset.ffprobe_json,
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn media_asset_by_path(
+        &self,
+        original_path: &str,
+    ) -> Result<Option<MediaAssetRow>, StorageError> {
+        self.connection
+            .query_row(
+                &format!("SELECT {MEDIA_ASSET_COLUMNS} FROM media_asset WHERE original_path = ?1"),
+                params![original_path],
+                map_media_asset,
+            )
+            .optional()
+            .map_err(StorageError::from)
+    }
+
+    pub fn media_asset(&self, id: &str) -> Result<Option<MediaAssetRow>, StorageError> {
+        self.connection
+            .query_row(
+                &format!("SELECT {MEDIA_ASSET_COLUMNS} FROM media_asset WHERE id = ?1"),
+                params![id],
+                map_media_asset,
+            )
+            .optional()
+            .map_err(StorageError::from)
+    }
+
+    pub fn set_asset_prepared(&self, id: &str, wav_path: &str) -> Result<(), StorageError> {
+        self.connection.execute(
+            "UPDATE media_asset SET prepared_wav_path = ?2, status = 'prepared' WHERE id = ?1",
+            params![id, wav_path],
+        )?;
+        Ok(())
     }
 }
 

@@ -1,4 +1,5 @@
 mod contracts;
+mod media;
 mod project;
 mod rational;
 mod storage;
@@ -7,9 +8,10 @@ pub use contracts::{
     AssetStatus, EditBehavior, EditOperation, EditType, IrClip, MapSegment, MediaAssetSummary,
     TIMELINE_IR_SCHEMA_VERSION, TimelineIR, WordAnchor,
 };
+pub use media::{FfmpegTools, PREPARED_SAMPLE_RATE, import_media};
 pub use project::{ProjectError, ProjectSummary, create_project, open_project};
 pub use rational::{FrameRate, Rational, Round, frame_to_samples, samples_to_frame};
-pub use storage::{ProjectStore, StorageError};
+pub use storage::{MediaAssetRow, NewMediaAsset, ProjectStore, StorageError};
 
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
