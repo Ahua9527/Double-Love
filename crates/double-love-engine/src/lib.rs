@@ -1,3 +1,4 @@
+mod compile;
 mod contracts;
 mod edit;
 mod media;
@@ -9,6 +10,7 @@ mod storage;
 mod task;
 mod transcribe;
 
+pub use compile::{CompileOptions, compile_rough_cut, output_to_source, source_to_output};
 pub use contracts::{
     AssetStatus, EditBehavior, EditOperation, EditType, IrClip, MapSegment, MediaAssetSummary,
     TIMELINE_IR_SCHEMA_VERSION, TimelineIR, TranscriptSegment, WordAnchor,
