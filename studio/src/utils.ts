@@ -71,3 +71,43 @@ export function exportBlockMessage(diagnostics: Diagnostic[]): string | null {
   const suffix = first.object_id ? `（${first.object_id}）` : ''
   return `⛔ 导出被 ${blocking.length} 条错误诊断阻断：${first.code}${suffix}`
 }
+
+// ---- 面板收起状态（左侧栏 / 检查器 / 时间线） ----
+
+export interface PanelState {
+  left: boolean
+  right: boolean
+  bottom: boolean
+}
+
+export const PANEL_STORAGE_KEY = 'studio.panels'
+
+const DEFAULT_PANELS: PanelState = { left: true, right: true, bottom: true }
+
+/** 读取持久化的面板状态；缺失、损坏或字段类型不对时回退默认（全部展开）。 */
+export function loadPanelState(storage: Pick<Storage, 'getItem'>): PanelState {
+  try {
+    const raw = storage.getItem(PANEL_STORAGE_KEY)
+    if (!raw) return DEFAULT_PANELS
+    const parsed: unknown = JSON.parse(raw)
+    if (typeof parsed !== 'object' || parsed === null) return DEFAULT_PANELS
+    const candidate = parsed as Record<string, unknown>
+    if (
+      typeof candidate.left !== 'boolean' ||
+      typeof candidate.right !== 'boolean' ||
+      typeof candidate.bottom !== 'boolean'
+    ) {
+      return DEFAULT_PANELS
+    }
+    return { left: candidate.left, right: candidate.right, bottom: candidate.bottom }
+  } catch {
+    return DEFAULT_PANELS
+  }
+}
+
+export function savePanelState(
+  storage: Pick<Storage, 'setItem'>,
+  state: PanelState,
+): void {
+  storage.setItem(PANEL_STORAGE_KEY, JSON.stringify(state))
+}

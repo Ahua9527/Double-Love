@@ -1,6 +1,12 @@
 import { useEffect, useState } from 'react'
 import { aozoraDiary } from './fixtures'
-import { exportBlockMessage, playheadClock } from './utils'
+import {
+  exportBlockMessage,
+  loadPanelState,
+  playheadClock,
+  savePanelState,
+  type PanelState,
+} from './utils'
 import { TitleBar } from './components/TitleBar'
 import { Sidebar } from './components/Sidebar'
 import { PreviewHero } from './components/PreviewHero'
@@ -17,6 +23,16 @@ export default function App() {
   const [selected, setSelected] = useState(0)
   const [playhead, setPlayhead] = useState(0.35)
   const [notice, setNotice] = useState<string | null>(null)
+  // 面板收起状态（左侧栏/检查器/时间线），重启后保持
+  const [panels, setPanels] = useState<PanelState>(() => loadPanelState(window.localStorage))
+
+  useEffect(() => {
+    savePanelState(window.localStorage, panels)
+  }, [panels])
+
+  const togglePanel = (key: keyof PanelState) => {
+    setPanels((prev) => ({ ...prev, [key]: !prev[key] }))
+  }
 
   // 主题跟随系统：index.html 已设首帧，这里接管后续切换
   useEffect(() => {
@@ -71,6 +87,8 @@ export default function App() {
     <div className="h-full flex flex-col bg-surface text-fg">
       <TitleBar
         fixtures={fixtures}
+        panels={panels}
+        onToggle={togglePanel}
         onImport={() => setNotice('导入向导将在后续迭代接入真实解析')}
         onExport={handleExport}
       />
@@ -80,16 +98,37 @@ export default function App() {
         </div>
       )}
       <div className="flex-1 min-h-0 flex">
-        <Sidebar fixtures={fixtures} />
+        {/* 抽屉容器：宽/高动画缩到 0；收起时内容同步卸载，DOM 不留痕 */}
+        <div
+          className={`flex-none overflow-hidden transition-[width] duration-200 ${
+            panels.left ? 'w-52' : 'w-0'
+          }`}
+        >
+          {panels.left && <Sidebar fixtures={fixtures} />}
+        </div>
         <main className="flex-1 min-w-0 h-full flex flex-col">
           <PreviewHero clip={clip} />
           <Transport clock={playheadClock(playhead)} onNotice={setNotice} />
           <ScrubStrip playhead={playhead} />
           <ClipTable clips={fixtures.clips} selected={selected} onSelect={selectClip} />
         </main>
-        <Inspector fixtures={fixtures} clip={clip} onNotice={setNotice} onExport={handleExport} />
+        <div
+          className={`flex-none overflow-hidden transition-[width] duration-200 ${
+            panels.right ? 'w-80' : 'w-0'
+          }`}
+        >
+          {panels.right && (
+            <Inspector fixtures={fixtures} clip={clip} onNotice={setNotice} onExport={handleExport} />
+          )}
+        </div>
       </div>
-      <Timeline playhead={playhead} onSeek={setPlayhead} />
+      <div
+        className={`flex-none overflow-hidden transition-[height] duration-200 ${
+          panels.bottom ? 'h-32' : 'h-0'
+        }`}
+      >
+        {panels.bottom && <Timeline playhead={playhead} onSeek={setPlayhead} />}
+      </div>
       <StatusBar fixtures={fixtures} />
     </div>
   )
