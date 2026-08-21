@@ -6,12 +6,4 @@ import type { EditType } from "./EditType";
  * 一条编辑操作：词序闭区间 [start_ordinal, end_ordinal]。
  * 删除文字 ≠ 删除底层词——omit 只是标记，restore 可完全或部分回填。
  */
-export type EditOperation = { id: string, asset_id: string, edit_type: EditType, behavior: EditBehavior, start_ordinal: bigint, end_ordinal: bigint, 
-/**
- * 切点前后缓冲（毫秒），转采样时按资产采样率取整。
- */
-handles_before_ms: bigint, handles_after_ms: bigint, 
-/**
- * 被更新的操作回填 supersede 链；活跃操作为 None。
- */
-superseded_by: string | null, revision: bigint, created_at: string, };
+export type EditOperation = { id: string, asset_id: string, edit_type: EditType, behavior: EditBehavior, start_ordinal: bigint, end_ordinal: bigint, handles_before_ms: bigint, handles_after_ms: bigint, superseded_by: string | null, revision: bigint, created_at: string, };

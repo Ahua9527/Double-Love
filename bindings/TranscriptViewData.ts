@@ -6,8 +6,4 @@ import type { WordAnchor } from "./WordAnchor";
 /**
  * TranscriptView 一次渲染所需的全部数据（segment.rs::transcript_view 装配）。
  */
-export type TranscriptViewData = { words: Array<WordAnchor>, segments: Array<TranscriptSegment>, 
-/**
- * 当前活跃的 omit 操作（恢复操作的入口）。
- */
-omits: Array<EditOperation>, };
+export type TranscriptViewData = { words: Array<WordAnchor>, segments: Array<TranscriptSegment>, omits: Array<EditOperation>, };
