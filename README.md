@@ -16,6 +16,8 @@
 
 Double Love 为场记元数据提供自动化标准化处理。支持离线使用。通过批量处理、本地化处理，实现与 Adobe Premiere、Silverstack、DTG Slate 工作流的衔接，帮助保持元数据一致性。
 
+> 当前开发重心已转向 Double Love Studio：本地运行、由转录文本驱动多素材粗剪，并导出可继续编辑的 Premiere／Resolve 时间线。测试版范围与运行说明见 [Studio 测试版](docs/studio-beta.md)。
+
 ## ✨ 功能特性
 
 - 🎬 影视工业化流程支持

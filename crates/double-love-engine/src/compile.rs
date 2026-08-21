@@ -294,6 +294,7 @@ mod tests {
             height: Some(1080),
             audio_channels: Some(2),
             source_tc_start_frame: None,
+            source_tc_is_drop_frame: false,
             prepared_wav_path: Some("/tmp/prepared.wav".to_string()),
             status: "transcribed".to_string(),
         }
@@ -312,6 +313,7 @@ mod tests {
             confidence: Some(0.99),
             synthetic: false,
             source_word_ids: None,
+            speaker_assignments: Vec::new(),
         }
     }
 

@@ -765,6 +765,7 @@ dependencies = [
  "double-love-engine",
  "serde",
  "serde_json",
+ "uuid",
 ]
 
 [[package]]

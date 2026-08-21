@@ -3,7 +3,7 @@
 #   1. 建 sidecars/asr/.venv（不进 git）
 #   2. 安装 pin 的依赖（mlx-qwen3-asr）
 #   3. mock 协议自检（不下载模型，秒级）
-#   4. 预下载 Qwen3-ASR-1.7B 权重到 ~/.cache/double-love/models（~3.4GB，可 --skip-model）
+#   4. 预下载 Qwen3-ASR-1.7B 与逐词 ForcedAligner 权重（可 --skip-model）
 # 运行时保持离线：引擎只从本地 HF 缓存读权重。
 set -euo pipefail
 
@@ -57,10 +57,11 @@ if [[ "${1:-}" == "--skip-model" ]]; then
   exit 0
 fi
 
-echo "==> 预下载 Qwen3-ASR-1.7B 权重到 ${HF_HOME}（约 3.4GB，仅需一次）"
+echo "==> 预下载 Qwen3-ASR-1.7B 与 Qwen3-ForcedAligner-0.6B 到 ${HF_HOME}（仅需一次）"
 (cd "$ASR_DIR" && "$VENV/bin/python" -c "
-from mlx_qwen3_asr import Session
+from mlx_qwen3_asr import ForcedAligner, Session
 Session(model='Qwen/Qwen3-ASR-1.7B')
-print('model ready')
+ForcedAligner(model_path='Qwen/Qwen3-ForcedAligner-0.6B')
+print('models ready')
 ")
 echo "==> 完成。运行时引擎离线使用本地缓存。"

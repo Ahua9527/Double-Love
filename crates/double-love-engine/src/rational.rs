@@ -117,6 +117,22 @@ pub enum Round {
     Ceil,
 }
 
+/// 源帧号转换到另一条时间基。时间线拼接只在这里做跨帧率换算，避免 UI 或导出器
+/// 各自用浮点秒重复计算。
+pub fn convert_frame_rate(frame: i64, source: FrameRate, output: FrameRate, round: Round) -> i64 {
+    debug_assert!(frame >= 0);
+    let source_fps = source.rational();
+    let output_fps = output.rational();
+    let num = frame as i128 * source_fps.den as i128 * output_fps.num as i128;
+    let den = source_fps.num as i128 * output_fps.den as i128;
+    let base = num.div_euclid(den);
+    match round {
+        Round::Floor => base as i64,
+        Round::Ceil if num.rem_euclid(den) == 0 => base as i64,
+        Round::Ceil => (base + 1) as i64,
+    }
+}
+
 /// 采样数 → 帧号（整数运算，i128 防溢出）。
 pub fn samples_to_frame(sample: i64, rate: FrameRate, sample_rate: i64, round: Round) -> i64 {
     debug_assert!(sample >= 0 && sample_rate > 0);
@@ -240,5 +256,22 @@ mod tests {
                 frame
             );
         }
+    }
+
+    #[test]
+    fn converts_frame_counts_without_float_seconds() {
+        // 25 帧 @ 25fps 恰好是一秒，输出到 29.97fps 是 29.97 帧。
+        assert_eq!(
+            convert_frame_rate(25, FrameRate::Fps25, FrameRate::Fps30Ntsc, Round::Floor),
+            29
+        );
+        assert_eq!(
+            convert_frame_rate(25, FrameRate::Fps25, FrameRate::Fps30Ntsc, Round::Ceil),
+            30
+        );
+        assert_eq!(
+            convert_frame_rate(24, FrameRate::Fps24, FrameRate::Fps24Ntsc, Round::Floor),
+            23
+        );
     }
 }
