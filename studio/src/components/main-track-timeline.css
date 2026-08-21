@@ -1,3 +1,43 @@
+.studio-timeline .studio-track-ruler {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 650px;
+  padding-right: 0;
+  padding-left: 0;
+  cursor: ew-resize;
+  outline: none;
+  touch-action: none;
+  user-select: none;
+}
+
+.studio-timeline .studio-track-ruler:focus-visible {
+  outline: 2px solid var(--studio-accent);
+  outline-offset: 2px;
+}
+
+.studio-track-layer {
+  position: relative;
+  min-width: 650px;
+}
+
+.studio-timeline .studio-track {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  min-height: 63px;
+  gap: 0;
+  touch-action: none;
+  user-select: none;
+}
+
+.studio-timeline .studio-track-clip {
+  position: absolute;
+  top: 0;
+  min-width: 0;
+  height: 100%;
+  box-sizing: border-box;
+}
+
 .studio-track {
   position: relative;
 }
@@ -25,8 +65,19 @@
 }
 
 .studio-track-end-drop {
+  position: absolute;
+  z-index: 5;
+  top: 0;
+  right: 0;
+  bottom: 0;
   width: 22px;
-  flex: none;
+  min-height: 63px;
+  cursor: copy;
+  pointer-events: none;
   border: 1px dashed var(--studio-line-strong);
   border-radius: 5px;
+}
+
+.studio-track-end-drop.is-drop-active {
+  pointer-events: auto;
 }
