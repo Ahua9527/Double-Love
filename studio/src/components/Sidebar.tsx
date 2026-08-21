@@ -1,75 +1,49 @@
-import type { MediaAssetSummary } from '../../../bindings/MediaAssetSummary'
+import { Clock3, FolderOpen, Grid2X2, PlusCircle, Settings2, Sparkles } from 'lucide-react'
 import type { ProjectSummary } from '../../../bindings/ProjectSummary'
-import { assetStatusLabel, formatClock, num } from '../utils'
+
+export type StudioScreen = 'library' | 'editor' | 'tasks' | 'settings'
 
 interface SidebarProps {
   project: ProjectSummary | null
-  assets: MediaAssetSummary[]
-  currentId: string | null
-  onSelect: (assetId: string) => void
-  onImport: () => void
+  screen: StudioScreen
+  onNavigate: (screen: StudioScreen) => void
+  onCreate: () => void
+  onOpen: () => void
 }
 
-const STATUS_DOT = {
-  imported: 'bg-mutedfg',
-  prepared: 'bg-info',
-  transcribed: 'bg-success',
-} as const
+const ITEMS: Array<{ id: StudioScreen; label: string; icon: typeof Grid2X2 }> = [
+  { id: 'library', label: '我的项目', icon: FolderOpen },
+  { id: 'tasks', label: '后台任务', icon: Clock3 },
+  { id: 'settings', label: '设置', icon: Settings2 },
+]
 
-/** 路径只显示最后一段（完整路径放 title）。 */
-function baseName(path: string): string {
-  return path.split('/').filter(Boolean).pop() ?? path
-}
-
-export function Sidebar({ project, assets, currentId, onSelect, onImport }: SidebarProps) {
+export function Sidebar({ project, screen, onNavigate, onCreate, onOpen }: SidebarProps) {
+  const projectName = project?.root.split('/').filter(Boolean).pop()
   return (
-    <nav className="w-52 flex-none h-full bg-sidebar border-r border-sidebarline p-3 flex flex-col gap-4">
-      <div className="flex flex-col gap-1">
-        <div className="text-xs font-semibold text-mutedfg">项目</div>
-        {project ? (
-          <div className="h-6 px-2 flex items-center rounded-sm text-sm truncate" title={project.root}>
-            {baseName(project.root)}
-          </div>
+    <aside className="studio-sidebar" aria-label="工作区导航">
+      <div className="studio-sidebar-top">
+        <button type="button" className="studio-new-transcription" onClick={onCreate}><PlusCircle size={17} />新建转录</button>
+        <nav className="studio-nav-list">
+          {ITEMS.map(({ id, label, icon: Icon }) => (
+            <button
+              key={id}
+              type="button"
+              aria-current={screen === id ? 'page' : undefined}
+              className={screen === id ? 'is-active' : ''}
+              onClick={() => onNavigate(id)}
+            ><Icon size={17} /><span>{label}</span>{id === 'tasks' && <i aria-hidden="true" />}</button>
+          ))}
+        </nav>
+      </div>
+      <div className="studio-sidebar-recent">
+        <span>最近</span>
+        {projectName ? (
+          <button type="button" onClick={() => onNavigate('editor')}><Sparkles size={14} /><b>{projectName}</b><small>本地项目</small></button>
         ) : (
-          <div className="h-6 px-2 flex items-center rounded-sm text-sm text-mutedfg">未打开项目</div>
+          <button type="button" onClick={onOpen}><FolderOpen size={14} /><b>打开已有项目</b><small>选择本地文件夹</small></button>
         )}
       </div>
-      <div className="flex-1 min-h-0 flex flex-col gap-1">
-        <div className="flex items-center justify-between">
-          <div className="text-xs font-semibold text-mutedfg">资产（{assets.length}）</div>
-          {project && (
-            <button
-              type="button"
-              onClick={onImport}
-              className="text-xs text-selected hover:underline"
-            >
-              导入…
-            </button>
-          )}
-        </div>
-        <div className="flex-1 min-h-0 overflow-y-auto flex flex-col gap-0.5">
-          {assets.length === 0 && project && (
-            <div className="px-2 py-1 text-xs text-mutedfg">还没有媒体，点「导入…」开始</div>
-          )}
-          {assets.map((asset) => (
-            <button
-              key={asset.id}
-              type="button"
-              onClick={() => onSelect(asset.id)}
-              className={`px-2 py-1 flex items-center gap-2 rounded-sm text-left text-sm ${
-                asset.id === currentId ? 'bg-selected/15 text-selected' : 'hover:bg-sidebaraccent'
-              }`}
-              title={`${asset.display_name} · ${assetStatusLabel(asset.status)}`}
-            >
-              <span className={`w-1.5 h-1.5 flex-none rounded-full ${STATUS_DOT[asset.status]}`} />
-              <span className="flex-1 min-w-0 truncate">{asset.display_name}</span>
-              <span className="text-xs text-mutedfg">
-                {formatClock(num(asset.duration_samples) / num(asset.audio_sample_rate))}
-              </span>
-            </button>
-          ))}
-        </div>
-      </div>
-    </nav>
+      <button type="button" className="studio-sidebar-settings" onClick={() => onNavigate('settings')}><Settings2 size={17} />设置</button>
+    </aside>
   )
 }

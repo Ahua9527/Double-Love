@@ -5,18 +5,12 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Double Love Studio</title>
     <style>
-      /* 首屏背景：避免主题切换前的白闪 */
-      html { background-color: #F1F1F1; }
-      html.dark { background-color: #212121; }
+      /* 首屏背景：避免桌面壳启动时闪白。 */
+      html { background-color: #F5F5F3; }
+      @media (prefers-color-scheme: dark) { html { background-color: #202124; } }
       html, body, #root { height: 100%; }
       body { margin: 0; }
     </style>
-    <script>
-      // 首次绘制前按系统主题设置 dark class（后续切换由 App 的监听器接管）
-      if (window.matchMedia('(prefers-color-scheme: dark)').matches) {
-        document.documentElement.classList.add('dark');
-      }
-    </script>
   </head>
   <body>
     <div id="root"></div>

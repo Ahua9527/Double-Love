@@ -72,7 +72,9 @@ def transcribe_chunk(pcm: bytes, *, model: str, language: str, cancel) -> list[d
                 result = one_shot(tmp_path, model=repo, **kwargs)
         except Exception as error:
             raise AsrError(
-                "ASR_TRANSCRIBE_FAILED", f"转录失败：{error}", fatal=False
+                # 当前 sidecar 的一次 transcribe 命令由一个 worker 负责；这里抛出后
+                # worker 会结束，因此不能把它伪装成“可继续”的局部错误。
+                "ASR_TRANSCRIBE_FAILED", f"转录失败：{error}", fatal=True
             ) from error
     finally:
         os.unlink(tmp_path)

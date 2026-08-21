@@ -115,6 +115,17 @@ pub fn restore_words(
             None,
         );
     }
+    match store.edit_operation_is_on_active_run(operation_id) {
+        Ok(true) => {}
+        Ok(false) => {
+            return edit_failure(
+                "EDIT_TRANSCRIPT_VERSION_STALE",
+                "这条删除属于旧转录版本，不能套用到当前文本。".to_string(),
+                Some("刷新当前转录后重新选择要恢复的文字。"),
+            );
+        }
+        Err(error) => return storage_failure(error),
+    }
     if start_ordinal < original.start_ordinal || end_ordinal > original.end_ordinal {
         return edit_failure(
             "EDIT_RANGE_INVALID",
@@ -168,17 +179,22 @@ mod tests {
     use crate::storage::{NewMediaAsset, NewTranscriptWord};
 
     fn store_with_words(word_count: i64) -> (ProjectStore, std::path::PathBuf) {
+        static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let unique = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .expect("clock after epoch")
             .as_nanos();
-        let path = std::env::temp_dir().join(format!("double-love-edit-{unique}.sqlite"));
+        let sequence = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let path = std::env::temp_dir().join(format!(
+            "double-love-edit-{}-{unique}-{sequence}.sqlite",
+            std::process::id()
+        ));
         let store = ProjectStore::open(&path).expect("store");
         store
             .insert_media_asset(&NewMediaAsset {
                 id: "a1".to_string(),
                 kind: "video".to_string(),
-                original_path: format!("/tmp/synthetic-{unique}.mp4"),
+                original_path: format!("/tmp/synthetic-{unique}-{sequence}.mp4"),
                 display_name: "synthetic".to_string(),
                 duration_samples: 480_000,
                 audio_sample_rate: 48_000,
@@ -190,6 +206,7 @@ mod tests {
                 height: Some(1080),
                 audio_channels: Some(2),
                 source_tc_start_frame: None,
+                source_tc_is_drop_frame: false,
                 ffprobe_json: "{}".to_string(),
             })
             .expect("asset");

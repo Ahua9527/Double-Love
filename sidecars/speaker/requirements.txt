@@ -1,0 +1,3 @@
+# 本地说话人后端。WeSpeaker 必须固定到经过评估的提交，避免无提示的模型/API 漂移。
+silero-vad==6.2.0
+git+https://github.com/wenet-e2e/wespeaker.git@dfa741957e5c11f477623b6e583d67d0af25ee88

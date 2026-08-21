@@ -8,7 +8,7 @@ use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, utf8_percent_encode};
 use crate::contracts::TimelineIR;
 
 /// xmlEscape：与 csv2xml 完全相同的 5 个实体。
-fn xml_escape(value: &str) -> String {
+pub(crate) fn xml_escape(value: &str) -> String {
     value
         .replace('&', "&amp;")
         .replace('"', "&quot;")
@@ -18,7 +18,7 @@ fn xml_escape(value: &str) -> String {
 }
 
 /// pseudoUuid：md5 hex 按 8-4-4-4-12 连字符化（与 csv2xml 同算法）。
-fn pseudo_uuid(source: &str) -> String {
+pub(crate) fn pseudo_uuid(source: &str) -> String {
     use md5::{Digest, Md5};
     let hex = format!("{:x}", Md5::digest(source.as_bytes()));
     format!(
@@ -40,7 +40,7 @@ const PATHURL_SET: &AsciiSet = &NON_ALPHANUMERIC
     .remove(b'~');
 
 /// file:// + percent-encoding + xml 双层转义。
-fn path_url(absolute_path: &str) -> String {
+pub(crate) fn path_url(absolute_path: &str) -> String {
     xml_escape(&format!(
         "file://{}",
         utf8_percent_encode(absolute_path, PATHURL_SET)
@@ -48,7 +48,7 @@ fn path_url(absolute_path: &str) -> String {
 }
 
 /// XML id 安全名：剔除非 [A-Za-z0-9_-]；全剔光（如纯中文）回退 uuid 短码。
-fn safe_name(name: &str) -> String {
+pub(crate) fn safe_name(name: &str) -> String {
     let sanitized: String = name
         .chars()
         .map(|c| {
@@ -68,7 +68,7 @@ fn safe_name(name: &str) -> String {
     }
 }
 
-fn tf(value: bool) -> &'static str {
+pub(crate) fn tf(value: bool) -> &'static str {
     if value { "TRUE" } else { "FALSE" }
 }
 
@@ -84,6 +84,7 @@ pub struct XmemlInput<'a> {
     pub audio_sample_rate: i64,
     pub audio_channels: Option<i64>,
     pub source_tc_start_frame: Option<i64>,
+    pub source_tc_is_drop_frame: bool,
 }
 
 /// TimelineIR → XMEML 文档全文。
@@ -193,7 +194,17 @@ pub fn export_xmeml(input: &XmemlInput) -> String {
                     input.source_tc_start_frame.unwrap_or(0)
                 ),
             );
-            line!(8, "<displayformat>NDF</displayformat>");
+            line!(
+                8,
+                format!(
+                    "<displayformat>{}</displayformat>",
+                    if input.source_tc_is_drop_frame {
+                        "DF"
+                    } else {
+                        "NDF"
+                    }
+                )
+            );
             line!(8, "<source>source</source>");
             line!(7, "</timecode>");
             line!(7, "<media>");
@@ -398,6 +409,7 @@ mod tests {
             audio_sample_rate: 48_000,
             audio_channels: Some(2),
             source_tc_start_frame: None,
+            source_tc_is_drop_frame: false,
         });
         let expected = include_str!("xmeml_golden_25fps.xml");
         assert_eq!(xml, expected, "golden mismatch");
@@ -418,6 +430,7 @@ mod tests {
             audio_sample_rate: 48_000,
             audio_channels: Some(2),
             source_tc_start_frame: None,
+            source_tc_is_drop_frame: false,
         });
         std::fs::write(
             concat!(
@@ -447,6 +460,7 @@ mod tests {
                 audio_sample_rate: 48_000,
                 audio_channels: None,
                 source_tc_start_frame: None,
+                source_tc_is_drop_frame: false,
             });
             assert!(
                 xml.contains(&format!(
