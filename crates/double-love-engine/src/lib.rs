@@ -38,10 +38,10 @@ pub use main_track::{
 };
 pub use media::{FfmpegTools, PREPARED_SAMPLE_RATE, import_media, list_media_assets};
 pub use model::{
-    DoctorModelCheck, DoctorReport, FetchResponse, FetchStatus, MODEL_CATALOG_SCHEMA_VERSION,
-    MODEL_INSTALLATIONS_SCHEMA_VERSION, ModelCatalog, ModelComponent, ModelDependency,
-    ModelDescriptor, ModelDescriptorWithInstallation, ModelDownloadProgress, ModelError,
-    ModelFetcher, ModelFile, ModelInstallState, ModelInstallation, ModelManager,
+    DoctorEnvironment, DoctorModelCheck, DoctorReport, FetchResponse, FetchStatus,
+    MODEL_CATALOG_SCHEMA_VERSION, MODEL_INSTALLATIONS_SCHEMA_VERSION, ModelCatalog, ModelComponent,
+    ModelDependency, ModelDescriptor, ModelDescriptorWithInstallation, ModelDownloadProgress,
+    ModelError, ModelFetcher, ModelFile, ModelInstallState, ModelInstallation, ModelManager,
     write_fetch_response,
 };
 pub use project::{ProjectError, ProjectSummary, create_project, open_project};

@@ -348,11 +348,11 @@ fn inspect_store_file(
             return Ok(true);
         }
     };
-    if let Some(raw) = values.get(STORE_KEY) {
-        if decode_preferences(raw, defaults).is_err() {
-            move_corrupt_store(&path)?;
-            return Ok(true);
-        }
+    if let Some(raw) = values.get(STORE_KEY)
+        && decode_preferences(raw, defaults).is_err()
+    {
+        move_corrupt_store(&path)?;
+        return Ok(true);
     }
     Ok(false)
 }
@@ -718,12 +718,11 @@ pub fn recent_project_forget(
 fn read_memory_bytes() -> u64 {
     #[cfg(target_os = "macos")]
     {
-        if let Ok(output) = Command::new("sysctl").args(["-n", "hw.memsize"]).output() {
-            if let Ok(value) = String::from_utf8(output.stdout) {
-                if let Ok(bytes) = value.trim().parse() {
-                    return bytes;
-                }
-            }
+        if let Ok(output) = Command::new("sysctl").args(["-n", "hw.memsize"]).output()
+            && let Ok(value) = String::from_utf8(output.stdout)
+            && let Ok(bytes) = value.trim().parse()
+        {
+            return bytes;
         }
     }
     #[cfg(target_os = "linux")]
@@ -746,12 +745,11 @@ fn read_memory_bytes() -> u64 {
 fn read_os_version() -> String {
     #[cfg(target_os = "macos")]
     {
-        if let Ok(output) = Command::new("sw_vers").arg("-productVersion").output() {
-            if let Ok(value) = String::from_utf8(output.stdout) {
-                if !value.trim().is_empty() {
-                    return value.trim().to_string();
-                }
-            }
+        if let Ok(output) = Command::new("sw_vers").arg("-productVersion").output()
+            && let Ok(value) = String::from_utf8(output.stdout)
+            && !value.trim().is_empty()
+        {
+            return value.trim().to_string();
         }
     }
     std::env::consts::OS.to_string()
@@ -852,13 +850,10 @@ pub fn onboarding_complete(
     default_asr_model: Option<String>,
     step: Option<u8>,
 ) -> OperationResult<OnboardingState> {
-    if let Some(step) = step {
-        if !(1..=3).contains(&step) {
-            return OperationResult::failed(
-                "ONBOARDING_STEP_INVALID",
-                "引导步骤必须是 1、2 或 3。",
-            );
-        }
+    if let Some(step) = step
+        && !(1..=3).contains(&step)
+    {
+        return OperationResult::failed("ONBOARDING_STEP_INVALID", "引导步骤必须是 1、2 或 3。");
     }
     match with_store(&app, &state.preferences, |store, preferences| {
         let mut next = preferences.clone();

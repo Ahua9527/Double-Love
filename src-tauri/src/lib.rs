@@ -440,14 +440,14 @@ fn edit_undo(state: State<AppState>) -> OperationResult<()> {
         Err(error) => return OperationResult::failed("STORAGE_ERROR", error.to_string()),
     };
     let mut navigation = state.history_navigation.lock().expect("history navigation");
-    if navigation.project_id.as_deref() != Some(open.summary.project_id.as_str())
-        || navigation.last_actual_revision != actual_revision
-    {
-        if let Err(error) =
+    let navigation_is_stale = navigation.project_id.as_deref()
+        != Some(open.summary.project_id.as_str())
+        || navigation.last_actual_revision != actual_revision;
+    if navigation_is_stale
+        && let Err(error) =
             reset_history_navigation(&mut navigation, &store, &open.summary.project_id)
-        {
-            return OperationResult::failed("HISTORY_READ_FAILED", error);
-        }
+    {
+        return OperationResult::failed("HISTORY_READ_FAILED", error);
     }
     let Some(target) = navigation.undo.pop() else {
         return OperationResult::failed("HISTORY_UNDO_EMPTY", "没有更早的编辑版本。");
@@ -974,11 +974,11 @@ pub fn run() {
             }
         })
         .on_window_event(|window, event| {
-            if window.label() == settings_window::SETTINGS_WINDOW_LABEL {
-                if let WindowEvent::CloseRequested { api, .. } = event {
-                    api.prevent_close();
-                    let _ = window.hide();
-                }
+            if window.label() == settings_window::SETTINGS_WINDOW_LABEL
+                && let WindowEvent::CloseRequested { api, .. } = event
+            {
+                api.prevent_close();
+                let _ = window.hide();
             }
         })
         // media://localhost/<asset_id>：只服务当前项目内已导入资产的原始媒体（只读引用）。

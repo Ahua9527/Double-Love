@@ -11,8 +11,9 @@ use std::sync::{
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use double_love_engine::{
-    DoctorReport, ModelDescriptor, ModelDescriptorWithInstallation, ModelError, ModelInstallState,
-    ModelInstallation, ModelManager, OperationResult, ffmpeg_supports_ass_filter,
+    DoctorEnvironment, DoctorReport, ModelDescriptor, ModelDescriptorWithInstallation, ModelError,
+    ModelInstallState, ModelInstallation, ModelManager, OperationResult,
+    ffmpeg_supports_ass_filter,
 };
 use reqwest::blocking::Client;
 use reqwest::header::{CONTENT_RANGE, RANGE};
@@ -297,12 +298,12 @@ fn run_install_batch(app: AppHandle, requested: String, endpoint: String, root: 
             break;
         }
         if let Err(error) = download_model(&app, &state.models, &root, &endpoint, model_id, &flag) {
-            if !flag.load(Ordering::SeqCst) {
-                if let Ok(installation) = state.models.with_manager(&root, |manager| {
+            if !flag.load(Ordering::SeqCst)
+                && let Ok(installation) = state.models.with_manager(&root, |manager| {
                     manager.mark_error(model_id, "MODEL_INSTALL_FAILED", error)
-                }) {
-                    emit_state(&app, &installation);
-                }
+                })
+            {
+                emit_state(&app, &installation);
             }
             break;
         }
@@ -678,16 +679,16 @@ pub fn doctor_run(
     match state
         .models
         .with_manager(Path::new(&prefs.model_root), |manager| {
-            Ok(manager.doctor_report(
-                profile.architecture,
-                profile.os_version,
-                profile.memory_bytes,
-                profile.free_model_bytes,
+            Ok(manager.doctor_report(DoctorEnvironment {
+                architecture: profile.architecture,
+                os_version: profile.os_version,
+                memory_bytes: profile.memory_bytes,
+                free_model_bytes: profile.free_model_bytes,
                 ffmpeg_available,
                 libass_available,
                 asr_runtime_ready,
                 speaker_runtime_ready,
-            ))
+            }))
         }) {
         Ok(report) => {
             let _ = app.emit("dl://doctor-result", &report);
