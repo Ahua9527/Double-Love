@@ -1,0 +1,310 @@
+//! Python ASR sidecar：JSONL 行协议 + 进程生命周期管理。
+//! stdout 读线程推事件进 channel；stderr 转发到日志文件；
+//! 终止升级链：SIGTERM（500ms）→ SIGKILL（2s）→ killpg 兜底（子进程 setsid 独立进程组）。
+
+use std::io::{BufRead, BufReader, Write};
+use std::path::{Path, PathBuf};
+use std::process::{Child, ChildStdin, Command, Stdio};
+use std::sync::mpsc::{self, Receiver};
+use std::thread;
+use std::time::Duration;
+
+use serde::{Deserialize, Serialize};
+
+pub const SIDECAR_PROTOCOL_VERSION: u32 = 1;
+const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// stdin 命令（每行一个 JSON）。
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "cmd", rename_all = "snake_case")]
+pub enum SidecarCommand {
+    Hello {
+        version: u32,
+    },
+    Transcribe {
+        task_id: String,
+        wav_path: String,
+        model: String,
+        language: String,
+        source_sample_rate: i64,
+        chunk_seconds: i64,
+    },
+    Cancel {
+        task_id: String,
+    },
+}
+
+/// 一个词（源采样域整数，由 sidecar 完成 16k → 源采样率的换算）。
+#[derive(Debug, Clone, Deserialize)]
+pub struct SidecarWord {
+    pub raw_text: String,
+    pub display_text: String,
+    pub start_sample: i64,
+    pub end_sample: i64,
+    pub confidence: Option<f64>,
+    pub language: Option<String>,
+}
+
+/// stdout 事件（每行一个 JSON）。
+#[derive(Debug, Clone, Deserialize)]
+#[serde(tag = "event", rename_all = "snake_case")]
+pub enum SidecarEvent {
+    Ready {
+        version: u32,
+        pid: u32,
+        #[serde(default)]
+        mock: bool,
+    },
+    Progress {
+        task_id: String,
+        completed: Option<u64>,
+        total: Option<u64>,
+        message: String,
+    },
+    Words {
+        task_id: String,
+        chunk: i64,
+        words: Vec<SidecarWord>,
+    },
+    Done {
+        task_id: String,
+        word_count: u64,
+    },
+    Cancelled {
+        task_id: String,
+    },
+    Error {
+        task_id: Option<String>,
+        code: String,
+        message: String,
+        fatal: bool,
+    },
+}
+
+#[derive(Debug)]
+pub enum SidecarError {
+    Spawn(std::io::Error),
+    Handshake(String),
+    ProtocolMismatch { expected: u32, got: u32 },
+    Io(std::io::Error),
+}
+
+impl std::fmt::Display for SidecarError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Spawn(error) => write!(f, "sidecar 启动失败：{error}"),
+            Self::Handshake(reason) => write!(f, "sidecar 握手失败：{reason}"),
+            Self::ProtocolMismatch { expected, got } => {
+                write!(f, "sidecar 协议版本不符：期望 {expected}，实际 {got}")
+            }
+            Self::Io(error) => write!(f, "sidecar IO 错误：{error}"),
+        }
+    }
+}
+
+impl std::error::Error for SidecarError {}
+
+type EventLine = Result<SidecarEvent, String>;
+
+/// 一个运行中的 sidecar 进程。
+pub struct Sidecar {
+    child: Child,
+    stdin: Option<ChildStdin>,
+    events: Receiver<EventLine>,
+    pid: u32,
+}
+
+impl Sidecar {
+    /// 启动 sidecar 并完成 hello/ready 握手（最多等 10 秒）。
+    /// `package_dir` 为 double_love_asr 包所在目录（sidecars/asr）。
+    pub fn spawn(
+        python: &Path,
+        package_dir: &Path,
+        mock: bool,
+        log_path: &Path,
+    ) -> Result<Self, SidecarError> {
+        let mut command = Command::new(python);
+        command
+            .arg("-m")
+            .arg("double_love_asr")
+            .current_dir(package_dir)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        if mock {
+            command.env("DOUBLELOVE_ASR_MOCK", "1");
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt;
+            // 独立进程组：终止升级链最后可 killpg 兜底整组
+            unsafe {
+                command.pre_exec(|| {
+                    libc::setsid();
+                    Ok(())
+                });
+            }
+        }
+        let mut child = command.spawn().map_err(SidecarError::Spawn)?;
+        let pid = child.id();
+        let stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| SidecarError::Handshake("stdin 不可用".to_string()))?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| SidecarError::Handshake("stdout 不可用".to_string()))?;
+        let stderr = child
+            .stderr
+            .take()
+            .ok_or_else(|| SidecarError::Handshake("stderr 不可用".to_string()))?;
+
+        let (tx, rx) = mpsc::channel::<EventLine>();
+        thread::spawn(move || {
+            for line in BufReader::new(stdout).lines() {
+                let event = match line {
+                    Ok(text) => serde_json::from_str::<SidecarEvent>(&text)
+                        .map_err(|error| format!("{error}: {text}")),
+                    Err(error) => Err(format!("stdout 读取失败：{error}")),
+                };
+                if tx.send(event).is_err() {
+                    return; // 接收端已 drop
+                }
+            }
+        });
+
+        // stderr → 日志文件（尽力而为，写失败不致命）
+        if let Some(parent) = log_path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        if let Ok(mut log) = std::fs::File::create(log_path) {
+            thread::spawn(move || {
+                let mut reader = BufReader::new(stderr);
+                let mut line = String::new();
+                while reader.read_line(&mut line).unwrap_or(0) > 0 {
+                    let _ = log.write_all(line.as_bytes());
+                    line.clear();
+                }
+            });
+        }
+
+        let mut sidecar = Self {
+            child,
+            stdin: Some(stdin),
+            events: rx,
+            pid,
+        };
+        sidecar.send(&SidecarCommand::Hello {
+            version: SIDECAR_PROTOCOL_VERSION,
+        })?;
+        match sidecar.next_event(HANDSHAKE_TIMEOUT) {
+            Some(Ok(SidecarEvent::Ready { version, .. }))
+                if version == SIDECAR_PROTOCOL_VERSION =>
+            {
+                Ok(sidecar)
+            }
+            Some(Ok(SidecarEvent::Ready { version, .. })) => Err(SidecarError::ProtocolMismatch {
+                expected: SIDECAR_PROTOCOL_VERSION,
+                got: version,
+            }),
+            Some(Ok(other)) => Err(SidecarError::Handshake(format!(
+                "首个事件不是 ready：{other:?}"
+            ))),
+            Some(Err(reason)) => Err(SidecarError::Handshake(reason)),
+            None => Err(SidecarError::Handshake(
+                "10 秒内未收到 ready 事件".to_string(),
+            )),
+        }
+    }
+
+    pub fn send(&mut self, command: &SidecarCommand) -> Result<(), SidecarError> {
+        let stdin = self
+            .stdin
+            .as_mut()
+            .ok_or_else(|| SidecarError::Handshake("stdin 已关闭".to_string()))?;
+        let mut line = serde_json::to_string(command)
+            .map_err(|error| SidecarError::Handshake(format!("命令序列化失败：{error}")))?;
+        line.push('\n');
+        stdin
+            .write_all(line.as_bytes())
+            .and_then(|()| stdin.flush())
+            .map_err(SidecarError::Io)
+    }
+
+    /// 等下一个事件；超时返回 None。
+    pub fn next_event(&self, timeout: Duration) -> Option<EventLine> {
+        self.events.recv_timeout(timeout).ok()
+    }
+
+    /// 终止升级链：SIGTERM → 500ms → SIGKILL → 2s → killpg 兜底。
+    #[cfg(unix)]
+    fn terminate(&mut self) {
+        if self.child.try_wait().ok().flatten().is_some() {
+            return;
+        }
+        unsafe {
+            libc::kill(self.pid as i32, libc::SIGTERM);
+        }
+        if self.wait_up_to(Duration::from_millis(500)) {
+            return;
+        }
+        unsafe {
+            libc::kill(self.pid as i32, libc::SIGKILL);
+        }
+        if self.wait_up_to(Duration::from_secs(2)) {
+            return;
+        }
+        unsafe {
+            libc::killpg(self.pid as i32, libc::SIGKILL); // setsid 后 pgid == pid
+        }
+        let _ = self.child.wait();
+    }
+
+    #[cfg(not(unix))]
+    fn terminate(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+
+    fn wait_up_to(&mut self, budget: Duration) -> bool {
+        let start = std::time::Instant::now();
+        loop {
+            if self.child.try_wait().ok().flatten().is_some() {
+                return true;
+            }
+            if start.elapsed() >= budget {
+                return false;
+            }
+            thread::sleep(Duration::from_millis(25));
+        }
+    }
+}
+
+impl Drop for Sidecar {
+    fn drop(&mut self) {
+        // 先关 stdin：sidecar 读到 EOF 自行退出（daemon worker 随之结束）
+        drop(self.stdin.take());
+        if self.wait_up_to(Duration::from_secs(2)) {
+            return;
+        }
+        self.terminate();
+    }
+}
+
+/// Python 解释器发现：显式覆盖 → sidecar venv → PATH 里的 python3。
+pub fn resolve_python(override_path: Option<&Path>, venv_python: &Path) -> Option<PathBuf> {
+    if let Some(explicit) = override_path
+        && explicit.is_file()
+    {
+        return Some(explicit.to_path_buf());
+    }
+    if venv_python.is_file() {
+        return Some(venv_python.to_path_buf());
+    }
+    std::env::var_os("PATH").and_then(|paths| {
+        std::env::split_paths(&paths)
+            .map(|dir| dir.join("python3"))
+            .find(|candidate| candidate.is_file())
+    })
+}

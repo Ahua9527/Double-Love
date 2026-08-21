@@ -1,17 +1,28 @@
 import { describe, expect, it } from 'vitest'
-import { aozoraDiary } from './fixtures'
+import type { Diagnostic } from '../../bindings/Diagnostic'
+import type { EditOperation } from '../../bindings/EditOperation'
+import type { WordAnchor } from '../../bindings/WordAnchor'
 import {
+  EMPTY_SELECTION,
   PANEL_STORAGE_KEY,
   TIMELINE_LEFT_INSET,
   TIMELINE_RIGHT_INSET,
-  countsConsistent,
+  clampSeconds,
   exportBlockMessage,
   formatClock,
+  frameRateFps,
   loadPanelState,
+  needsSpaceBetween,
+  omitCovers,
+  omitCovering,
+  omitRangesToSeconds,
   playheadClock,
-  ratingLabel,
+  rulerTicks,
   savePanelState,
   seekFractionFromClientX,
+  selectionRange,
+  selectionReducer,
+  wordOrdinalAtTime,
 } from './utils'
 
 describe('播放头时钟', () => {
@@ -21,10 +32,22 @@ describe('播放头时钟', () => {
     expect(formatClock(120)).toBe('02:00')
   })
 
-  it('播放头时钟含总长', () => {
-    expect(playheadClock(0)).toBe('00:00 / 02:00')
-    expect(playheadClock(0.35)).toBe('00:42 / 02:00')
-    expect(playheadClock(1)).toBe('02:00 / 02:00')
+  it('超过 1 小时 → h:mm:ss', () => {
+    expect(formatClock(3600)).toBe('1:00:00')
+    expect(formatClock(3661.9)).toBe('1:01:01')
+  })
+
+  it('播放头时钟含总长且 clamp 到总长', () => {
+    expect(playheadClock(0, 120)).toBe('00:00 / 02:00')
+    expect(playheadClock(42.5, 120)).toBe('00:42 / 02:00')
+    expect(playheadClock(120, 120)).toBe('02:00 / 02:00')
+    expect(playheadClock(999, 120)).toBe('02:00 / 02:00')
+  })
+
+  it('clampSeconds 边界', () => {
+    expect(clampSeconds(-1, 120)).toBe(0)
+    expect(clampSeconds(999, 120)).toBe(120)
+    expect(clampSeconds(5, 0)).toBe(0)
   })
 })
 
@@ -49,36 +72,173 @@ describe('seek 换算', () => {
   })
 })
 
-describe('合成数据集一致性', () => {
-  it('total = processed + ignored + skipped + failed', () => {
-    expect(countsConsistent(aozoraDiary.counts)).toBe(true)
-    expect(aozoraDiary.clips.length).toBe(aozoraDiary.counts.total)
+describe('刻度尺', () => {
+  it('空时长返回占位 [0]', () => {
+    expect(rulerTicks(0)).toEqual([0])
   })
 
-  it('计数与片段状态逐条对应', () => {
-    const clips = aozoraDiary.clips
-    const byStatus = (s: string) => clips.filter((c) => c.status === s).length
-    expect(byStatus('processed')).toBe(aozoraDiary.counts.processed)
-    expect(byStatus('ignored')).toBe(aozoraDiary.counts.ignored)
-    expect(byStatus('skipped')).toBe(aozoraDiary.counts.skipped)
-    expect(byStatus('failed')).toBe(aozoraDiary.counts.failed)
+  it('短素材用秒级步长', () => {
+    expect(rulerTicks(30)).toEqual([0, 5, 10, 15, 20, 25, 30])
+  })
+
+  it('长素材步长自动放大且数量受控', () => {
+    const ticks = rulerTicks(3600)
+    expect(ticks[0]).toBe(0)
+    expect(ticks[ticks.length - 1]).toBe(3600)
+    expect(ticks.length).toBeLessThanOrEqual(9)
+    // 步长相等
+    const step = ticks[1] - ticks[0]
+    for (let i = 1; i < ticks.length; i++) {
+      expect(ticks[i] - ticks[i - 1]).toBe(step)
+    }
+  })
+
+  it('不能被整除的时长刻度不超过总长', () => {
+    const ticks = rulerTicks(95)
+    for (const tick of ticks) expect(tick).toBeLessThanOrEqual(95)
   })
 })
 
-describe('评分标签映射', () => {
-  it('Circle→ok / KEEP→kp / NG→ng / 无→—', () => {
-    expect(ratingLabel('ok')).toBe('ok')
-    expect(ratingLabel('keep')).toBe('kp')
-    expect(ratingLabel('ng')).toBe('ng')
-    expect(ratingLabel('none')).toBe('—')
+function word(ordinal: number, startSample: number, endSample: number): WordAnchor {
+  return {
+    word_id: `w${ordinal}`,
+    asset_id: 'a1',
+    ordinal: BigInt(ordinal),
+    raw_text: `词${ordinal}`,
+    display_text: `词${ordinal}`,
+    language: 'zh',
+    start_sample: BigInt(startSample),
+    end_sample: BigInt(endSample),
+    confidence: 0.99,
+    synthetic: false,
+    source_word_ids: null,
+  }
+}
+
+function omit(start: number, end: number): EditOperation {
+  return {
+    id: `op${start}`,
+    asset_id: 'a1',
+    edit_type: 'omit',
+    behavior: 'ripple_av',
+    start_ordinal: BigInt(start),
+    end_ordinal: BigInt(end),
+    handles_before_ms: BigInt(120),
+    handles_after_ms: BigInt(120),
+    superseded_by: null,
+    revision: BigInt(1),
+    created_at: '2026-08-17',
+  }
+}
+
+describe('omit 区间换算', () => {
+  // 48kHz：词0 [0, 48000)，词1 [48000, 96000)，词2 [96000, 144000)
+  const words = [word(0, 0, 48_000), word(1, 48_000, 96_000), word(2, 96_000, 144_000)]
+
+  it('词序区间映射为秒区间并排序', () => {
+    const ranges = omitRangesToSeconds(words, [omit(2, 2), omit(0, 0)], 48_000)
+    expect(ranges).toEqual([
+      [0, 1],
+      [2, 3],
+    ])
+  })
+
+  it('端点词缺失（腐烂编辑）跳过该区间', () => {
+    expect(omitRangesToSeconds(words, [omit(1, 9)], 48_000)).toEqual([])
+  })
+
+  it('采样率为 0 不产出区间', () => {
+    expect(omitRangesToSeconds(words, [omit(0, 0)], 0)).toEqual([])
+  })
+})
+
+describe('词选区 reducer', () => {
+  it('按下并拖动形成闭区间选区（含反向拖动）', () => {
+    let state = EMPTY_SELECTION
+    state = selectionReducer(state, { type: 'down', ordinal: 5 })
+    state = selectionReducer(state, { type: 'enter', ordinal: 2 })
+    state = selectionReducer(state, { type: 'up' })
+    expect(selectionRange(state)).toEqual([2, 5])
+    expect(state.dragging).toBe(false)
+  })
+
+  it('单击（按下未拖动）不形成选区', () => {
+    let state = EMPTY_SELECTION
+    state = selectionReducer(state, { type: 'down', ordinal: 3 })
+    state = selectionReducer(state, { type: 'up' })
+    expect(selectionRange(state)).toBeNull()
+    expect(state.anchor).toBeNull()
+  })
+
+  it('enter 只在拖动中生效；clear 强制清空', () => {
+    let state = selectionReducer(EMPTY_SELECTION, { type: 'enter', ordinal: 7 })
+    expect(selectionRange(state)).toBeNull()
+    state = selectionReducer(state, { type: 'down', ordinal: 1 })
+    state = selectionReducer(state, { type: 'enter', ordinal: 4 })
+    state = selectionReducer(state, { type: 'clear' })
+    expect(selectionRange(state)).toBeNull()
+  })
+})
+
+describe('omit 覆盖判定', () => {
+  const omits = [omit(2, 4), omit(8, 8)]
+
+  it('词序命中任一区间', () => {
+    expect(omitCovers(omits, 3)).toBe(true)
+    expect(omitCovers(omits, 8)).toBe(true)
+    expect(omitCovers(omits, 5)).toBe(false)
+  })
+
+  it('omitCovering 返回覆盖该词序的操作', () => {
+    expect(omitCovering(omits, 4)?.id).toBe('op2')
+    expect(omitCovering(omits, 0)).toBeNull()
+  })
+})
+
+describe('当前词高亮', () => {
+  // 48kHz：词0 [0s, 1s)，词1 [1s, 2s)
+  const words = [word(0, 0, 48_000), word(1, 48_000, 96_000)]
+
+  it('命中区间返回词序，间隙返回 null', () => {
+    expect(wordOrdinalAtTime(words, 0.5, 48_000)).toBe(0)
+    expect(wordOrdinalAtTime(words, 1.0, 48_000)).toBe(1)
+    expect(wordOrdinalAtTime(words, 5.0, 48_000)).toBeNull()
+  })
+})
+
+describe('ASCII 补空格', () => {
+  it('两侧都是字母数字才补', () => {
+    expect(needsSpaceBetween('hello', 'world')).toBe(true)
+    expect(needsSpaceBetween('你好', '世界')).toBe(false)
+    expect(needsSpaceBetween('你好a', '世界')).toBe(false)
+    expect(needsSpaceBetween('', 'a')).toBe(false)
+  })
+})
+
+describe('帧率数值（帧→秒显示换算）', () => {
+  it('整数帧率原样，NTSC 走 1000/1001', () => {
+    expect(frameRateFps('fps_25')).toBe(25)
+    expect(frameRateFps('fps_60')).toBe(60)
+    expect(frameRateFps('fps_24_ntsc')).toBeCloseTo(23.976, 3)
+    expect(frameRateFps('fps_30_ntsc')).toBeCloseTo(29.97, 2)
   })
 })
 
 describe('导出阻断提示', () => {
+  const blocking: Diagnostic = {
+    level: 'error',
+    code: 'ROUGH_CUT_EMPTY',
+    cause: '粗剪为空',
+    object_id: 'a1',
+    impact: '无内容可导出',
+    blocks_export: true,
+    suggested_action: null,
+  }
+
   it('有阻断诊断时给出代码与对象', () => {
-    const message = exportBlockMessage(aozoraDiary.diagnostics)
-    expect(message).toContain('SHOTTAKE_INVALID')
-    expect(message).toContain('c21')
+    const message = exportBlockMessage([blocking])
+    expect(message).toContain('ROUGH_CUT_EMPTY')
+    expect(message).toContain('a1')
   })
 
   it('无阻断诊断时为 null', () => {

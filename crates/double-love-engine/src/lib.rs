@@ -1,8 +1,34 @@
+mod compile;
+mod contracts;
+mod edit;
+pub mod export;
+mod media;
 mod project;
+mod rational;
+mod segment;
+mod sidecar;
 mod storage;
+mod task;
+mod transcribe;
 
+pub use compile::{CompileOptions, compile_rough_cut, output_to_source, source_to_output};
+pub use contracts::{
+    AssetStatus, EditBehavior, EditOperation, EditType, IrClip, MapSegment, MediaAssetSummary,
+    TIMELINE_IR_SCHEMA_VERSION, TimelineIR, TranscriptSegment, TranscriptViewData, WordAnchor,
+};
+pub use edit::{DEFAULT_HANDLES_MS, omit_words, restore_words};
+pub use export::roughcut::{ExportOutcome, export_rough_cut, export_rough_cut_to};
+pub use media::{FfmpegTools, PREPARED_SAMPLE_RATE, import_media, list_media_assets};
 pub use project::{ProjectError, ProjectSummary, create_project, open_project};
-pub use storage::{ProjectStore, StorageError};
+pub use rational::{FrameRate, Rational, Round, frame_to_samples, samples_to_frame};
+pub use segment::{segment_words, transcript_view};
+pub use sidecar::{
+    SIDECAR_PROTOCOL_VERSION, Sidecar, SidecarCommand, SidecarError, SidecarEvent, SidecarWord,
+    resolve_python,
+};
+pub use storage::{MediaAssetRow, NewMediaAsset, NewTranscriptWord, ProjectStore, StorageError};
+pub use task::{CancellationToken, ProgressSink, SharedSink, TaskRegistry};
+pub use transcribe::{TranscribeConfig, start_transcription};
 
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;

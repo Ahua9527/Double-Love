@@ -1,0 +1,4 @@
+# Qwen3-ASR MLX 运行时（含 ForcedAligner 逐词时间戳）。
+# 2026-08-16 联网验证：mlx_qwen3_asr.transcribe(..., return_timestamps=True)
+# 返回 result.segments = [{"text", "start", "end"}]，Session(model=...) 复用模型。
+mlx-qwen3-asr==0.3.5
