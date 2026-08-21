@@ -1,0 +1,227 @@
+import { GripVertical, Scissors, Trash2 } from 'lucide-react'
+import { useMemo, useRef, useState } from 'react'
+import './main-track-timeline.css'
+import type { FrameRate } from '../../../bindings/FrameRate'
+import type { MainTrackClip } from '../../../bindings/MainTrackClip'
+import type { MediaAssetSummary } from '../../../bindings/MediaAssetSummary'
+import type { TimelineIRv2 } from '../../../bindings/TimelineIRv2'
+import { formatClock, frameRateFps, num } from '../utils'
+
+interface MainTrackTimelineProps {
+  clips: MainTrackClip[]
+  assets: MediaAssetSummary[]
+  selectedId: string | null
+  timeline: TimelineIRv2 | null
+  playheadSec: number
+  outputRate: FrameRate | null
+  onSelect: (clip: MainTrackClip) => void
+  onMove: (clipId: string, beforeId: string | null) => void
+  onTrim: (clip: MainTrackClip, sourceInFrame: number, sourceOutFrame: number) => void
+  onSplit: (clip: MainTrackClip) => void
+  onRemove: (clip: MainTrackClip) => void
+  onAdd: () => void
+}
+
+type TrimEdge = 'left' | 'right'
+
+interface TrimState {
+  clip: MainTrackClip
+  edge: TrimEdge
+  startX: number
+  sourceIn: number
+  sourceOut: number
+}
+
+function clipSeconds(clip: MainTrackClip, asset: MediaAssetSummary | undefined): number {
+  if (!asset) return 1
+  const frames = Math.max(1, num(clip.source_out_frame) - num(clip.source_in_frame))
+  return frames / frameRateFps(asset.rate)
+}
+
+function clipName(clip: MainTrackClip, assets: MediaAssetSummary[]): string {
+  return assets.find((asset) => asset.id === clip.source_asset_id)?.display_name ?? '已丢失素材'
+}
+
+interface ClipTiming {
+  startSec: number
+  seconds: number
+}
+
+export function MainTrackTimeline({
+  clips,
+  assets,
+  selectedId,
+  timeline,
+  playheadSec,
+  outputRate,
+  onSelect,
+  onMove,
+  onTrim,
+  onSplit,
+  onRemove,
+  onAdd,
+}: MainTrackTimelineProps) {
+  const trackRef = useRef<HTMLDivElement>(null)
+  const [dragId, setDragId] = useState<string | null>(null)
+  const [trim, setTrim] = useState<TrimState | null>(null)
+  const [draft, setDraft] = useState<Record<string, [number, number]>>({})
+  const timings = useMemo(() => {
+    const result = new Map<string, ClipTiming>()
+    const rate = timeline?.rate
+    let fallbackStartSec = 0
+    for (const clip of clips) {
+      const resolved = timeline?.clips.filter((candidate) => candidate.id.startsWith(`${clip.id}:`)) ?? []
+      if (rate && resolved.length > 0) {
+        const startFrame = Math.min(...resolved.map((candidate) => num(candidate.timeline_start_frame)))
+        const endFrame = Math.max(...resolved.map((candidate) => num(candidate.timeline_end_frame)))
+        const startSec = startFrame / frameRateFps(rate)
+        const seconds = Math.max(0, (endFrame - startFrame) / frameRateFps(rate))
+        result.set(clip.id, { startSec, seconds })
+        fallbackStartSec = startSec + seconds
+        continue
+      }
+      const seconds = clipSeconds(clip, assets.find((asset) => asset.id === clip.source_asset_id))
+      result.set(clip.id, { startSec: fallbackStartSec, seconds })
+      fallbackStartSec += seconds
+    }
+    return result
+  }, [assets, clips, timeline])
+  const total = Math.max(1, timeline ? num(timeline.output_duration_frames) / frameRateFps(timeline.rate) : [...timings.values()].reduce((sum, timing) => sum + timing.seconds, 0))
+  const playheadPercent = Math.max(0, Math.min(100, (playheadSec / total) * 100))
+
+  const frameRateLabel = outputRate ? `${frameRateFps(outputRate).toFixed(3).replace(/\.000$/, '')} fps` : '跟随首段素材'
+
+  const updateDraft = (event: React.PointerEvent<HTMLButtonElement>) => {
+    if (!trim || trim.clip.id !== event.currentTarget.dataset.clipId) return
+    const element = event.currentTarget.parentElement
+    const rect = element?.getBoundingClientRect()
+    if (!rect) return
+    const frameSpan = trim.sourceOut - trim.sourceIn
+    const delta = Math.round(((event.clientX - trim.startX) / Math.max(rect.width, 1)) * frameSpan)
+    const minimum = 2
+    const next = trim.edge === 'left'
+      ? [Math.min(trim.sourceOut - minimum, Math.max(0, trim.sourceIn + delta)), trim.sourceOut]
+      : [trim.sourceIn, Math.max(trim.sourceIn + minimum, trim.sourceOut + delta)]
+    setDraft((previous) => ({ ...previous, [trim.clip.id]: next as [number, number] }))
+  }
+
+  const commitTrim = (event: React.PointerEvent<HTMLButtonElement>) => {
+    const current = trim
+    if (!current || current.clip.id !== event.currentTarget.dataset.clipId) return
+    event.currentTarget.releasePointerCapture(event.pointerId)
+    const [sourceIn, sourceOut] = draft[current.clip.id] ?? [current.sourceIn, current.sourceOut]
+    setTrim(null)
+    setDraft((previous) => {
+      const next = { ...previous }
+      delete next[current.clip.id]
+      return next
+    })
+    if (sourceIn !== current.sourceIn || sourceOut !== current.sourceOut) {
+      onTrim(current.clip, sourceIn, sourceOut)
+    }
+  }
+
+  return (
+    <section className="studio-timeline" aria-label="主轨时间线">
+      <header className="studio-timeline-head">
+        <div>
+          <strong>主轨</strong>
+          <span>{clips.length ? `${clips.length} 段 · ${frameRateLabel}` : '还没有素材'}</span>
+        </div>
+        <button type="button" className="studio-text-action" onClick={onAdd}>添加素材</button>
+      </header>
+      {clips.length === 0 ? (
+        <div className="studio-timeline-empty">
+          <p>先把一个本地视频放入主轨，再用转录文本决定保留哪些部分。</p>
+          <button type="button" className="studio-secondary-button" onClick={onAdd}>添加素材</button>
+        </div>
+      ) : (
+        <div className="studio-track-scroll">
+          <div className="studio-track-ruler" aria-hidden="true">
+            <span>00:00</span><span>{formatClock(total / 3)}</span><span>{formatClock((total * 2) / 3)}</span><span>{formatClock(total)}</span>
+          </div>
+          <div ref={trackRef} className="studio-track" role="list">
+            <div className="studio-track-playhead" aria-hidden="true" style={{ left: `${playheadPercent}%` }} />
+            {clips.map((clip) => {
+              const [sourceIn, sourceOut] = draft[clip.id] ?? [num(clip.source_in_frame), num(clip.source_out_frame)]
+              const seconds = timings.get(clip.id)?.seconds ?? 0
+              const selected = clip.id === selectedId
+              return (
+                <article
+                  key={clip.id}
+                  role="listitem"
+                  draggable
+                  className={`studio-track-clip ${selected ? 'is-selected' : ''} ${dragId === clip.id ? 'is-dragging' : ''}`}
+                  style={{ flexGrow: seconds, flexBasis: 0 }}
+                  onClick={() => onSelect(clip)}
+                  onDragStart={(event) => {
+                    setDragId(clip.id)
+                    event.dataTransfer.effectAllowed = 'move'
+                    event.dataTransfer.setData('text/plain', clip.id)
+                  }}
+                  onDragEnd={() => setDragId(null)}
+                  onDragOver={(event) => event.preventDefault()}
+                  onDrop={(event) => {
+                    event.preventDefault()
+                    const moved = event.dataTransfer.getData('text/plain')
+                    if (moved && moved !== clip.id) onMove(moved, clip.id)
+                    setDragId(null)
+                  }}
+                >
+                  <button
+                    type="button"
+                    aria-label={`裁切 ${clipName(clip, assets)} 的左侧`}
+                    data-clip-id={clip.id}
+                    className="studio-trim-handle is-left"
+                    onPointerDown={(event) => {
+                      event.stopPropagation()
+                      event.currentTarget.setPointerCapture(event.pointerId)
+                      setTrim({ clip, edge: 'left', startX: event.clientX, sourceIn, sourceOut })
+                    }}
+                    onPointerMove={updateDraft}
+                    onPointerUp={commitTrim}
+                  />
+                  <div className="studio-track-clip-inner">
+                    <span className="studio-track-grip"><GripVertical size={13} /></span>
+                    <span className="studio-track-name">{clipName(clip, assets)}</span>
+                    <span className="studio-track-duration">{formatClock(seconds)}</span>
+                  </div>
+                  <button
+                    type="button"
+                    aria-label={`裁切 ${clipName(clip, assets)} 的右侧`}
+                    data-clip-id={clip.id}
+                    className="studio-trim-handle is-right"
+                    onPointerDown={(event) => {
+                      event.stopPropagation()
+                      event.currentTarget.setPointerCapture(event.pointerId)
+                      setTrim({ clip, edge: 'right', startX: event.clientX, sourceIn, sourceOut })
+                    }}
+                    onPointerMove={updateDraft}
+                    onPointerUp={commitTrim}
+                  />
+                  {selected && (
+                    <div className="studio-track-actions" onClick={(event) => event.stopPropagation()}>
+                      <button type="button" aria-label="在播放头拆分" title="在播放头拆分" onClick={() => onSplit(clip)}><Scissors size={13} /></button>
+                      <button type="button" aria-label="移除片段" title="移除片段" onClick={() => onRemove(clip)}><Trash2 size={13} /></button>
+                    </div>
+                  )}
+                </article>
+              )
+            })}
+            <div
+              className="studio-track-end-drop"
+              aria-label="拖到这里放在主轨末尾"
+              onDragOver={(event) => event.preventDefault()}
+              onDrop={(event) => {
+                event.preventDefault()
+                const moved = event.dataTransfer.getData('text/plain')
+                if (moved) onMove(moved, null)
+                setDragId(null)
+              }}
+            />
+          </div>
+        </div>
+      )}
+    </section>
+  )
+}

@@ -1,0 +1,31 @@
+.studio-speaker-actions {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.studio-speaker-rename {
+  display: grid;
+  gap: 16px;
+}
+
+.studio-speaker-rename label {
+  display: grid;
+  gap: 6px;
+  color: var(--studio-muted);
+  font-size: 12px;
+}
+
+.studio-speaker-rename input {
+  border: 1px solid var(--studio-line);
+  border-radius: 6px;
+  background: var(--studio-panel);
+  padding: 8px 9px;
+  color: var(--studio-ink);
+}
+
+.studio-speaker-rename > div:last-child {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}

@@ -112,6 +112,7 @@ function word(ordinal: number, startSample: number, endSample: number): WordAnch
     confidence: 0.99,
     synthetic: false,
     source_word_ids: null,
+    speaker_assignments: [],
   }
 }
 
