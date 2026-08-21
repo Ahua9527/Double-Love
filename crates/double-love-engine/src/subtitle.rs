@@ -79,7 +79,31 @@ fn wrap_cue_text(text: &str, target_characters: usize, max_lines: usize) -> Stri
     lines.join("\n")
 }
 
+fn is_cjk(character: char) -> bool {
+    matches!(character as u32,
+        0x3400..=0x4DBF | 0x4E00..=0x9FFF | 0x3040..=0x30FF | 0xAC00..=0xD7AF)
+}
+
+fn add_cjk_spacing(text: &str) -> String {
+    let characters = text.chars().collect::<Vec<_>>();
+    let mut output = String::with_capacity(text.len() + 8);
+    for (index, character) in characters.iter().enumerate() {
+        if let Some(previous) = index.checked_sub(1).and_then(|value| characters.get(value)) {
+            let boundary = (is_cjk(*previous) && character.is_ascii_alphanumeric())
+                || (previous.is_ascii_alphanumeric() && is_cjk(*character));
+            if boundary && !output.ends_with(' ') {
+                output.push(' ');
+            }
+        }
+        output.push(*character);
+    }
+    output
+}
+
 fn complete_cue(mut cue: SubtitleCue, style: &SubtitleStyle) -> SubtitleCue {
+    if style.cjk_spacing {
+        cue.text = add_cjk_spacing(&cue.text);
+    }
     cue.text = wrap_cue_text(
         &cue.text,
         style.target_characters_per_line.max(1) as usize,
@@ -407,5 +431,12 @@ mod tests {
                 .text
                 .contains('\n')
         );
+    }
+
+    #[test]
+    fn cjk_spacing_only_separates_cjk_and_latin_boundaries() {
+        assert_eq!(add_cjk_spacing("今天用Qwen3测试"), "今天用 Qwen3 测试");
+        assert_eq!(add_cjk_spacing("纯中文内容"), "纯中文内容");
+        assert_eq!(add_cjk_spacing("two words"), "two words");
     }
 }

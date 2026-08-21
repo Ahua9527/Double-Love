@@ -60,6 +60,8 @@ def _to_source_samples(samples_16k: int, source_rate: int) -> int:
 def run(cmd: dict, cancel, emit, transcribe_chunk) -> None:
     task_id = cmd.get("task_id", "")
     model = cmd.get("model", "qwen3-asr-1.7b")
+    model_dir = cmd.get("model_dir", "")
+    aligner_dir = cmd.get("aligner_dir", "")
     language = cmd.get("language", "auto")
     source_rate = int(cmd.get("source_sample_rate", 48_000))
     chunk_seconds = int(cmd.get("chunk_seconds", DEFAULT_CHUNK_SECONDS))
@@ -80,7 +82,14 @@ def run(cmd: dict, cancel, emit, transcribe_chunk) -> None:
         pcm = data[base * 2 : (base + chunk_samples) * 2]
         if not pcm:
             continue
-        words = transcribe_chunk(pcm, model=model, language=language, cancel=cancel)
+        words = transcribe_chunk(
+            pcm,
+            model=model,
+            model_dir=model_dir,
+            aligner_dir=aligner_dir,
+            language=language,
+            cancel=cancel,
+        )
         converted = []
         for word in words:
             start_16k = base + round(float(word["start"]) * PREPARED_RATE)

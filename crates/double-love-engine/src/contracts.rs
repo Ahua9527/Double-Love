@@ -400,6 +400,12 @@ pub struct SubtitleStyle {
     pub max_lines: i64,
     pub target_characters_per_line: i64,
     pub show_speaker: bool,
+    #[serde(default = "default_true")]
+    pub cjk_spacing: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 impl Default for SubtitleStyle {
@@ -425,6 +431,7 @@ impl Default for SubtitleStyle {
             max_lines: 2,
             target_characters_per_line: 22,
             show_speaker: false,
+            cjk_spacing: true,
         }
     }
 }

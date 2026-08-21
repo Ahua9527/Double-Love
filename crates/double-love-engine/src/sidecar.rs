@@ -25,6 +25,10 @@ pub enum SidecarCommand {
         task_id: String,
         wav_path: String,
         model: String,
+        /// 已由模型管理器解析的本地绝对 ASR 权重目录；不会返回前端。
+        model_dir: String,
+        /// 已由模型管理器解析的本地绝对 ForcedAligner 权重目录；不会返回前端。
+        aligner_dir: String,
         language: String,
         source_sample_rate: i64,
         chunk_seconds: i64,
@@ -33,6 +37,10 @@ pub enum SidecarCommand {
         task_id: String,
         /// 16kHz 单声道准备音频；原媒体路径不会发送给说话人后端。
         wav_path: String,
+        /// 已由模型管理器解析的本地 VAD 目录或 bundled runtime 标识。
+        vad_model_dir: String,
+        /// 已由模型管理器解析的本地 WeSpeaker 权重目录。
+        speaker_model_dir: String,
         /// 将 VAD/嵌入区间转换回源素材的采样率。
         source_sample_rate: i64,
     },
