@@ -66,7 +66,7 @@ def _mean(vectors: list[list[float]]) -> list[float]:
     return [sum(vector[index] for vector in vectors) / len(vectors) for index in range(length)]
 
 
-def _vad_segments(pcm: bytes) -> list[tuple[int, int]]:
+def _vad_segments(pcm: bytes, vad_model_dir: str) -> list[tuple[int, int]]:
     try:
         import numpy as np
         import torch
@@ -76,13 +76,26 @@ def _vad_segments(pcm: bytes) -> list[tuple[int, int]]:
             "SPEAKER_DEPENDENCY_MISSING",
             "Silero VAD 依赖不可用；请重新运行 prepare-speaker.sh。",
         ) from error
+    # 当前 Silero 权重随签名 App 的 Python runtime 分发。要求 Rust 仍传入一个
+    # 本地目录/`bundled` 标识，防止未来误把 repo id 交给此处而触发联网下载。
+    if vad_model_dir and vad_model_dir != "bundled":
+        vad_path = Path(vad_model_dir).expanduser()
+        if not vad_path.is_absolute() or not vad_path.is_dir():
+            raise SpeakerError("SPEAKER_MODEL_PATH_INVALID", "Silero VAD 必须使用本地 bundled runtime。")
+    os.environ["HF_HUB_OFFLINE"] = "1"
+    os.environ["TRANSFORMERS_OFFLINE"] = "1"
     audio = torch.from_numpy(np.frombuffer(pcm, dtype=np.int16).copy()).float() / 32768.0
     model = load_silero_vad(onnx=True)
     timestamps = get_speech_timestamps(audio, model, sampling_rate=PREPARED_RATE)
     return [(int(item["start"]), int(item["end"])) for item in timestamps if item["end"] > item["start"]]
 
 
-def _load_wespeaker():
+def _load_wespeaker(speaker_model_dir: str):
+    model_dir = Path(speaker_model_dir).expanduser()
+    if not model_dir.is_absolute() or not model_dir.is_dir():
+        raise SpeakerError("SPEAKER_MODEL_PATH_INVALID", "本地 WeSpeaker 模型目录不可用。")
+    if not (model_dir / "config.yaml").is_file() or not (model_dir / "avg_model.pt").is_file():
+        raise SpeakerError("SPEAKER_MODEL_FILES_MISSING", "本地 WeSpeaker 模型文件不完整。")
     try:
         import wespeaker
     except Exception as error:
@@ -91,12 +104,14 @@ def _load_wespeaker():
             "WeSpeaker 依赖不可用；请重新运行 prepare-speaker.sh。",
         ) from error
     try:
-        # WESPEAKER_HOME is set by the installer; this call must read a local cached model at runtime.
-        return wespeaker.load_model("chinese")
+        os.environ["HF_HUB_OFFLINE"] = "1"
+        os.environ["TRANSFORMERS_OFFLINE"] = "1"
+        # 只传绝对目录；不再传 "chinese"，避免 API 自动下载或访问 WESPEAKER_HOME。
+        return wespeaker.load_model(str(model_dir))
     except Exception as error:
         raise SpeakerError(
             "SPEAKER_MODEL_MISSING",
-            "本地 WeSpeaker 模型不可用；请在联网时运行 prepare-speaker.sh 下载。",
+            "本地 WeSpeaker 模型不可用；请先在设置中完成下载。",
         ) from error
 
 
@@ -117,11 +132,13 @@ def _embedding(model, wav: Path) -> list[float]:
 def diarize(cmd: dict, cancel, emit) -> None:
     task_id = cmd.get("task_id", "")
     source_rate = int(cmd.get("source_sample_rate", 48_000))
+    vad_model_dir = cmd.get("vad_model_dir", "bundled")
+    speaker_model_dir = cmd.get("speaker_model_dir", "")
     if source_rate <= 0:
         raise SpeakerError("SPEAKER_BAD_COMMAND", "source_sample_rate 必须为正整数。")
     pcm = read_wav_pcm(cmd.get("wav_path", ""))
     emit({"event": "progress", "task_id": task_id, "completed": 0, "total": None, "message": "正在检测语音区间…"})
-    speech = _vad_segments(pcm)
+    speech = _vad_segments(pcm, vad_model_dir)
     if cancel.is_set():
         emit({"event": "cancelled", "task_id": task_id})
         return
@@ -129,7 +146,7 @@ def diarize(cmd: dict, cancel, emit) -> None:
         emit({"event": "speaker_segments", "task_id": task_id, "segments": [], "embeddings": []})
         emit({"event": "diarization_done", "task_id": task_id, "segment_count": 0})
         return
-    model = _load_wespeaker()
+    model = _load_wespeaker(speaker_model_dir)
     clusters: list[dict] = []
     rows: list[tuple[int, int, str]] = []
     threshold = float(os.environ.get("DOUBLELOVE_SPEAKER_CLUSTER_THRESHOLD", "0.82"))
