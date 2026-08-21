@@ -19,6 +19,10 @@ pub struct TranscribeConfig {
     pub asset_id: String,
     /// qwen3-asr-1.7b（默认）/ qwen3-asr-0.6b
     pub model: String,
+    /// 模型管理器解析出的本地绝对 ASR 权重目录。
+    pub model_dir: PathBuf,
+    /// 模型管理器解析出的本地绝对 ForcedAligner 权重目录。
+    pub aligner_dir: PathBuf,
     /// auto / zh / en（auto 由引擎检测）
     pub language: String,
     /// 测试与开发自举用 mock 引擎
@@ -126,6 +130,8 @@ fn run_transcription(
         task_id: task_id.to_string(),
         wav_path: wav_path.to_string(),
         model: config.model.clone(),
+        model_dir: config.model_dir.to_string_lossy().into_owned(),
+        aligner_dir: config.aligner_dir.to_string_lossy().into_owned(),
         language: config.language.clone(),
         source_sample_rate,
         chunk_seconds: config.chunk_seconds,
@@ -395,6 +401,8 @@ mod tests {
         TranscribeConfig {
             asset_id: "asset-1".to_string(),
             model: "qwen3-asr-1.7b".to_string(),
+            model_dir: dir.join("models/qwen3-asr-1.7b"),
+            aligner_dir: dir.join("models/qwen3-forced-aligner-0.6b"),
             language: "auto".to_string(),
             mock,
             python: None,

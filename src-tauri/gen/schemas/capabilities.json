@@ -1,1 +1,1 @@
-{"default":{"identifier":"default","description":"最小桌面窗口能力；业务写入通过已登记命令进入 Rust Engine。","local":true,"windows":["main"],"permissions":["core:default","core:event:default","dialog:default"]}}
+{"default":{"identifier":"default","description":"主窗口与独立设置窗口能力；业务写入通过已登记命令进入 Rust。","local":true,"windows":["main","settings"],"permissions":["core:default","core:event:default","dialog:default"]}}
