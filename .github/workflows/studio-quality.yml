@@ -1,0 +1,58 @@
+name: Studio quality
+
+on:
+  push:
+    branches: [main, "codex/**"]
+  workflow_dispatch:
+
+concurrency:
+  group: studio-quality-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  studio:
+    runs-on: [self-hosted, macOS, ARM64]
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.14.1
+          cache: pnpm
+          cache-dependency-path: |
+            pnpm-lock.yaml
+            studio/pnpm-lock.yaml
+      - name: Install root dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Install Studio dependencies
+        run: pnpm --dir studio install --frozen-lockfile
+      - name: Check Rust formatting
+        run: cargo fmt --all -- --check
+      - name: Lint Rust workspace
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: Test Rust workspace
+        run: cargo test --workspace --locked
+      - name: Test Studio
+        run: pnpm --dir studio test
+      - name: Lint Studio
+        run: pnpm --dir studio lint
+      - name: Build Studio
+        run: pnpm --dir studio build
+      - name: Build Tauri debug app
+        run: pnpm tauri build --debug
+      - name: Check whitespace in pushed commits
+        shell: bash
+        run: |
+          if [[ "${{ github.event.before }}" != "0000000000000000000000000000000000000000" ]]; then
+            git diff --check "${{ github.event.before }}..${{ github.sha }}"
+          else
+            git show --check --format=fuller "${{ github.sha }}"
+          fi
