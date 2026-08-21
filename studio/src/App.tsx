@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import './components/editor-overlays.css'
-import { Captions, Clapperboard, Mic2, Palette, Sparkles, Wand2 } from 'lucide-react'
+import { Activity, Captions, Clapperboard, Mic2, Palette, Wand2 } from 'lucide-react'
 import type { CanvasSpec } from '../../bindings/CanvasSpec'
 import type { FrameRate } from '../../bindings/FrameRate'
 import type { MainTrackClip } from '../../bindings/MainTrackClip'
@@ -23,8 +23,11 @@ import { frameRateFps, num, playheadClock } from './utils'
 import { MainTrackTimeline } from './components/MainTrackTimeline'
 import { MediaDrawer } from './components/MediaDrawer'
 import { ProjectExportDialog } from './components/ProjectExportDialog'
+import { ProjectInfoDialog } from './components/ProjectInfoDialog'
 import { ProjectLibrary } from './components/ProjectLibrary'
 import { ProjectSettings } from './components/ProjectSettings'
+import { ModelInstallDialog } from './components/ModelInstallDialog'
+import { Onboarding } from './components/Onboarding'
 import { Sidebar, type StudioScreen } from './components/Sidebar'
 import { TitleBar } from './components/TitleBar'
 import { TranscriptView, type TranscriptionProgress } from './components/TranscriptView'
@@ -33,7 +36,19 @@ import { Transport } from './components/Transport'
 
 type EditorTab = 'transcript' | 'subtitles' | 'speakers'
 type TaskKind = 'transcribe' | 'speaker'
-type ThemeMode = 'light' | 'dark' | 'system'
+type ThemeMode = api.ThemeMode
+
+const FALLBACK_MODEL: api.ModelDescriptor = {
+  id: 'qwen3-asr-0.6b',
+  label: 'Qwen3 ASR · 0.6B',
+  kind: 'asr',
+  revision: 'managed-by-desktop',
+  size_bytes: 0,
+  memory_bytes: 0,
+  license: 'Apache-2.0',
+  dependencies: [{ model_id: 'qwen3-forced-aligner-0.6b', required: true, reason: '逐词时间锚点' }],
+  state: 'not_installed',
+}
 
 interface RunningTask extends TranscriptionProgress {
   id: string
@@ -85,6 +100,14 @@ export default function App() {
   const [canvasMenuOpen, setCanvasMenuOpen] = useState(false)
   const [exportPreview, setExportPreview] = useState<OperationResult<ProjectExportPreview> | null>(null)
   const [exportBusy, setExportBusy] = useState(false)
+  const [preferences, setPreferences] = useState<api.AppPreferencesV1 | null>(null)
+  const [recentProjects, setRecentProjects] = useState<api.RecentProject[]>([])
+  const [models, setModels] = useState<api.ModelDescriptor[]>([])
+  const [systemProfile, setSystemProfile] = useState<api.SystemProfile | null>(null)
+  const [showOnboarding, setShowOnboarding] = useState(false)
+  const [installingModel, setInstallingModel] = useState<string | null>(null)
+  const [modelDialogModel, setModelDialogModel] = useState<api.ModelDescriptor | null>(null)
+  const [projectInfoOpen, setProjectInfoOpen] = useState(false)
   const taskRef = useRef<RunningTask | null>(null)
   taskRef.current = task
 
@@ -121,6 +144,61 @@ export default function App() {
     media.addEventListener('change', apply)
     return () => media.removeEventListener('change', apply)
   }, [theme])
+
+  useEffect(() => {
+    document.documentElement.classList.toggle('transcript-section-tint', preferences?.transcript_section_tint ?? true)
+    return () => document.documentElement.classList.remove('transcript-section-tint')
+  }, [preferences?.transcript_section_tint])
+
+  const refreshRecentProjects = useCallback(async () => {
+    if (!api.isTauri) return
+    try {
+      const result = await api.recentProjectsList()
+      if (result.status === 'success') setRecentProjects(result.data ?? [])
+    } catch {
+      // Recent projects are an enhancement; keep the project library usable if the store is unavailable.
+    }
+  }, [])
+
+  const refreshModelCatalog = useCallback(async () => {
+    if (!api.isTauri) return
+    try {
+      const result = await api.modelCatalog()
+      if (result.status === 'success') setModels(result.data ?? [])
+    } catch {
+      // A missing backend command must not be displayed as an installed model.
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!api.isTauri) return
+    let disposed = false
+    const load = async () => {
+      try {
+        const [preferencesResult, onboardingResult, profileResult] = await Promise.allSettled([api.preferencesGet(), api.onboardingGet(), api.systemProfile()])
+        if (disposed) return
+        if (preferencesResult.status === 'fulfilled' && preferencesResult.value.status === 'success' && preferencesResult.value.data) {
+          setPreferences(preferencesResult.value.data)
+          setTheme(preferencesResult.value.data.theme)
+          setShowOnboarding(!preferencesResult.value.data.onboarding_completed)
+        } else if (onboardingResult.status === 'fulfilled' && onboardingResult.value.status === 'success' && onboardingResult.value.data) {
+          setShowOnboarding(!onboardingResult.value.data.completed)
+        }
+        if (profileResult.status === 'fulfilled' && profileResult.value.status === 'success') setSystemProfile(profileResult.value.data ?? null)
+        await Promise.all([refreshRecentProjects(), refreshModelCatalog()])
+      } catch (error) {
+        if (!disposed) setNotice(error instanceof Error ? error.message : '应用设置暂时无法读取')
+      }
+    }
+    void load()
+    return () => { disposed = true }
+  }, [refreshModelCatalog, refreshRecentProjects])
+
+  useEffect(() => {
+    const reset = () => setShowOnboarding(true)
+    window.addEventListener('dl://onboarding-reset', reset)
+    return () => window.removeEventListener('dl://onboarding-reset', reset)
+  }, [])
 
   const refreshAssets = useCallback(async (selectId?: string) => {
     if (!api.isTauri) return
@@ -200,9 +278,50 @@ export default function App() {
           : event.payload.state === 'succeeded' ? '转录完成。' : event.payload.state === 'cancelled' ? '转录已取消，旧版本保持不变。' : '转录没有完成，旧版本保持不变。'
         setNotice(message)
       }).then((remove) => unlisten.push(remove))
+      void listen<Partial<api.ModelDownloadProgress> & { bytes_downloaded?: number | bigint; bytes_total?: number | bigint }>('dl://model-progress', (event) => {
+        const progress = api.normalizeModelProgress(event.payload)
+        setModels((current) => current.map((model) => model.id === progress.model_id ? {
+          ...model,
+          state: progress.state,
+          downloaded_bytes: progress.completed_bytes,
+        } : model))
+      }).then((remove) => unlisten.push(remove))
+      void listen<Partial<api.ModelInstallation> & { bytes_downloaded?: number | bigint; bytes_total?: number | bigint; last_error_message?: string | null }>('dl://model-state', (event) => {
+        const installation = api.normalizeModelInstallation(event.payload)
+        setModels((current) => current.map((model) => model.id === installation.model_id ? {
+          ...model,
+          state: installation.state,
+          downloaded_bytes: installation.downloaded_bytes,
+          error: installation.error ?? null,
+          installed_revision: installation.state === 'installed' ? installation.revision : model.installed_revision,
+        } : model))
+      }).then((remove) => unlisten.push(remove))
+      void listen<{ changed_keys: string[] }>('dl://preferences-changed', () => {
+        void api.preferencesGet().then((result) => {
+          if (result.status === 'success' && result.data) {
+            setPreferences(result.data)
+            setTheme(result.data.theme)
+            setShowOnboarding(!result.data.onboarding_completed)
+          }
+        }).catch(() => undefined)
+      }).then((remove) => unlisten.push(remove))
     }).catch(() => undefined)
     return () => { disposed = true; unlisten.forEach((remove) => remove()) }
   }, [refreshAll, refreshTranscript])
+
+  const openSettings = async () => {
+    if (!api.isTauri) {
+      // Browser preview keeps the legacy settings screen reachable for tests and local UI review.
+      setScreen('settings')
+      return
+    }
+    try {
+      const result = await api.settingsOpen()
+      if (result.status === 'failed') setNotice(result.diagnostics[0]?.cause ?? '设置窗口无法打开')
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : '设置窗口无法打开')
+    }
+  }
 
   const openProject = async (create: boolean) => {
     if (!api.isTauri) {
@@ -222,6 +341,9 @@ export default function App() {
     setSelectedClipId(null)
     setTranscript(null)
     setNotice(null)
+    setShowOnboarding(false)
+    void api.onboardingComplete(preferences?.default_asr_model).catch(() => undefined)
+    void refreshRecentProjects()
     await refreshAll()
   }
 
@@ -349,10 +471,51 @@ export default function App() {
     setPlaying((value) => !value)
   }
 
+  const installModel = async (modelId: string) => {
+    if (!api.isTauri) {
+      setNotice('请在 Double Love Studio 桌面应用中安装本地模型。')
+      return
+    }
+    setInstallingModel(modelId)
+    try {
+      const result = await api.modelInstall(modelId)
+      if (result.status === 'failed') {
+        setNotice(result.diagnostics[0]?.cause ?? '模型安装没有开始')
+      } else {
+        setNotice('模型已进入下载队列；完成校验后才会启用。')
+        await refreshModelCatalog()
+      }
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : '模型安装没有开始')
+    } finally {
+      setInstallingModel(null)
+    }
+  }
+
+  const completeOnboarding = async (defaultAsrModel?: string) => {
+    if (api.isTauri) {
+      try {
+        const result = await api.onboardingComplete(defaultAsrModel)
+        if (result.status === 'failed') setNotice(result.diagnostics[0]?.cause ?? '新手引导状态没有保存')
+      } catch (error) {
+        setNotice(error instanceof Error ? error.message : '新手引导状态没有保存')
+      }
+    }
+    setShowOnboarding(false)
+  }
+
+  const selectedModelId = preferences?.default_asr_model ?? systemProfile?.recommended_asr_model ?? 'qwen3-asr-0.6b'
+  const selectedModel = models.find((model) => model.id === selectedModelId) ?? (models.find((model) => model.kind === 'asr') ?? FALLBACK_MODEL)
+  const modelReady = selectedModel.state === 'installed'
+
   const startTranscription = async () => {
     if (!asset) return
     if (!await ensureFreshBeforeWrite()) return
-    const result = await api.transcribeStart(asset.id, 'qwen3-asr-1.7b', 'auto')
+    if (api.isTauri && !modelReady) {
+      setModelDialogModel(selectedModel)
+      return
+    }
+    const result = await api.transcribeStart(asset.id, selectedModelId, 'auto')
     if (result.status === 'failed' || !result.data) {
       setNotice(result.diagnostics[0]?.cause ?? '无法启动转录')
       return
@@ -409,9 +572,9 @@ export default function App() {
   }, [asset, editorTab])
 
   useEffect(() => {
-    if (screen !== 'settings' || !api.isTauri) return
+    if ((screen !== 'settings' && !projectInfoOpen) || !api.isTauri) return
     void api.projectHistory().then((result) => setHistory(result.status === 'success' ? result.data ?? [] : []))
-  }, [screen, loadedRevision])
+  }, [screen, projectInfoOpen, loadedRevision])
 
   const ensureFreshBeforeWrite = async (): Promise<boolean> => {
     if (!api.isTauri || loadedRevision === null) return true
@@ -537,6 +700,40 @@ export default function App() {
     else { setExportPreview(null); setNotice(`已导出：${target}`) }
   }
 
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null
+      const editingText = target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA' || target?.tagName === 'SELECT' || target?.isContentEditable
+      const command = event.metaKey || event.ctrlKey
+      if (editingText && !(command && event.key.toLowerCase() === 'z')) return
+      const key = event.key.toLowerCase()
+      if (command && key === ',') { event.preventDefault(); void openSettings(); return }
+      if (command && key === 'n') { event.preventDefault(); void openProject(true); return }
+      if (command && key === 'o') { event.preventDefault(); void openProject(false); return }
+      if (command && key === 'e') { event.preventDefault(); if (screen === 'editor') void showExport(); return }
+      if (command && key === 'z') {
+        event.preventDefault()
+        if (!api.isTauri) { setNotice('撤销需要在 Double Love Studio 桌面应用中执行。'); return }
+        void (event.shiftKey ? api.editRedo() : api.editUndo()).then((result) => {
+          if (result.status === 'failed') setNotice(result.diagnostics[0]?.cause ?? '编辑历史没有改变')
+          else void refreshAll()
+        }).catch(() => setNotice('编辑历史没有改变'))
+        return
+      }
+      if (screen !== 'editor') return
+      if (key === ' ' || event.code === 'Space') { event.preventDefault(); togglePlay(); return }
+      if (key === 'arrowleft') { event.preventDefault(); seek(playheadSec - 5); return }
+      if (key === 'arrowright') { event.preventDefault(); seek(playheadSec + 5); return }
+      if (key === 's' && selectedClipId) {
+        event.preventDefault()
+        const clip = mainTrack.find((candidate) => candidate.id === selectedClipId)
+        if (clip) void splitClip(clip)
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  })
+
   const renderEditorTab = () => {
     if (!asset) return <div className="studio-editor-empty"><Clapperboard size={22} /><strong>主轨还没有素材</strong><p>添加一个本地视频后，就可以开始按文本粗剪。</p><button type="button" className="studio-primary-button" onClick={() => setMediaDrawerOpen(true)}>添加素材</button></div>
     if (editorTab === 'transcript') return <TranscriptView asset={asset} view={transcript} playheadSec={sourcePlayheadSec} transcription={task?.kind === 'transcribe' && task.assetId === asset.id ? task : null} speakerNames={speakerNames} onSeek={seekTranscript} onOmit={omitWords} onRestore={restoreWords} onTranscribeStart={startTranscription} onTranscribeCancel={cancelTask} />
@@ -562,32 +759,39 @@ export default function App() {
             }}
           />
           <div className="studio-player-tools"><div><button type="button" onClick={() => setEditorTab('subtitles')}><Captions size={15} />字幕样式</button><button type="button" onClick={() => setCanvasMenuOpen((open) => !open)}><Palette size={15} />画布</button><button type="button" onClick={() => setEditorTab('speakers')}><Mic2 size={15} />说话人</button></div><span>{asset ? `${asset.width ?? '—'} × ${asset.height ?? '—'}` : ''}</span>{canvasMenuOpen && canvas && <div className="studio-canvas-menu"><strong>统一画布</strong><label>适配<select value={canvas.fit} onChange={(event) => void saveCanvas({ ...canvas, fit: event.target.value as CanvasSpec['fit'] })}><option value="contain">完整显示</option><option value="cover">铺满裁切</option></select></label><label>缩放<input type="number" step="0.05" defaultValue={canvas.scale} onBlur={(event) => void saveCanvas({ ...canvas, scale: Math.max(0.1, Number(event.target.value) || 1) })} /></label><button type="button" onClick={() => setScreen('settings')}>更多画布设置</button></div>}</div>
-          <Transport playing={playing} clock={playheadClock(playheadSec, durationSec)} disabled={!asset} onTogglePlay={togglePlay} onSkip={(delta) => seek(playheadSec + delta)} />
+          <Transport playing={playing} clock={playheadClock(playheadSec, durationSec, preferences?.timecode_precision === 'millisecond')} disabled={!asset} onTogglePlay={togglePlay} onSkip={(delta) => seek(playheadSec + delta)} />
         </section>
         <section className="studio-transcript-pane">
           <header className="studio-editor-tabs"><button type="button" className={editorTab === 'transcript' ? 'is-active' : ''} onClick={() => setEditorTab('transcript')}>转录</button><button type="button" className={editorTab === 'subtitles' ? 'is-active' : ''} onClick={() => setEditorTab('subtitles')}>字幕</button><button type="button" className={editorTab === 'speakers' ? 'is-active' : ''} onClick={() => setEditorTab('speakers')}>说话人</button></header>
           {renderEditorTab()}
         </section>
       </div>
-      <MainTrackTimeline clips={mainTrack} assets={assets} selectedId={selectedClipId} timeline={timeline} playheadSec={playheadSec} outputRate={timeline?.rate ?? outputRate} onSelect={chooseClip} onMove={(clipId, beforeId) => void moveClip(clipId, beforeId)} onTrim={(clip, sourceIn, sourceOut) => void trimClip(clip, sourceIn, sourceOut)} onSplit={(clip) => void splitClip(clip)} onRemove={(clip) => void removeClip(clip)} onAdd={() => setMediaDrawerOpen(true)} />
+      <MainTrackTimeline clips={mainTrack} assets={assets} selectedId={selectedClipId} timeline={timeline} playheadSec={playheadSec} outputRate={timeline?.rate ?? outputRate} onSeek={seek} onSelect={chooseClip} onMove={(clipId, beforeId) => void moveClip(clipId, beforeId)} onTrim={(clip, sourceIn, sourceOut) => void trimClip(clip, sourceIn, sourceOut)} onSplit={(clip) => void splitClip(clip)} onRemove={(clip) => void removeClip(clip)} onAdd={() => setMediaDrawerOpen(true)} />
     </section>
   )
 
+  if (showOnboarding && api.isTauri) {
+    return <Onboarding recommendedModel={systemProfile?.recommended_asr_model ?? preferences?.default_asr_model ?? 'qwen3-asr-0.6b'} systemProfile={systemProfile} models={models} installingModel={installingModel} onInstallModel={(modelId) => void installModel(modelId)} onCreateProject={() => void openProject(true)} onOpenProject={() => void openProject(false)} onSkip={() => void completeOnboarding()} onFinish={() => void completeOnboarding(systemProfile?.recommended_asr_model ?? preferences?.default_asr_model)} />
+  }
+
   return (
     <div className="studio-app">
-      <TitleBar projectName={projectName(project)} screen={screen} sidebarVisible={sidebarVisible} onToggleSidebar={() => setSidebarVisible((visible) => !visible)} onBackToLibrary={() => setScreen('library')} onAddMedia={() => setMediaDrawerOpen(true)} onExport={() => void showExport()} addDisabled={!project || !api.isTauri} exportDisabled={!project || mainTrack.length === 0 || !api.isTauri} />
-      {notice && <div className="studio-notice"><span>{notice}</span><button type="button" aria-label="关闭提示" onClick={() => setNotice(null)}>×</button></div>}
+      <a className="studio-skip-link" href="#studio-main-content">跳到主要内容</a>
+      <TitleBar projectName={projectName(project)} screen={screen} sidebarVisible={sidebarVisible} onToggleSidebar={() => setSidebarVisible((visible) => !visible)} onBackToLibrary={() => setScreen('library')} onAddMedia={() => setMediaDrawerOpen(true)} onExport={() => void showExport()} onOpenProjectInfo={() => setProjectInfoOpen(true)} addDisabled={!project || !api.isTauri} exportDisabled={!project || mainTrack.length === 0 || !api.isTauri} />
+      {notice && <div className="studio-notice" role="status" aria-live="polite"><span>{notice}</span><button type="button" aria-label="关闭提示" onClick={() => setNotice(null)}>×</button></div>}
       <div className="studio-app-body">
-        {sidebarVisible && <Sidebar project={project} screen={screen} onNavigate={setScreen} onCreate={() => void openProject(true)} onOpen={() => void openProject(false)} />}
-        <main className="studio-main">
-          {screen === 'library' && <ProjectLibrary project={project} assets={assets} onCreate={() => void openProject(true)} onOpen={() => void openProject(false)} onEnterEditor={() => setScreen('editor')} />}
+        {sidebarVisible && <Sidebar project={project} screen={screen} onNavigate={setScreen} onCreate={() => void openProject(true)} onOpen={() => void openProject(false)} onOpenSettings={() => void openSettings()} />}
+        <main className="studio-main" id="studio-main-content">
+          {screen === 'library' && <ProjectLibrary project={project} assets={assets} recentProjects={recentProjects} modelReady={modelReady} onCreate={() => void openProject(true)} onOpen={() => void openProject(false)} onEnterEditor={() => setScreen('editor')} onOpenModels={() => void openSettings()} onForgetRecent={(root) => { if (!api.isTauri) return; void api.recentProjectForget(root).then(() => refreshRecentProjects()).catch(() => setNotice('最近项目记录没有移除')) }} />}
           {screen === 'editor' && editor}
-          {screen === 'tasks' && <section className="studio-tasks"><header><h1>后台任务</h1><p>所有模型任务在本机运行，完成前可以继续浏览项目。</p></header>{task ? <article><Sparkles size={18} /><div><strong>{task.kind === 'speaker' ? '说话人分离' : '转录'}</strong><p>{task.message}</p></div><button type="button" className="studio-secondary-button" onClick={cancelTask}>取消</button></article> : <div className="studio-tasks-empty">当前没有后台任务。</div>}</section>}
+          {screen === 'tasks' && <section className="studio-tasks"><header><h1>后台任务</h1><p>所有模型任务在本机运行，完成前可以继续浏览项目。</p></header>{task ? <article><Activity size={18} /><div><strong>{task.kind === 'speaker' ? '说话人分离' : '转录'}</strong><p>{task.message}</p></div><button type="button" className="studio-secondary-button" onClick={cancelTask}>取消</button></article> : <div className="studio-tasks-empty">当前没有后台任务。</div>}</section>}
           {screen === 'settings' && <ProjectSettings projectOpen={project !== null} canvas={canvas} outputRate={outputRate} subtitleStyle={subtitleStyle} theme={theme} onThemeChange={setTheme} history={history} onCanvasSave={(next) => void saveCanvas(next)} onOutputRateSave={(next) => void saveOutputRate(next)} onStyleSave={(next) => void saveSubtitleStyle(next)} onRestoreRevision={(revision) => void restoreHistory(revision)} />}
         </main>
       </div>
       {mediaDrawerOpen && <MediaDrawer assets={assets} busyAssetId={busyAssetId} onClose={() => setMediaDrawerOpen(false)} onAddExisting={(candidate) => void addAssetToTrack(candidate)} onImport={() => void importNewMedia()} />}
+      {modelDialogModel && <ModelInstallDialog model={modelDialogModel} busy={installingModel === modelDialogModel.id} onInstall={() => void installModel(modelDialogModel.id)} onClose={() => setModelDialogModel(null)} onOpenSettings={() => { setModelDialogModel(null); void openSettings() }} />}
       {exportPreview && <ProjectExportDialog result={exportPreview} busy={exportBusy} onClose={() => setExportPreview(null)} onExport={(kind) => void exportProject(kind)} />}
+      {projectInfoOpen && <ProjectInfoDialog outputRate={outputRate} resolvedRate={timeline?.rate ?? null} history={history} onRateChange={(rate) => void saveOutputRate(rate)} onRestore={(revision) => void restoreHistory(revision)} onClose={() => setProjectInfoOpen(false)} />}
       {agentPayload && <div className="studio-popover-backdrop" role="presentation" onMouseDown={() => setAgentPayload(null)}><section className="studio-agent-payload" role="dialog" aria-modal="true" aria-label="Agent 数据包预览" onMouseDown={(event) => event.stopPropagation()}><header><Wand2 size={18} /><div><strong>Agent 数据包预览</strong><span>只含匿名说话人的必要发言</span></div></header><p>{agentPayload.instruction}</p><pre>{agentPayload.utterances.join('\n\n')}</pre><button type="button" className="studio-secondary-button" onClick={() => setAgentPayload(null)}>关闭</button></section></div>}
       {renamingSpeaker && <div className="studio-popover-backdrop" role="presentation" onMouseDown={() => setRenamingSpeaker(null)}><form className="studio-agent-payload studio-speaker-rename" role="dialog" aria-modal="true" aria-label="修改说话人名称" onMouseDown={(event) => event.stopPropagation()} onSubmit={(event) => { event.preventDefault(); void saveManualSpeakerName() }}><header><Mic2 size={18} /><div><strong>修改说话人名称</strong><span>只修改项目里的身份映射，不会改写文字或时间。</span></div></header><label>显示名称<input aria-label="说话人显示名称" value={speakerNameDraft} maxLength={64} autoFocus onChange={(event) => setSpeakerNameDraft(event.target.value)} /></label><div><button type="button" className="studio-secondary-button" onClick={() => setRenamingSpeaker(null)}>取消</button><button type="submit" className="studio-primary-button">确认名称</button></div></form></div>}
     </div>
