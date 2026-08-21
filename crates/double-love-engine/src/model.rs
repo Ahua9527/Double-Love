@@ -204,6 +204,19 @@ pub struct DoctorReport {
     pub warnings: Vec<String>,
 }
 
+/// 诊断执行时采集的本机环境；与模型目录状态分开传入，避免诊断入口随检查项增长。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DoctorEnvironment {
+    pub architecture: String,
+    pub os_version: String,
+    pub memory_bytes: u64,
+    pub free_model_bytes: u64,
+    pub ffmpeg_available: bool,
+    pub libass_available: bool,
+    pub asr_runtime_ready: bool,
+    pub speaker_runtime_ready: bool,
+}
+
 /// 清单解析后的只读索引。
 #[derive(Debug, Clone)]
 pub struct ModelCatalog {
@@ -845,17 +858,7 @@ impl ModelManager {
         Ok(next)
     }
 
-    pub fn doctor_report(
-        &mut self,
-        architecture: impl Into<String>,
-        os_version: impl Into<String>,
-        memory_bytes: u64,
-        free_model_bytes: u64,
-        ffmpeg_available: bool,
-        libass_available: bool,
-        asr_runtime_ready: bool,
-        speaker_runtime_ready: bool,
-    ) -> DoctorReport {
+    pub fn doctor_report(&mut self, environment: DoctorEnvironment) -> DoctorReport {
         let mut model_checks = Vec::new();
         let mut warnings = Vec::new();
         for descriptor in self.catalog.iter() {
@@ -887,30 +890,30 @@ impl ModelManager {
                     .then(|| "MODEL_INTEGRITY_FAILED".to_string()),
             });
         }
-        if !ffmpeg_available {
+        if !environment.ffmpeg_available {
             warnings.push("ffmpeg/ffprobe 不可用".to_string());
         }
-        if !libass_available {
+        if !environment.libass_available {
             warnings.push("libass 不可用".to_string());
         }
-        if !asr_runtime_ready {
+        if !environment.asr_runtime_ready {
             warnings.push("ASR 运行时不可用".to_string());
         }
-        if !speaker_runtime_ready {
+        if !environment.speaker_runtime_ready {
             warnings.push("说话人运行时不可用".to_string());
         }
         DoctorReport {
             schema_version: 1,
             generated_at: now_string(),
-            architecture: architecture.into(),
-            os_version: os_version.into(),
-            memory_bytes,
-            free_model_bytes,
+            architecture: environment.architecture,
+            os_version: environment.os_version,
+            memory_bytes: environment.memory_bytes,
+            free_model_bytes: environment.free_model_bytes,
             model_root_available: self.root.is_dir(),
-            ffmpeg_available,
-            libass_available,
-            asr_runtime_ready,
-            speaker_runtime_ready,
+            ffmpeg_available: environment.ffmpeg_available,
+            libass_available: environment.libass_available,
+            asr_runtime_ready: environment.asr_runtime_ready,
+            speaker_runtime_ready: environment.speaker_runtime_ready,
             model_checks,
             warnings,
         }
