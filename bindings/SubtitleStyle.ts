@@ -3,4 +3,4 @@
 /**
  * 项目级字幕外观；单 Cue 不覆盖该对象，避免首版复杂度失控。
  */
-export type SubtitleStyle = { font_family: string, font_weight: bigint, font_size: number, text_color: string, outline_color: string, outline_width: number, shadow_color: string, shadow_offset_x: number, shadow_offset_y: number, shadow_blur: number, background_color: string, background_radius: number, background_padding_x: number, background_padding_y: number, position_x: number, position_y: number, max_width_ratio: number, max_lines: bigint, target_characters_per_line: bigint, show_speaker: boolean, };
+export type SubtitleStyle = { font_family: string, font_weight: bigint, font_size: number, text_color: string, outline_color: string, outline_width: number, shadow_color: string, shadow_offset_x: number, shadow_offset_y: number, shadow_blur: number, background_color: string, background_radius: number, background_padding_x: number, background_padding_y: number, position_x: number, position_y: number, max_width_ratio: number, max_lines: bigint, target_characters_per_line: bigint, show_speaker: boolean, cjk_spacing: boolean, };

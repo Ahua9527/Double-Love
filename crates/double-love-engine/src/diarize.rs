@@ -29,6 +29,10 @@ pub struct DiarizeConfig {
     pub python: Option<PathBuf>,
     pub package_dir: PathBuf,
     pub log_dir: PathBuf,
+    /// 模型管理器解析出的 bundled Silero VAD 目录或运行时标识。
+    pub vad_model_dir: PathBuf,
+    /// 模型管理器解析出的本地 WeSpeaker 权重目录。
+    pub speaker_model_dir: PathBuf,
 }
 
 /// 启动本地说话人分离；成功前所有结果都只在 worker 内存中，防止失败覆盖已确认身份。
@@ -118,6 +122,8 @@ fn run_diarization(
     if let Err(error) = sidecar.send(&SidecarCommand::Diarize {
         task_id: task_id.to_string(),
         wav_path: wav_path.to_string(),
+        vad_model_dir: config.vad_model_dir.to_string_lossy().into_owned(),
+        speaker_model_dir: config.speaker_model_dir.to_string_lossy().into_owned(),
         source_sample_rate,
     }) {
         report("error", format!("说话人命令发送失败：{error}"));
@@ -446,6 +452,8 @@ mod tests {
                 .canonicalize()
                 .expect("speaker sidecar"),
             log_dir: dir.join("logs"),
+            vad_model_dir: dir.join("models/silero-vad"),
+            speaker_model_dir: dir.join("models/wespeaker-zh"),
         };
         let task_id =
             start_speaker_diarization(Arc::clone(&store), &registry, Arc::new(Sink), config)

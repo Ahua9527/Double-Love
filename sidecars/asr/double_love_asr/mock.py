@@ -14,8 +14,16 @@ _WORD_STEP = 0.5
 _WORD_LEN = 0.3
 
 
-def transcribe_chunk(pcm: bytes, *, model: str, language: str, cancel) -> list[dict]:
-    del model, language  # mock 不关心
+def transcribe_chunk(
+    pcm: bytes,
+    *,
+    model: str,
+    model_dir: str = "",
+    aligner_dir: str = "",
+    language: str,
+    cancel,
+) -> list[dict]:
+    del model, model_dir, aligner_dir, language  # mock 不关心
     seconds = len(pcm) / 2 / pipeline.PREPARED_RATE
     words = []
     position = 0.0

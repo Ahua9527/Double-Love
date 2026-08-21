@@ -2,26 +2,29 @@
 //! 业务写入全部走 engine；这一层只做参数装配、项目状态持有与进度事件转发。
 
 mod media_protocol;
+mod models;
+mod preferences;
+mod settings_window;
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use double_love_engine::{
-    CanvasSpec, DEFAULT_HANDLES_MS, DiarizeConfig, EditOperation, ExportOutcome, FfmpegTools,
-    FrameRate, MainTrackClip, MediaAssetSummary, OperationResult, ProgressEvent, ProgressSink,
-    ProjectExportPreview, ProjectStore, ProjectSummary, RevisionHistoryEntry, SharedSink,
-    SpeakerDiarizationResult, SpeakerIdentity, SpeakerNameAgentPayload, SpeakerNameProposal,
-    SubtitleStyle, TaskRegistry, TaskState, TimelineIRv2, TranscribeConfig, TranscriptViewData,
-    agent_name_payload_preview, append_full_main_track_asset, append_main_track_clip,
-    compile_project_timeline, create_project, export_project_ass_to, export_project_xmeml_to,
-    export_rough_cut, export_rough_cut_to, import_media as engine_import_media, list_media_assets,
-    local_name_proposals, move_main_track_clip, omit_words, open_project, preview_project_export,
-    remove_main_track_clip, render_project_mp4_to, restore_words, speaker_diarization_result,
-    split_main_track_clip, start_speaker_diarization, start_transcription, transcript_view,
-    trim_main_track_clip,
+    CanvasSpec, DEFAULT_HANDLES_MS, Diagnostic, DiagnosticLevel, DiarizeConfig, EditOperation,
+    ExportOutcome, FfmpegTools, FrameRate, MainTrackClip, MediaAssetSummary, OperationResult,
+    ProgressEvent, ProgressSink, ProjectExportPreview, ProjectStore, ProjectSummary,
+    RevisionHistoryEntry, SharedSink, SpeakerDiarizationResult, SpeakerIdentity,
+    SpeakerNameAgentPayload, SpeakerNameProposal, SubtitleStyle, TaskRegistry, TaskState,
+    TimelineIRv2, TranscribeConfig, TranscriptViewData, agent_name_payload_preview,
+    append_full_main_track_asset, append_main_track_clip, compile_project_timeline, create_project,
+    export_project_ass_to, export_project_xmeml_to, export_rough_cut, export_rough_cut_to,
+    import_media as engine_import_media, list_media_assets, local_name_proposals,
+    move_main_track_clip, omit_words, open_project, preview_project_export, remove_main_track_clip,
+    render_project_mp4_to, restore_words, speaker_diarization_result, split_main_track_clip,
+    start_speaker_diarization, start_transcription, transcript_view, trim_main_track_clip,
 };
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State, WindowEvent};
 
 /// 当前打开的项目：summary + 共享库连接（转录 worker 持有同一份 Arc）。
 struct OpenProject {
@@ -29,9 +32,21 @@ struct OpenProject {
     store: Arc<Mutex<ProjectStore>>,
 }
 
-struct AppState {
+pub(crate) struct AppState {
     project: Mutex<Option<OpenProject>>,
     registry: TaskRegistry,
+    pub(crate) preferences: preferences::PreferencesState,
+    pub(crate) models: models::ModelRuntimeState,
+    history_navigation: Mutex<HistoryNavigation>,
+}
+
+#[derive(Default)]
+struct HistoryNavigation {
+    project_id: Option<String>,
+    last_actual_revision: u64,
+    current_snapshot_revision: u64,
+    undo: Vec<u64>,
+    redo: Vec<u64>,
 }
 
 impl AppState {
@@ -39,6 +54,9 @@ impl AppState {
         Self {
             project: Mutex::new(None),
             registry: TaskRegistry::new(),
+            preferences: preferences::PreferencesState::new(),
+            models: models::ModelRuntimeState::default(),
+            history_navigation: Mutex::new(HistoryNavigation::default()),
         }
     }
 }
@@ -74,10 +92,26 @@ impl ProgressSink for TauriSink {
 fn install_project(state: &AppState, summary: &ProjectSummary) -> Result<(), String> {
     let store =
         ProjectStore::open(Path::new(&summary.database)).map_err(|error| error.to_string())?;
+    let revision = store.revision().map_err(|error| error.to_string())?;
+    let undo = store
+        .revision_history(10_000)
+        .map_err(|error| error.to_string())?
+        .into_iter()
+        .filter(|entry| entry.restorable && entry.revision < revision)
+        .map(|entry| entry.revision)
+        .rev()
+        .collect();
     *state.project.lock().expect("project lock") = Some(OpenProject {
         summary: summary.clone(),
         store: Arc::new(Mutex::new(store)),
     });
+    *state.history_navigation.lock().expect("history navigation") = HistoryNavigation {
+        project_id: Some(summary.project_id.clone()),
+        last_actual_revision: revision,
+        current_snapshot_revision: revision,
+        undo,
+        redo: Vec::new(),
+    };
     Ok(())
 }
 
@@ -161,21 +195,84 @@ fn resolve_media_tools(
 }
 
 #[tauri::command]
-fn project_create(path: String, state: State<AppState>) -> OperationResult<ProjectSummary> {
+fn project_create(
+    app: AppHandle,
+    path: String,
+    state: State<AppState>,
+) -> OperationResult<ProjectSummary> {
     match create_project(&PathBuf::from(path)) {
-        Ok(summary) => match install_project(&state, &summary) {
-            Ok(()) => OperationResult::success(summary),
-            Err(error) => OperationResult::failed("STORAGE_ERROR", error),
-        },
+        Ok(mut summary) => {
+            let mut style_warning = None;
+            match preferences::current_preferences(&app, &state.preferences) {
+                Ok(preferences) => match ProjectStore::open(Path::new(&summary.database))
+                    .and_then(|store| store.set_subtitle_style(&preferences.default_subtitle_style))
+                {
+                    Ok(revision) => summary.revision = revision,
+                    Err(error) => style_warning = Some(error.to_string()),
+                },
+                Err(error) => style_warning = Some(error.to_string()),
+            }
+            match install_project(&state, &summary) {
+                Ok(()) => {
+                    let mut result = OperationResult::success(summary.clone());
+                    if let Some(error) = style_warning {
+                        result.diagnostics.push(Diagnostic {
+                            level: DiagnosticLevel::Warning,
+                            code: "DEFAULT_SUBTITLE_STYLE_FAILED".to_string(),
+                            cause: error,
+                            object_id: None,
+                            impact: "项目已创建，但使用了内置字幕默认值。".to_string(),
+                            blocks_export: false,
+                            suggested_action: Some("可在编辑器中重新设置字幕样式。".to_string()),
+                        });
+                    }
+                    if let Err(error) =
+                        preferences::record_recent_project(&app, &state.preferences, &summary)
+                    {
+                        result.diagnostics.push(Diagnostic {
+                            level: DiagnosticLevel::Warning,
+                            code: "RECENT_PROJECT_WRITE_FAILED".to_string(),
+                            cause: error.to_string(),
+                            object_id: None,
+                            impact: "项目已创建，但最近项目列表未更新。".to_string(),
+                            blocks_export: false,
+                            suggested_action: Some("稍后在设置中重新打开项目列表。".to_string()),
+                        });
+                    }
+                    result
+                }
+                Err(error) => OperationResult::failed("STORAGE_ERROR", error),
+            }
+        }
         Err(error) => OperationResult::failed("PROJECT_CREATE_FAILED", error.to_string()),
     }
 }
 
 #[tauri::command]
-fn project_open(path: String, state: State<AppState>) -> OperationResult<ProjectSummary> {
+fn project_open(
+    app: AppHandle,
+    path: String,
+    state: State<AppState>,
+) -> OperationResult<ProjectSummary> {
     match open_project(&PathBuf::from(path)) {
         Ok(summary) => match install_project(&state, &summary) {
-            Ok(()) => OperationResult::success(summary),
+            Ok(()) => {
+                let mut result = OperationResult::success(summary.clone());
+                if let Err(error) =
+                    preferences::record_recent_project(&app, &state.preferences, &summary)
+                {
+                    result.diagnostics.push(Diagnostic {
+                        level: DiagnosticLevel::Warning,
+                        code: "RECENT_PROJECT_WRITE_FAILED".to_string(),
+                        cause: error.to_string(),
+                        object_id: None,
+                        impact: "项目已打开，但最近项目列表未更新。".to_string(),
+                        blocks_export: false,
+                        suggested_action: Some("稍后在设置中重新打开项目列表。".to_string()),
+                    });
+                }
+                result
+            }
             Err(error) => OperationResult::failed("STORAGE_ERROR", error),
         },
         Err(error) => OperationResult::failed("PROJECT_OPEN_FAILED", error.to_string()),
@@ -219,6 +316,22 @@ fn transcribe_start(
     model: String,
     language: String,
 ) -> OperationResult<serde_json::Value> {
+    let preferences = match preferences::current_preferences(&app, &state.preferences) {
+        Ok(preferences) => preferences,
+        Err(error) => return OperationResult::failed("PREFERENCES_READ_FAILED", error.to_string()),
+    };
+    let model_root = Path::new(&preferences.model_root);
+    let model_dir = match state.models.installed_dir(model_root, &model) {
+        Ok(path) => path,
+        Err(error) => return OperationResult::failed("MODEL_NOT_READY", error),
+    };
+    let aligner_dir = match state
+        .models
+        .installed_dir(model_root, "qwen3-forced-aligner-0.6b")
+    {
+        Ok(path) => path,
+        Err(error) => return OperationResult::failed("MODEL_NOT_READY", error),
+    };
     let guard = state.project.lock().expect("project lock");
     let Some(open) = guard.as_ref() else {
         return OperationResult::failed("PROJECT_NOT_OPEN", "请先打开或创建一个项目。");
@@ -226,6 +339,8 @@ fn transcribe_start(
     let config = TranscribeConfig {
         asset_id,
         model,
+        model_dir,
+        aligner_dir,
         language,
         mock: false,
         python: None,
@@ -290,6 +405,99 @@ fn project_restore_revision(
         }
         Err(error) => OperationResult::failed("HISTORY_RESTORE_FAILED", error.to_string()),
     })
+}
+
+fn reset_history_navigation(
+    navigation: &mut HistoryNavigation,
+    store: &ProjectStore,
+    project_id: &str,
+) -> Result<(), String> {
+    let revision = store.revision().map_err(|error| error.to_string())?;
+    navigation.project_id = Some(project_id.to_string());
+    navigation.last_actual_revision = revision;
+    navigation.current_snapshot_revision = revision;
+    navigation.undo = store
+        .revision_history(10_000)
+        .map_err(|error| error.to_string())?
+        .into_iter()
+        .filter(|entry| entry.restorable && entry.revision < revision)
+        .map(|entry| entry.revision)
+        .rev()
+        .collect();
+    navigation.redo.clear();
+    Ok(())
+}
+
+#[tauri::command]
+fn edit_undo(state: State<AppState>) -> OperationResult<()> {
+    let project = state.project.lock().expect("project lock");
+    let Some(open) = project.as_ref() else {
+        return OperationResult::failed("PROJECT_NOT_OPEN", "请先打开或创建一个项目。");
+    };
+    let store = open.store.lock().expect("store lock");
+    let actual_revision = match store.revision() {
+        Ok(revision) => revision,
+        Err(error) => return OperationResult::failed("STORAGE_ERROR", error.to_string()),
+    };
+    let mut navigation = state.history_navigation.lock().expect("history navigation");
+    if navigation.project_id.as_deref() != Some(open.summary.project_id.as_str())
+        || navigation.last_actual_revision != actual_revision
+    {
+        if let Err(error) =
+            reset_history_navigation(&mut navigation, &store, &open.summary.project_id)
+        {
+            return OperationResult::failed("HISTORY_READ_FAILED", error);
+        }
+    }
+    let Some(target) = navigation.undo.pop() else {
+        return OperationResult::failed("HISTORY_UNDO_EMPTY", "没有更早的编辑版本。");
+    };
+    let previous = navigation.current_snapshot_revision;
+    match store.restore_revision(target) {
+        Ok(revision) => {
+            navigation.redo.push(previous);
+            navigation.current_snapshot_revision = target;
+            navigation.last_actual_revision = revision;
+            let mut result = OperationResult::success(());
+            result.revision = Some(revision);
+            result
+        }
+        Err(error) => OperationResult::failed("HISTORY_UNDO_FAILED", error.to_string()),
+    }
+}
+
+#[tauri::command]
+fn edit_redo(state: State<AppState>) -> OperationResult<()> {
+    let project = state.project.lock().expect("project lock");
+    let Some(open) = project.as_ref() else {
+        return OperationResult::failed("PROJECT_NOT_OPEN", "请先打开或创建一个项目。");
+    };
+    let store = open.store.lock().expect("store lock");
+    let actual_revision = match store.revision() {
+        Ok(revision) => revision,
+        Err(error) => return OperationResult::failed("STORAGE_ERROR", error.to_string()),
+    };
+    let mut navigation = state.history_navigation.lock().expect("history navigation");
+    if navigation.project_id.as_deref() != Some(open.summary.project_id.as_str())
+        || navigation.last_actual_revision != actual_revision
+    {
+        return OperationResult::failed("HISTORY_REDO_EMPTY", "没有可以重做的编辑版本。");
+    }
+    let Some(target) = navigation.redo.pop() else {
+        return OperationResult::failed("HISTORY_REDO_EMPTY", "没有可以重做的编辑版本。");
+    };
+    let previous = navigation.current_snapshot_revision;
+    match store.restore_revision(target) {
+        Ok(revision) => {
+            navigation.undo.push(previous);
+            navigation.current_snapshot_revision = target;
+            navigation.last_actual_revision = revision;
+            let mut result = OperationResult::success(());
+            result.revision = Some(revision);
+            result
+        }
+        Err(error) => OperationResult::failed("HISTORY_REDO_FAILED", error.to_string()),
+    }
 }
 
 /// TranscriptView 首屏数据：词 + 分段 + 活跃 omit。
@@ -574,6 +782,18 @@ fn subtitle_style_set(
 }
 
 #[tauri::command]
+fn apply_default_subtitle_style(
+    app: AppHandle,
+    state: State<AppState>,
+) -> OperationResult<SubtitleStyle> {
+    let preferences = match preferences::current_preferences(&app, &state.preferences) {
+        Ok(preferences) => preferences,
+        Err(error) => return OperationResult::failed("PREFERENCES_READ_FAILED", error.to_string()),
+    };
+    subtitle_style_set(state, preferences.default_subtitle_style)
+}
+
+#[tauri::command]
 fn speaker_list(state: State<AppState>) -> OperationResult<Vec<SpeakerIdentity>> {
     with_store(&state, |store, _| match store.speaker_identities() {
         Ok(speakers) => OperationResult::success(speakers),
@@ -671,6 +891,17 @@ fn speaker_diarize_start(
     state: State<AppState>,
     asset_id: String,
 ) -> OperationResult<serde_json::Value> {
+    let preferences = match preferences::current_preferences(&app, &state.preferences) {
+        Ok(preferences) => preferences,
+        Err(error) => return OperationResult::failed("PREFERENCES_READ_FAILED", error.to_string()),
+    };
+    let speaker_model_dir = match state
+        .models
+        .installed_dir(Path::new(&preferences.model_root), "wespeaker-zh")
+    {
+        Ok(path) => path,
+        Err(error) => return OperationResult::failed("MODEL_NOT_READY", error),
+    };
     let guard = state.project.lock().expect("project lock");
     let Some(open) = guard.as_ref() else {
         return OperationResult::failed("PROJECT_NOT_OPEN", "请先打开或创建一个项目。");
@@ -681,6 +912,8 @@ fn speaker_diarize_start(
         python: None,
         package_dir: resolve_speaker_sidecar_dir(&app),
         log_dir: Path::new(&open.summary.root).join(".doublelove/logs"),
+        vad_model_dir: PathBuf::from("bundled"),
+        speaker_model_dir,
     };
     let sink: SharedSink = Arc::new(TauriSink { app });
     match start_speaker_diarization(Arc::clone(&open.store), &state.registry, sink, config) {
@@ -729,7 +962,25 @@ fn export_premiere_apply() -> OperationResult<String> {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_store::Builder::default().build())
         .manage(AppState::new())
+        .setup(|app| {
+            settings_window::install_native_menu(app.handle())?;
+            Ok(())
+        })
+        .on_menu_event(|app, event| {
+            if settings_window::is_settings_menu_item(event.id().as_ref()) {
+                let _ = settings_window::open_settings_window(app);
+            }
+        })
+        .on_window_event(|window, event| {
+            if window.label() == settings_window::SETTINGS_WINDOW_LABEL {
+                if let WindowEvent::CloseRequested { api, .. } = event {
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
+            }
+        })
         // media://localhost/<asset_id>：只服务当前项目内已导入资产的原始媒体（只读引用）。
         .register_uri_scheme_protocol("media", |ctx, request| {
             let state = ctx.app_handle().state::<AppState>();
@@ -760,6 +1011,25 @@ pub fn run() {
             }
         })
         .invoke_handler(tauri::generate_handler![
+            settings_window::settings_open,
+            preferences::preferences_get,
+            preferences::preferences_update,
+            preferences::recent_projects_list,
+            preferences::recent_project_forget,
+            preferences::system_profile,
+            preferences::onboarding_get,
+            preferences::onboarding_complete,
+            preferences::onboarding_reset,
+            models::model_catalog,
+            models::model_install,
+            models::model_pause,
+            models::model_resume,
+            models::model_cancel,
+            models::model_verify,
+            models::model_remove,
+            models::model_reveal,
+            models::doctor_run,
+            models::diagnostics_reveal_logs,
             project_create,
             project_open,
             import_media,
@@ -772,6 +1042,8 @@ pub fn run() {
             transcript_get,
             edit_omit,
             edit_restore,
+            edit_undo,
+            edit_redo,
             roughcut_preview,
             export_roughcut_apply,
             project_export_preview,
@@ -792,6 +1064,7 @@ pub fn run() {
             output_rate_set,
             subtitle_style_get,
             subtitle_style_set,
+            apply_default_subtitle_style,
             speaker_list,
             speaker_save,
             speaker_name_proposals,
