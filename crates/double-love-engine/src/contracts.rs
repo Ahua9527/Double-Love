@@ -15,7 +15,7 @@ pub const TIMELINE_IR_SCHEMA_VERSION: u32 = 1;
 pub struct WordAnchor {
     pub word_id: String,
     pub asset_id: String,
-    /// 资产内词序，从 0 开始连续递增；UNIQUE(asset_id, ordinal)。
+    // 资产内词序，从 0 开始连续递增；UNIQUE(asset_id, ordinal)。
     pub ordinal: i64,
     pub raw_text: String,
     pub display_text: String,
@@ -23,9 +23,9 @@ pub struct WordAnchor {
     pub start_sample: i64,
     pub end_sample: i64,
     pub confidence: Option<f64>,
-    /// 合成词（纠错/对齐产物）不得驱动剪切；切片只产生 false。
+    // 合成词（纠错/对齐产物）不得驱动剪切；切片只产生 false。
     pub synthetic: bool,
-    /// 合成词溯源；非合成词恒为 None。
+    // 合成词溯源；非合成词恒为 None。
     pub source_word_ids: Option<Vec<String>>,
 }
 
@@ -102,10 +102,10 @@ pub struct EditOperation {
     pub behavior: EditBehavior,
     pub start_ordinal: i64,
     pub end_ordinal: i64,
-    /// 切点前后缓冲（毫秒），转采样时按资产采样率取整。
+    // 切点前后缓冲（毫秒），转采样时按资产采样率取整。
     pub handles_before_ms: i64,
     pub handles_after_ms: i64,
-    /// 被更新的操作回填 supersede 链；活跃操作为 None。
+    // 被更新的操作回填 supersede 链；活跃操作为 None。
     pub superseded_by: Option<String>,
     pub revision: i64,
     pub created_at: String,
@@ -122,7 +122,7 @@ pub struct TranscriptSegment {
     pub text: String,
     pub start_sample: i64,
     pub end_sample: i64,
-    /// 整段被活跃 omit 覆盖（UI 划线）。
+    // 整段被活跃 omit 覆盖（UI 划线）。
     pub omitted: bool,
     pub partially_omitted: bool,
 }
@@ -133,7 +133,7 @@ pub struct TranscriptSegment {
 pub struct TranscriptViewData {
     pub words: Vec<WordAnchor>,
     pub segments: Vec<TranscriptSegment>,
-    /// 当前活跃的 omit 操作（恢复操作的入口）。
+    // 当前活跃的 omit 操作（恢复操作的入口）。
     pub omits: Vec<EditOperation>,
 }
 
@@ -193,7 +193,7 @@ pub enum AssetStatus {
 pub struct MediaAssetSummary {
     pub id: String,
     pub display_name: String,
-    /// 时长（以 `audio_sample_rate` 为时基的采样数）。
+    // 时长（以 `audio_sample_rate` 为时基的采样数）。
     pub duration_samples: i64,
     pub audio_sample_rate: i64,
     pub rate: FrameRate,

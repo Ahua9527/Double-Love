@@ -4,8 +4,4 @@
  * 文本视图分段（TranscriptView 的渲染单元）。
  * 由词序列纯函数生成（segment.rs），不落表。
  */
-export type TranscriptSegment = { index: bigint, start_ordinal: bigint, end_ordinal: bigint, text: string, start_sample: bigint, end_sample: bigint, 
-/**
- * 整段被活跃 omit 覆盖（UI 划线）。
- */
-omitted: boolean, partially_omitted: boolean, };
+export type TranscriptSegment = { index: bigint, start_ordinal: bigint, end_ordinal: bigint, text: string, start_sample: bigint, end_sample: bigint, omitted: boolean, partially_omitted: boolean, };
