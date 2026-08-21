@@ -4,8 +4,8 @@ use std::sync::{Arc, Mutex};
 
 use clap::{Parser, ValueEnum};
 use double_love_engine::{
-    DEFAULT_HANDLES_MS, FfmpegTools, OperationResult, ProgressSink, ProjectStore, Sidecar,
-    TaskRegistry, TranscribeConfig, append_full_main_track_asset, append_main_track_clip,
+    DEFAULT_HANDLES_MS, FfmpegTools, ModelManager, OperationResult, ProgressSink, ProjectStore,
+    Sidecar, TaskRegistry, TranscribeConfig, append_full_main_track_asset, append_main_track_clip,
     compile_project_timeline, create_project, export_project_ass_to, export_project_xmeml_to,
     export_rough_cut, ffmpeg_supports_ass_filter, import_media, move_main_track_clip, omit_words,
     open_project, preview_project_export, remove_main_track_clip, render_project_mp4_to,
@@ -727,9 +727,26 @@ fn transcribe_command(
         Ok(store) => Arc::new(Mutex::new(store)),
         Err(error) => return OperationResult::failed("STORAGE_ERROR", error.to_string()),
     };
+    let model_root = std::env::var_os("DOUBLELOVE_MODELS_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| project.join(".doublelove/models"));
+    let model_manager = match ModelManager::with_builtin_catalog(&model_root) {
+        Ok(manager) => manager,
+        Err(error) => return OperationResult::failed("MODEL_CATALOG_FAILED", error.to_string()),
+    };
+    let model_dir = match model_manager.installation_dir(model) {
+        Ok(path) => path,
+        Err(error) => return OperationResult::failed("MODEL_NOT_READY", error.to_string()),
+    };
+    let aligner_dir = match model_manager.installation_dir("qwen3-forced-aligner-0.6b") {
+        Ok(path) => path,
+        Err(error) => return OperationResult::failed("MODEL_NOT_READY", error.to_string()),
+    };
     let config = TranscribeConfig {
         asset_id: asset.to_string(),
         model: model.to_string(),
+        model_dir,
+        aligner_dir,
         language: language.to_string(),
         mock,
         python: None,
