@@ -766,7 +766,7 @@ export default function App() {
           {renderEditorTab()}
         </section>
       </div>
-      <MainTrackTimeline clips={mainTrack} assets={assets} selectedId={selectedClipId} timeline={timeline} playheadSec={playheadSec} outputRate={timeline?.rate ?? outputRate} onSelect={chooseClip} onMove={(clipId, beforeId) => void moveClip(clipId, beforeId)} onTrim={(clip, sourceIn, sourceOut) => void trimClip(clip, sourceIn, sourceOut)} onSplit={(clip) => void splitClip(clip)} onRemove={(clip) => void removeClip(clip)} onAdd={() => setMediaDrawerOpen(true)} />
+      <MainTrackTimeline clips={mainTrack} assets={assets} selectedId={selectedClipId} timeline={timeline} playheadSec={playheadSec} outputRate={timeline?.rate ?? outputRate} onSeek={seek} onSelect={chooseClip} onMove={(clipId, beforeId) => void moveClip(clipId, beforeId)} onTrim={(clip, sourceIn, sourceOut) => void trimClip(clip, sourceIn, sourceOut)} onSplit={(clip) => void splitClip(clip)} onRemove={(clip) => void removeClip(clip)} onAdd={() => setMediaDrawerOpen(true)} />
     </section>
   )
 

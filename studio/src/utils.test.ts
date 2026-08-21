@@ -5,8 +5,6 @@ import type { WordAnchor } from '../../bindings/WordAnchor'
 import {
   EMPTY_SELECTION,
   PANEL_STORAGE_KEY,
-  TIMELINE_LEFT_INSET,
-  TIMELINE_RIGHT_INSET,
   clampSeconds,
   exportBlockMessage,
   formatClock,
@@ -55,12 +53,11 @@ describe('播放头时钟', () => {
 describe('seek 换算', () => {
   const left = 100
   const width = 500
-  const usable = width - TIMELINE_LEFT_INSET - TIMELINE_RIGHT_INSET
 
-  it('命中可用区两端', () => {
-    expect(seekFractionFromClientX(left + TIMELINE_LEFT_INSET, left, width)).toBe(0)
-    expect(seekFractionFromClientX(left + width - TIMELINE_RIGHT_INSET, left, width)).toBe(1)
-    expect(seekFractionFromClientX(left + TIMELINE_LEFT_INSET + usable / 2, left, width)).toBe(0.5)
+  it('按真实容器边界换算两端和中点', () => {
+    expect(seekFractionFromClientX(left, left, width)).toBe(0)
+    expect(seekFractionFromClientX(left + width, left, width)).toBe(1)
+    expect(seekFractionFromClientX(left + width / 2, left, width)).toBe(0.5)
   })
 
   it('越界 clamp 到 0..1', () => {
@@ -68,8 +65,10 @@ describe('seek 换算', () => {
     expect(seekFractionFromClientX(9999, left, width)).toBe(1)
   })
 
-  it('可用区为 0 时不产生 NaN', () => {
-    expect(seekFractionFromClientX(left, left, TIMELINE_LEFT_INSET + TIMELINE_RIGHT_INSET)).toBe(0)
+  it('宽度无效或坐标非有限时不产生 NaN', () => {
+    expect(seekFractionFromClientX(left, left, 0)).toBe(0)
+    expect(seekFractionFromClientX(left, left, -1)).toBe(0)
+    expect(seekFractionFromClientX(Number.NaN, left, width)).toBe(0)
   })
 })
 
