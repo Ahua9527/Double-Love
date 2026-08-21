@@ -4,7 +4,7 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use double_love_engine::{Sidecar, SidecarCommand, SidecarEvent, resolve_python};
+use double_love_engine::{Sidecar, SidecarCommand, SidecarEvent, SidecarPoll, resolve_python};
 
 fn package_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -75,19 +75,20 @@ fn mock_sidecar_transcribes_full_flow() {
     let mut done_count = None;
     for _ in 0..40 {
         match sidecar.next_event(Duration::from_secs(5)) {
-            Some(Ok(SidecarEvent::Words { chunk, words, .. })) => {
+            SidecarPoll::Event(Ok(SidecarEvent::Words { chunk, words, .. })) => {
                 for word in words {
                     words_seen.push((chunk, word.raw_text, word.start_sample, word.end_sample));
                 }
             }
-            Some(Ok(SidecarEvent::Progress { .. })) => progress_seen += 1,
-            Some(Ok(SidecarEvent::Done { word_count, .. })) => {
+            SidecarPoll::Event(Ok(SidecarEvent::Progress { .. })) => progress_seen += 1,
+            SidecarPoll::Event(Ok(SidecarEvent::Done { word_count, .. })) => {
                 done_count = Some(word_count);
                 break;
             }
-            Some(Ok(other)) => panic!("unexpected event: {other:?}"),
-            Some(Err(reason)) => panic!("protocol error: {reason}"),
-            None => panic!("timed out waiting for events"),
+            SidecarPoll::Event(Ok(other)) => panic!("unexpected event: {other:?}"),
+            SidecarPoll::Event(Err(reason)) => panic!("protocol error: {reason}"),
+            SidecarPoll::TimedOut => panic!("timed out waiting for events"),
+            SidecarPoll::Closed => panic!("sidecar closed before done"),
         }
     }
 
@@ -125,11 +126,12 @@ fn mock_sidecar_honours_cancel() {
     // 等首个 words 事件后立刻取消
     loop {
         match sidecar.next_event(Duration::from_secs(5)) {
-            Some(Ok(SidecarEvent::Words { .. })) => break,
-            Some(Ok(SidecarEvent::Progress { .. })) => continue,
-            Some(Ok(other)) => panic!("unexpected event before cancel: {other:?}"),
-            Some(Err(reason)) => panic!("protocol error: {reason}"),
-            None => panic!("timed out waiting for first words"),
+            SidecarPoll::Event(Ok(SidecarEvent::Words { .. })) => break,
+            SidecarPoll::Event(Ok(SidecarEvent::Progress { .. })) => continue,
+            SidecarPoll::Event(Ok(other)) => panic!("unexpected event before cancel: {other:?}"),
+            SidecarPoll::Event(Err(reason)) => panic!("protocol error: {reason}"),
+            SidecarPoll::TimedOut => panic!("timed out waiting for first words"),
+            SidecarPoll::Closed => panic!("sidecar closed before first words"),
         }
     }
     sidecar
@@ -141,17 +143,18 @@ fn mock_sidecar_honours_cancel() {
     let mut cancelled = false;
     for _ in 0..40 {
         match sidecar.next_event(Duration::from_secs(5)) {
-            Some(Ok(SidecarEvent::Cancelled { task_id })) => {
+            SidecarPoll::Event(Ok(SidecarEvent::Cancelled { task_id })) => {
                 assert_eq!(task_id, "task-cancel");
                 cancelled = true;
                 break;
             }
-            Some(Ok(SidecarEvent::Done { .. })) => {
+            SidecarPoll::Event(Ok(SidecarEvent::Done { .. })) => {
                 panic!("cancel 后不应出现 done（10 段不可能瞬间转完）")
             }
-            Some(Ok(_)) => continue,
-            Some(Err(reason)) => panic!("protocol error: {reason}"),
-            None => panic!("timed out waiting for cancelled"),
+            SidecarPoll::Event(Ok(_)) => continue,
+            SidecarPoll::Event(Err(reason)) => panic!("protocol error: {reason}"),
+            SidecarPoll::TimedOut => panic!("timed out waiting for cancelled"),
+            SidecarPoll::Closed => panic!("sidecar closed before cancelled"),
         }
     }
     assert!(cancelled);

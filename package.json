@@ -17,7 +17,8 @@
     "studio:dev": "pnpm --dir studio dev",
     "studio:build": "pnpm --dir studio build",
     "tauri:dev": "tauri dev",
-    "tauri:build": "tauri build"
+    "tauri:build": "tauri build",
+    "tauri:release": "bash scripts/verify-release-runtime.sh && tauri build"
   },
   "dependencies": {
     "lucide-react": "^0.474.0",

@@ -142,13 +142,15 @@ mod tests {
     use super::*;
 
     fn fixture_file() -> (std::path::PathBuf, Vec<u8>) {
+        static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let unique = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .expect("clock after epoch")
             .as_nanos();
+        let sequence = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let path = std::env::temp_dir().join(format!(
-            "double-love-media-{}-{unique}.bin",
-            std::process::id()
+            "double-love-media-{}-{unique}-{sequence}.bin",
+            std::process::id(),
         ));
         let bytes: Vec<u8> = (0_u8..=99).collect();
         std::fs::write(&path, &bytes).expect("fixture written");

@@ -1,0 +1,16 @@
+.studio-timeline-preview {
+  align-self: center;
+  justify-self: center;
+  max-height: 100%;
+  max-width: 100%;
+  width: 100%;
+  container-type: size;
+}
+
+.studio-next-source-preload {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  opacity: 0;
+  pointer-events: none;
+}

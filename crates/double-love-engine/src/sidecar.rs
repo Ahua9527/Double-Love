@@ -5,7 +5,7 @@
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
-use std::sync::mpsc::{self, Receiver};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
 use std::thread;
 use std::time::Duration;
 
@@ -29,6 +29,13 @@ pub enum SidecarCommand {
         source_sample_rate: i64,
         chunk_seconds: i64,
     },
+    Diarize {
+        task_id: String,
+        /// 16kHz 单声道准备音频；原媒体路径不会发送给说话人后端。
+        wav_path: String,
+        /// 将 VAD/嵌入区间转换回源素材的采样率。
+        source_sample_rate: i64,
+    },
     Cancel {
         task_id: String,
     },
@@ -43,6 +50,21 @@ pub struct SidecarWord {
     pub end_sample: i64,
     pub confidence: Option<f64>,
     pub language: Option<String>,
+}
+
+/// 本地说话人 sidecar 的一个匿名聚类区间。声纹向量单独返回，只在项目本地存储。
+#[derive(Debug, Clone, Deserialize)]
+pub struct SidecarSpeakerSegment {
+    pub cluster_id: String,
+    pub start_sample: i64,
+    pub end_sample: i64,
+    pub confidence: Option<f64>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct SidecarSpeakerEmbedding {
+    pub cluster_id: String,
+    pub values: Vec<f32>,
 }
 
 /// stdout 事件（每行一个 JSON）。
@@ -66,9 +88,18 @@ pub enum SidecarEvent {
         chunk: i64,
         words: Vec<SidecarWord>,
     },
+    SpeakerSegments {
+        task_id: String,
+        segments: Vec<SidecarSpeakerSegment>,
+        embeddings: Vec<SidecarSpeakerEmbedding>,
+    },
     Done {
         task_id: String,
         word_count: u64,
+    },
+    DiarizationDone {
+        task_id: String,
+        segment_count: u64,
     },
     Cancelled {
         task_id: String,
@@ -106,6 +137,23 @@ impl std::error::Error for SidecarError {}
 
 type EventLine = Result<SidecarEvent, String>;
 
+/// Sidecar 的下一次读取结果。`Closed` 与 `TimedOut` 必须区分：前者说明 stdout
+/// 已经结束，继续等待只会让用户看到无意义的“正在转录”。
+#[derive(Debug)]
+pub enum SidecarPoll {
+    Event(EventLine),
+    TimedOut,
+    Closed,
+}
+
+fn poll_receiver(events: &Receiver<EventLine>, timeout: Duration) -> SidecarPoll {
+    match events.recv_timeout(timeout) {
+        Ok(event) => SidecarPoll::Event(event),
+        Err(RecvTimeoutError::Timeout) => SidecarPoll::TimedOut,
+        Err(RecvTimeoutError::Disconnected) => SidecarPoll::Closed,
+    }
+}
+
 /// 一个运行中的 sidecar 进程。
 pub struct Sidecar {
     child: Child,
@@ -123,16 +171,34 @@ impl Sidecar {
         mock: bool,
         log_path: &Path,
     ) -> Result<Self, SidecarError> {
+        Self::spawn_module(python, package_dir, "double_love_asr", mock, log_path)
+    }
+
+    /// 启动共享 JSONL 协议的某个本地 sidecar 模块。ASR 与 Speaker 都复用同一握手、
+    /// 日志和进程终止规则，避免其中一个在 stdout 关闭后空等。
+    pub fn spawn_module(
+        python: &Path,
+        package_dir: &Path,
+        module: &str,
+        mock: bool,
+        log_path: &Path,
+    ) -> Result<Self, SidecarError> {
+        // `current_dir(package_dir)` 会改变相对解释器路径的语义；CLI 默认传相对的
+        // sidecar 目录，因此先固定解释器绝对路径，避免启动时误找 package_dir/.venv。
+        let python = python
+            .canonicalize()
+            .unwrap_or_else(|_| python.to_path_buf());
         let mut command = Command::new(python);
         command
             .arg("-m")
-            .arg("double_love_asr")
+            .arg(module)
             .current_dir(package_dir)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         if mock {
             command.env("DOUBLELOVE_ASR_MOCK", "1");
+            command.env("DOUBLELOVE_SPEAKER_MOCK", "1");
         }
         #[cfg(unix)]
         {
@@ -199,21 +265,26 @@ impl Sidecar {
             version: SIDECAR_PROTOCOL_VERSION,
         })?;
         match sidecar.next_event(HANDSHAKE_TIMEOUT) {
-            Some(Ok(SidecarEvent::Ready { version, .. }))
+            SidecarPoll::Event(Ok(SidecarEvent::Ready { version, .. }))
                 if version == SIDECAR_PROTOCOL_VERSION =>
             {
                 Ok(sidecar)
             }
-            Some(Ok(SidecarEvent::Ready { version, .. })) => Err(SidecarError::ProtocolMismatch {
-                expected: SIDECAR_PROTOCOL_VERSION,
-                got: version,
-            }),
-            Some(Ok(other)) => Err(SidecarError::Handshake(format!(
+            SidecarPoll::Event(Ok(SidecarEvent::Ready { version, .. })) => {
+                Err(SidecarError::ProtocolMismatch {
+                    expected: SIDECAR_PROTOCOL_VERSION,
+                    got: version,
+                })
+            }
+            SidecarPoll::Event(Ok(other)) => Err(SidecarError::Handshake(format!(
                 "首个事件不是 ready：{other:?}"
             ))),
-            Some(Err(reason)) => Err(SidecarError::Handshake(reason)),
-            None => Err(SidecarError::Handshake(
+            SidecarPoll::Event(Err(reason)) => Err(SidecarError::Handshake(reason)),
+            SidecarPoll::TimedOut => Err(SidecarError::Handshake(
                 "10 秒内未收到 ready 事件".to_string(),
+            )),
+            SidecarPoll::Closed => Err(SidecarError::Handshake(
+                "sidecar 在握手前关闭 stdout".to_string(),
             )),
         }
     }
@@ -232,9 +303,9 @@ impl Sidecar {
             .map_err(SidecarError::Io)
     }
 
-    /// 等下一个事件；超时返回 None。
-    pub fn next_event(&self, timeout: Duration) -> Option<EventLine> {
-        self.events.recv_timeout(timeout).ok()
+    /// 等下一个事件，显式区分超时与 stdout 关闭。
+    pub fn next_event(&self, timeout: Duration) -> SidecarPoll {
+        poll_receiver(&self.events, timeout)
     }
 
     /// 终止升级链：SIGTERM → 500ms → SIGKILL → 2s → killpg 兜底。
@@ -278,6 +349,21 @@ impl Sidecar {
             }
             thread::sleep(Duration::from_millis(25));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn disconnected_stdout_is_not_reported_as_timeout() {
+        let (sender, receiver) = mpsc::channel::<EventLine>();
+        drop(sender);
+        assert!(matches!(
+            poll_receiver(&receiver, Duration::from_millis(1)),
+            SidecarPoll::Closed
+        ));
     }
 }
 

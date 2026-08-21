@@ -1,0 +1,32 @@
+.studio-track {
+  position: relative;
+}
+
+.studio-track-playhead {
+  position: absolute;
+  z-index: 4;
+  top: -9px;
+  bottom: -14px;
+  width: 2px;
+  background: #ed4e43;
+  pointer-events: none;
+}
+
+.studio-track-playhead::before {
+  position: absolute;
+  top: -1px;
+  left: 50%;
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  background: #ed4e43;
+  content: '';
+  transform: translateX(-50%) rotate(45deg);
+}
+
+.studio-track-end-drop {
+  width: 22px;
+  flex: none;
+  border: 1px dashed var(--studio-line-strong);
+  border-radius: 5px;
+}
