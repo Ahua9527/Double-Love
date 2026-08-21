@@ -45,6 +45,7 @@ yarn.lock
 next-env.d.ts
 .playwright-mcp/
 *.xml
+!crates/double-love-engine/src/export/xmeml_golden_25fps.xml
 *.csv
 TODO.md
 .playwright-cli/
