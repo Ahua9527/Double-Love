@@ -56,6 +56,20 @@ fn missing_project_flag_exits_2_with_project_required() {
 }
 
 #[test]
+fn version_does_not_require_a_project() {
+    let output = double_love()
+        .args(["--json", "version"])
+        .output()
+        .expect("cli runs");
+    assert!(output.status.success());
+    let result: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("stdout is valid json");
+    assert_eq!(result["status"], "success");
+    assert_eq!(result["data"]["sidecar_protocol"], 1);
+    assert_eq!(result["data"]["timeline_ir"], serde_json::json!([1, 2]));
+}
+
+#[test]
 fn dry_run_writes_nothing_to_disk() {
     let root = unique_temp_dir("dry-run");
 

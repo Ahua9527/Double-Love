@@ -6,7 +6,9 @@
 
 ## 当前实现边界
 
-当前仓库仍以 React/Vite/PWA 为运行中的 Web 产品。Studio Foundation 只建立边界和最小项目存储，不宣称已完成 Silverstack 导入或 Premiere round-trip。
+当前可运行产品是 Tauri 2 + React 的本地 Studio；`studio/` 提供桌面界面，Rust Engine
+负责本地项目、转录驱动粗剪和导出。Silverstack Metadata MVP 仍不在测试版范围；XMEML
+已经可以生成，但 Premiere／Resolve 的真实导入、重连和再次导出仍必须按测试版验收清单人工确认。
 
 ```text
 React UI (src/)
@@ -32,17 +34,20 @@ CLI (crates/double-love-cli/) ──┘
 
 ## 首批命令契约
 
-Foundation 已登记首批六个命令；项目创建/打开已接入本地存储，其余命令先以明确的 pending 诊断占位，下一阶段接入同一 `OperationResult<T>` 契约，不能另造一套返回语义。
+所有 Studio 命令共用 `OperationResult<T>`、Revision 和本地 SQLite 边界。Metadata MVP 的占位命令保留为明确排除项，不能误认为测试版能力。
 
 | 命令 | Foundation 状态 |
 | --- | --- |
 | `project_create` | 已建立 SQLite/WAL/外键/迁移表和 `.doublelove` 目录 |
-| `project_open` | 已建立本地项目目录检查 |
+| `project_open` | 已建立本地项目目录检查与 Revision 读取 |
+| `import_media` / `transcribe` | 已接入本地媒体探测、版本化转录与取消保护 |
+| `main_track_*` | 已接入多素材添加、排序、裁切、拆分、移除与 TimelineIR v2 |
+| `speaker_diarize` | 已接入本地 VAD／声纹聚类、逐词归属和人工确认身份流程 |
+| `project_export_*` | 已接入 ASS、烧录 MP4 和供 Premiere／Resolve 导入的 XMEML |
 | `import_silverstack_preview` | 待 Metadata MVP 阶段接入 |
-| `operation_apply` | 待 Revision/Operation Log 阶段接入 |
-| `export_premiere_preview` | 待 TimelineIR 阶段接入 |
-| `export_premiere_apply` | 待真实 Premiere Fixture 阶段接入 |
-| `task_cancel` | 已建立统一失败诊断入口，运行任务管理待补 |
+| `export_premiere_preview` | Metadata MVP 的旧入口；测试版使用 `project_export_preview` |
+| `export_premiere_apply` | Metadata MVP 的旧入口；测试版使用 `project_export_xmeml_apply` |
+| `task_cancel` | 已接入转录与说话人任务取消 |
 
 ## 验证边界
 
@@ -50,7 +55,7 @@ Foundation 已登记首批六个命令；项目创建/打开已接入本地存�
 
 当前 `tauri info` 还显示未安装完整 Xcode；Command Line Tools 已安装，当前环境可以生成未发布的 Apple Silicon `.app`，但桌面窗口、签名、公证和真实 Studio 行为仍不能视为已验收。
 
-依赖下载完成后，workspace 的 `cargo check`、`cargo fmt`、`cargo clippy`、`cargo test` 以及 `pnpm desktop:build` 的 `.app` 构建均已通过；窗口人工验收仍待桌面环境，签名、公证和自动更新明确不在本阶段。
+workspace 的 `cargo check`、`cargo fmt`、`cargo clippy`、`cargo test` 以及 Tauri 调试 `.app` 构建是代码门槛；真实桌面窗口、签名、公证、干净机器模型运行时和两款 NLE 的人工验收仍是独立门槛。
 
 ```bash
 cargo fmt --all -- --check

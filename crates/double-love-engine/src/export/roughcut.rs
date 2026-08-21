@@ -111,6 +111,7 @@ fn run(
         audio_sample_rate: asset.audio_sample_rate,
         audio_channels: asset.audio_channels,
         source_tc_start_frame: asset.source_tc_start_frame,
+        source_tc_is_drop_frame: asset.source_tc_is_drop_frame,
     });
     let artifact_path = resolve_target(&stem);
     if let Some(parent) = artifact_path.parent()
@@ -189,6 +190,7 @@ mod tests {
                 height: Some(1080),
                 audio_channels: Some(2),
                 source_tc_start_frame: None,
+                source_tc_is_drop_frame: false,
                 ffprobe_json: "{}".to_string(),
             })
             .expect("asset");

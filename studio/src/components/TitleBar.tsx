@@ -1,87 +1,44 @@
-import { PanelBottom, PanelLeft, PanelRight } from 'lucide-react'
-import type { PanelState } from '../utils'
+import { ChevronLeft, FolderPlus, PanelLeft, Upload } from 'lucide-react'
+import type { StudioScreen } from './Sidebar'
 
 interface TitleBarProps {
-  /** 当前项目名（未打开项目时为 null） */
   projectName: string | null
-  panels: PanelState
-  onToggle: (key: keyof PanelState) => void
-  onImport: () => void
+  screen: StudioScreen
+  sidebarVisible: boolean
+  onToggleSidebar: () => void
+  onBackToLibrary: () => void
+  onAddMedia: () => void
   onExport: () => void
-  /** 无可用资产时禁用导入/导出 */
-  importDisabled: boolean
+  addDisabled: boolean
   exportDisabled: boolean
 }
 
-function PanelToggle({
-  label,
-  pressed,
-  onClick,
-  children,
-}: {
-  label: string
-  pressed: boolean
-  onClick: () => void
-  children: React.ReactNode
-}) {
-  return (
-    <button
-      type="button"
-      aria-label={label}
-      aria-pressed={pressed}
-      title={label}
-      onClick={onClick}
-      className={`w-7 h-7 rounded-md flex items-center justify-center ${
-        pressed ? 'bg-sidebaraccent text-selected' : 'text-mutedfg hover:text-fg'
-      }`}
-    >
-      {children}
-    </button>
-  )
+function titleFor(screen: StudioScreen, projectName: string | null) {
+  if (screen === 'library') return '我的项目'
+  if (screen === 'tasks') return '后台任务'
+  if (screen === 'settings') return '设置'
+  return projectName ?? '编辑器'
 }
 
 export function TitleBar({
   projectName,
-  panels,
-  onToggle,
-  onImport,
+  screen,
+  sidebarVisible,
+  onToggleSidebar,
+  onBackToLibrary,
+  onAddMedia,
   onExport,
-  importDisabled,
+  addDisabled,
   exportDisabled,
 }: TitleBarProps) {
   return (
-    <header className="h-10 flex-none flex items-center justify-between pr-3 border-b border-line">
-      <div className="flex items-center gap-2 pl-1.5 pr-3">
-        <PanelToggle label="切换左侧栏" pressed={panels.left} onClick={() => onToggle('left')}>
-          <PanelLeft size={15} />
-        </PanelToggle>
-        <span className="w-2 h-2 flex-none rounded-full bg-love" />
-        <span className="text-sm font-semibold">Double Love Studio</span>
-        {projectName && <span className="text-sm text-mutedfg truncate max-w-64">{projectName}</span>}
-      </div>
-      <div className="flex items-center gap-2">
-        <button
-          type="button"
-          onClick={onImport}
-          disabled={importDisabled}
-          className="h-7 px-3 rounded-md border border-line text-xs hover:bg-sidebaraccent disabled:opacity-40 disabled:hover:bg-transparent"
-        >
-          导入…
-        </button>
-        <button
-          type="button"
-          onClick={onExport}
-          disabled={exportDisabled}
-          className="h-7 px-3 rounded-md bg-love hover:bg-love/85 text-xs font-semibold text-white disabled:opacity-40 disabled:hover:bg-love"
-        >
-          导出 Premiere XML
-        </button>
-        <PanelToggle label="切换时间线" pressed={panels.bottom} onClick={() => onToggle('bottom')}>
-          <PanelBottom size={15} />
-        </PanelToggle>
-        <PanelToggle label="切换检查器" pressed={panels.right} onClick={() => onToggle('right')}>
-          <PanelRight size={15} />
-        </PanelToggle>
+    <header className="studio-titlebar" data-tauri-drag-region>
+      <button type="button" className="studio-icon-button" aria-label="切换项目栏" aria-pressed={sidebarVisible} onClick={onToggleSidebar}><PanelLeft size={17} /></button>
+      {screen === 'editor' && <button type="button" className="studio-icon-button" aria-label="返回项目库" onClick={onBackToLibrary}><ChevronLeft size={18} /></button>}
+      <div className="studio-titlebar-title"><strong>{titleFor(screen, projectName)}</strong>{screen === 'editor' && <span>本地粗剪</span>}</div>
+      <div className="studio-titlebar-actions">
+        {screen === 'editor' && <button type="button" className="studio-subtle-button" disabled={addDisabled} onClick={onAddMedia}><FolderPlus size={15} />添加素材</button>}
+        {screen === 'editor' && <button type="button" className="studio-export-button" disabled={exportDisabled} onClick={onExport}><Upload size={15} />导出</button>}
       </div>
     </header>
   )
