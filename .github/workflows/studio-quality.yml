@@ -34,6 +34,11 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Install Studio dependencies
         run: pnpm --dir studio install --frozen-lockfile
+      - name: Verify test runtime prerequisites
+        run: |
+          command -v ffmpeg
+          command -v ffprobe
+          command -v python3
       - name: Check Rust formatting
         run: cargo fmt --all -- --check
       - name: Lint Rust workspace
