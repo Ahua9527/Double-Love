@@ -49,9 +49,17 @@ export function formatClock(seconds: number): string {
   return `${pad2(minutes)}:${pad2(secs)}`
 }
 
-/** 传输条上的播放头时钟，如 "00:42 / 02:00"。 */
-export function playheadClock(currentSec: number, durationSec: number): string {
-  return `${formatClock(clampSeconds(currentSec, durationSec))} / ${formatClock(durationSec)}`
+function formatClockMilliseconds(seconds: number): string {
+  const clamped = Math.max(0, seconds)
+  const total = Math.floor(clamped)
+  const millis = Math.floor((clamped - total) * 1000)
+  return `${formatClock(total)}.${String(millis).padStart(3, '0')}`
+}
+
+/** 传输条上的播放头时钟；设置开启时显示毫秒。 */
+export function playheadClock(currentSec: number, durationSec: number, showMilliseconds = false): string {
+  const format = showMilliseconds ? formatClockMilliseconds : formatClock
+  return `${format(clampSeconds(currentSec, durationSec))} / ${format(durationSec)}`
 }
 
 // ---- 时间线刻度尺 ----

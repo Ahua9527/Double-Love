@@ -42,6 +42,7 @@ describe('播放头时钟', () => {
     expect(playheadClock(42.5, 120)).toBe('00:42 / 02:00')
     expect(playheadClock(120, 120)).toBe('02:00 / 02:00')
     expect(playheadClock(999, 120)).toBe('02:00 / 02:00')
+    expect(playheadClock(42.125, 120, true)).toBe('00:42.125 / 02:00.000')
   })
 
   it('clampSeconds 边界', () => {
