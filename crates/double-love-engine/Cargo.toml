@@ -7,8 +7,15 @@ license = "MIT"
 
 [dependencies]
 rusqlite = { version = "0.37", features = ["bundled"] }
+md-5 = "0.10"
+percent-encoding = "2"
+sha2 = "0.10"
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 ts-rs.workspace = true
 uuid.workspace = true
+
+# sidecar 终止升级链（SIGTERM/SIGKILL/killpg）只在 unix 可用
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"

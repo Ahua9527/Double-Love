@@ -4,6 +4,8 @@
   "description": "最小桌面窗口能力；业务写入通过已登记命令进入 Rust Engine。",
   "windows": ["main"],
   "permissions": [
-    "core:default"
+    "core:default",
+    "core:event:default",
+    "dialog:default"
   ]
 }
