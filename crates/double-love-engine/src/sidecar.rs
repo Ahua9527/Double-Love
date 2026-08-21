@@ -352,21 +352,6 @@ impl Sidecar {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn disconnected_stdout_is_not_reported_as_timeout() {
-        let (sender, receiver) = mpsc::channel::<EventLine>();
-        drop(sender);
-        assert!(matches!(
-            poll_receiver(&receiver, Duration::from_millis(1)),
-            SidecarPoll::Closed
-        ));
-    }
-}
-
 impl Drop for Sidecar {
     fn drop(&mut self) {
         // 先关 stdin：sidecar 读到 EOF 自行退出（daemon worker 随之结束）
@@ -393,4 +378,19 @@ pub fn resolve_python(override_path: Option<&Path>, venv_python: &Path) -> Optio
             .map(|dir| dir.join("python3"))
             .find(|candidate| candidate.is_file())
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn disconnected_stdout_is_not_reported_as_timeout() {
+        let (sender, receiver) = mpsc::channel::<EventLine>();
+        drop(sender);
+        assert!(matches!(
+            poll_receiver(&receiver, Duration::from_millis(1)),
+            SidecarPoll::Closed
+        ));
+    }
 }
