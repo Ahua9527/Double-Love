@@ -5,6 +5,7 @@ mod edit;
 pub mod export;
 mod main_track;
 mod media;
+mod model;
 mod project;
 mod rational;
 mod segment;
@@ -36,6 +37,13 @@ pub use main_track::{
     move_main_track_clip, remove_main_track_clip, split_main_track_clip, trim_main_track_clip,
 };
 pub use media::{FfmpegTools, PREPARED_SAMPLE_RATE, import_media, list_media_assets};
+pub use model::{
+    DoctorModelCheck, DoctorReport, FetchResponse, FetchStatus, MODEL_CATALOG_SCHEMA_VERSION,
+    MODEL_INSTALLATIONS_SCHEMA_VERSION, ModelCatalog, ModelComponent, ModelDependency,
+    ModelDescriptor, ModelDescriptorWithInstallation, ModelDownloadProgress, ModelError,
+    ModelFetcher, ModelFile, ModelInstallState, ModelInstallation, ModelManager,
+    write_fetch_response,
+};
 pub use project::{ProjectError, ProjectSummary, create_project, open_project};
 pub use rational::{
     FrameRate, Rational, Round, convert_frame_rate, frame_to_samples, samples_to_frame,
