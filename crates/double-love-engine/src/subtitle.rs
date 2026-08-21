@@ -376,8 +376,10 @@ mod tests {
             end_frame: 50,
             text: "你好".to_string(),
         }];
-        let mut style = SubtitleStyle::default();
-        style.show_speaker = true;
+        let style = SubtitleStyle {
+            show_speaker: true,
+            ..Default::default()
+        };
         let ass = export_ass(&timeline(), &style, &cues);
         assert!(ass.contains("PlayResX: 1920"));
         assert!(ass.contains("0:00:01.00"));
@@ -387,9 +389,11 @@ mod tests {
 
     #[test]
     fn wraps_cues_to_the_project_line_target() {
-        let mut style = SubtitleStyle::default();
-        style.target_characters_per_line = 4;
-        style.max_lines = 2;
+        let style = SubtitleStyle {
+            target_characters_per_line: 4,
+            max_lines: 2,
+            ..Default::default()
+        };
         assert_eq!(
             wrap_cue_text("这是一段需要换行的字幕", 4, 2),
             "这是一段\n需要换行的字幕"

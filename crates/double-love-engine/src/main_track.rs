@@ -44,37 +44,37 @@ fn source_from_row(row: MediaAssetRow) -> Result<TimelineSource, String> {
 fn require_source(
     store: &ProjectStore,
     asset_id: &str,
-) -> Result<TimelineSource, OperationResult<MainTrackClip>> {
+) -> Result<TimelineSource, Box<OperationResult<MainTrackClip>>> {
     let row = match store.media_asset(asset_id) {
         Ok(Some(row)) => row,
         Ok(None) => {
-            return Err(OperationResult::failed(
+            return Err(Box::new(OperationResult::failed(
                 "MEDIA_ASSET_MISSING",
                 format!("素材不存在：{asset_id}"),
-            ));
+            )));
         }
-        Err(error) => return Err(storage_failure(error)),
+        Err(error) => return Err(Box::new(storage_failure(error))),
     };
     source_from_row(row)
-        .map_err(|message| OperationResult::failed("MEDIA_FPS_UNSUPPORTED", message))
+        .map_err(|message| Box::new(OperationResult::failed("MEDIA_FPS_UNSUPPORTED", message)))
 }
 
 fn validate_range(
     source: &TimelineSource,
     source_in_frame: i64,
     source_out_frame: i64,
-) -> Result<(), OperationResult<MainTrackClip>> {
+) -> Result<(), Box<OperationResult<MainTrackClip>>> {
     if source_in_frame < 0
         || source_out_frame <= source_in_frame
         || source_out_frame > source.source_duration_frames
     {
-        return Err(OperationResult::failed(
+        return Err(Box::new(OperationResult::failed(
             "MAIN_TRACK_RANGE_INVALID",
             format!(
                 "源区间 [{source_in_frame}, {source_out_frame}) 超出素材 {} 的帧范围。",
                 source.display_name
             ),
-        ));
+        )));
     }
     Ok(())
 }
@@ -87,10 +87,10 @@ pub fn append_main_track_clip(
 ) -> OperationResult<MainTrackClip> {
     let source = match require_source(store, asset_id) {
         Ok(source) => source,
-        Err(result) => return result,
+        Err(result) => return *result,
     };
     if let Err(result) = validate_range(&source, source_in_frame, source_out_frame) {
-        return result;
+        return *result;
     }
     let id = Uuid::new_v4().to_string();
     match store.append_main_track_clip(&id, asset_id, source_in_frame, source_out_frame) {
@@ -110,7 +110,7 @@ pub fn append_full_main_track_asset(
 ) -> OperationResult<MainTrackClip> {
     let source = match require_source(store, asset_id) {
         Ok(source) => source,
-        Err(result) => return result,
+        Err(result) => return *result,
     };
     append_main_track_clip(store, asset_id, 0, source.source_duration_frames)
 }
@@ -145,10 +145,10 @@ pub fn trim_main_track_clip(
     };
     let source = match require_source(store, &original.source_asset_id) {
         Ok(source) => source,
-        Err(result) => return result,
+        Err(result) => return *result,
     };
     if let Err(result) = validate_range(&source, source_in_frame, source_out_frame) {
-        return result;
+        return *result;
     }
     match store.trim_main_track_clip(id, source_in_frame, source_out_frame) {
         Ok(clip) => {

@@ -76,7 +76,7 @@ fn write_file_definition(
         1,
         format!("<duration>{}</duration>", source.source_duration_frames)
     );
-    line!(1, "<timecode>".to_string());
+    line!(1, "<timecode>");
     rate_xml(source.rate, indent + 2, output);
     line!(
         2,
@@ -96,34 +96,34 @@ fn write_file_definition(
             }
         )
     );
-    line!(2, "<source>source</source>".to_string());
-    line!(1, "</timecode>".to_string());
-    line!(1, "<media>".to_string());
-    line!(2, "<video>".to_string());
-    line!(3, "<samplecharacteristics>".to_string());
+    line!(2, "<source>source</source>");
+    line!(1, "</timecode>");
+    line!(1, "<media>");
+    line!(2, "<video>");
+    line!(3, "<samplecharacteristics>");
     if let Some(width) = source.width {
         line!(4, format!("<width>{width}</width>"));
     }
     if let Some(height) = source.height {
         line!(4, format!("<height>{height}</height>"));
     }
-    line!(4, "<pixelaspectratio>Square</pixelaspectratio>".to_string());
-    line!(3, "</samplecharacteristics>".to_string());
-    line!(2, "</video>".to_string());
-    line!(2, "<audio>".to_string());
-    line!(3, "<samplecharacteristics>".to_string());
-    line!(4, "<depth>16</depth>".to_string());
+    line!(4, "<pixelaspectratio>Square</pixelaspectratio>");
+    line!(3, "</samplecharacteristics>");
+    line!(2, "</video>");
+    line!(2, "<audio>");
+    line!(3, "<samplecharacteristics>");
+    line!(4, "<depth>16</depth>");
     line!(
         4,
         format!("<samplerate>{}</samplerate>", source.audio_sample_rate)
     );
-    line!(3, "</samplecharacteristics>".to_string());
+    line!(3, "</samplecharacteristics>");
     if let Some(channels) = source.audio_channels {
         line!(3, format!("<channelcount>{channels}</channelcount>"));
     }
-    line!(2, "</audio>".to_string());
-    line!(1, "</media>".to_string());
-    line!("</file>".to_string());
+    line!(2, "</audio>");
+    line!(1, "</media>");
+    line!("</file>");
 }
 
 fn write_video_clip(
@@ -156,26 +156,26 @@ fn write_video_clip(
     line!(6, format!("<out>{}</out>", clip.source_out_frame));
     line!(6, format!("<start>{}</start>", clip.timeline_start_frame));
     line!(6, format!("<end>{}</end>", clip.timeline_end_frame));
-    line!(6, "<pixelaspectratio>Square</pixelaspectratio>".to_string());
+    line!(6, "<pixelaspectratio>Square</pixelaspectratio>");
     if write_file {
         write_file_definition(source, &source_file_id, 6, output);
     } else {
         line!(6, format!("<file id=\"{source_file_id}\"/>"));
     }
-    line!(6, "<sourcetrack>".to_string());
-    line!(7, "<mediatype>video</mediatype>".to_string());
-    line!(6, "</sourcetrack>".to_string());
-    line!(6, "<link>".to_string());
+    line!(6, "<sourcetrack>");
+    line!(7, "<mediatype>video</mediatype>");
+    line!(6, "</sourcetrack>");
+    line!(6, "<link>");
     line!(7, format!("<linkclipref>{item_id}</linkclipref>"));
-    line!(7, "<mediatype>video</mediatype>".to_string());
-    line!(7, "<trackindex>1</trackindex>".to_string());
-    line!(6, "</link>".to_string());
-    line!(6, "<link>".to_string());
+    line!(7, "<mediatype>video</mediatype>");
+    line!(7, "<trackindex>1</trackindex>");
+    line!(6, "</link>");
+    line!(6, "<link>");
     line!(7, format!("<linkclipref>{audio_id}</linkclipref>"));
-    line!(7, "<mediatype>audio</mediatype>".to_string());
-    line!(7, "<trackindex>1</trackindex>".to_string());
-    line!(6, "</link>".to_string());
-    line!(5, "</clipitem>".to_string());
+    line!(7, "<mediatype>audio</mediatype>");
+    line!(7, "<trackindex>1</trackindex>");
+    line!(6, "</link>");
+    line!(5, "</clipitem>");
 }
 
 fn write_audio_clip(
@@ -208,21 +208,21 @@ fn write_audio_clip(
     line!(6, format!("<start>{}</start>", clip.timeline_start_frame));
     line!(6, format!("<end>{}</end>", clip.timeline_end_frame));
     line!(6, format!("<file id=\"{source_file_id}\"/>"));
-    line!(6, "<sourcetrack>".to_string());
-    line!(7, "<mediatype>audio</mediatype>".to_string());
-    line!(7, "<trackindex>1</trackindex>".to_string());
-    line!(6, "</sourcetrack>".to_string());
-    line!(6, "<link>".to_string());
+    line!(6, "<sourcetrack>");
+    line!(7, "<mediatype>audio</mediatype>");
+    line!(7, "<trackindex>1</trackindex>");
+    line!(6, "</sourcetrack>");
+    line!(6, "<link>");
     line!(7, format!("<linkclipref>{video_id}</linkclipref>"));
-    line!(7, "<mediatype>video</mediatype>".to_string());
-    line!(7, "<trackindex>1</trackindex>".to_string());
-    line!(6, "</link>".to_string());
-    line!(6, "<link>".to_string());
+    line!(7, "<mediatype>video</mediatype>");
+    line!(7, "<trackindex>1</trackindex>");
+    line!(6, "</link>");
+    line!(6, "<link>");
     line!(7, format!("<linkclipref>{item_id}</linkclipref>"));
-    line!(7, "<mediatype>audio</mediatype>".to_string());
-    line!(7, "<trackindex>1</trackindex>".to_string());
-    line!(6, "</link>".to_string());
-    line!(5, "</clipitem>".to_string());
+    line!(7, "<mediatype>audio</mediatype>");
+    line!(7, "<trackindex>1</trackindex>");
+    line!(6, "</link>");
+    line!(5, "</clipitem>");
 }
 
 fn write_subtitle_track(cues: &[SubtitleCue], output: &mut String) {
@@ -233,8 +233,8 @@ fn write_subtitle_track(cues: &[SubtitleCue], output: &mut String) {
             output.push('\n');
         }};
     }
-    line!(4, "<track>".to_string());
-    line!(5, "<name>Double Love Subtitles</name>".to_string());
+    line!(4, "<track>");
+    line!(5, "<name>Double Love Subtitles</name>");
     for (index, cue) in cues.iter().enumerate() {
         let id = format!("double_love_subtitle_{index:04}");
         line!(5, format!("<generatoritem id=\"{id}\">"));
@@ -243,23 +243,23 @@ fn write_subtitle_track(cues: &[SubtitleCue], output: &mut String) {
             6,
             format!("<duration>{}</duration>", cue.end_frame - cue.start_frame)
         );
-        line!(6, "<in>0</in>".to_string());
+        line!(6, "<in>0</in>");
         line!(6, format!("<out>{}</out>", cue.end_frame - cue.start_frame));
         line!(6, format!("<start>{}</start>", cue.start_frame));
         line!(6, format!("<end>{}</end>", cue.end_frame));
-        line!(6, "<effect>".to_string());
-        line!(7, "<name>Text</name>".to_string());
-        line!(7, "<effectid>Text</effectid>".to_string());
-        line!(7, "<effectcategory>Text</effectcategory>".to_string());
-        line!(7, "<effecttype>generator</effecttype>".to_string());
-        line!(7, "<parameter>".to_string());
-        line!(8, "<parameterid>str</parameterid>".to_string());
+        line!(6, "<effect>");
+        line!(7, "<name>Text</name>");
+        line!(7, "<effectid>Text</effectid>");
+        line!(7, "<effectcategory>Text</effectcategory>");
+        line!(7, "<effecttype>generator</effecttype>");
+        line!(7, "<parameter>");
+        line!(8, "<parameterid>str</parameterid>");
         line!(8, format!("<value>{}</value>", xml_escape(&cue.text)));
-        line!(7, "</parameter>".to_string());
-        line!(6, "</effect>".to_string());
-        line!(5, "</generatoritem>".to_string());
+        line!(7, "</parameter>");
+        line!(6, "</effect>");
+        line!(5, "</generatoritem>");
     }
-    line!(4, "</track>".to_string());
+    line!(4, "</track>");
 }
 
 /// 生成同一份 XMEML，供 Premiere/Resolve 的导入验收使用。
@@ -283,28 +283,28 @@ pub fn export_xmeml_v2(input: &XmemlV2Input<'_>) -> String {
         "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE xmeml>\n<xmeml version=\"4\">\n",
     );
     line!(1, format!("<sequence id=\"sequence_id_{safe}\">"));
-    line!(2, "<updatebehaviour>add</updatebehaviour>".to_string());
+    line!(2, "<updatebehaviour>add</updatebehaviour>");
     line!(2, format!("<name>{}</name>", xml_escape(&ir.name)));
     line!(
         2,
         format!("<duration>{}</duration>", ir.output_duration_frames)
     );
     rate_xml(ir.rate, 2, &mut output);
-    line!(2, "<timecode>".to_string());
+    line!(2, "<timecode>");
     rate_xml(ir.rate, 3, &mut output);
-    line!(3, "<frame>0</frame>".to_string());
-    line!(3, "<source>source</source>".to_string());
-    line!(2, "</timecode>".to_string());
-    line!(2, "<media>".to_string());
-    line!(3, "<video>".to_string());
-    line!(4, "<format>".to_string());
-    line!(5, "<samplecharacteristics>".to_string());
+    line!(3, "<frame>0</frame>");
+    line!(3, "<source>source</source>");
+    line!(2, "</timecode>");
+    line!(2, "<media>");
+    line!(3, "<video>");
+    line!(4, "<format>");
+    line!(5, "<samplecharacteristics>");
     line!(6, format!("<width>{}</width>", ir.canvas.width));
     line!(6, format!("<height>{}</height>", ir.canvas.height));
-    line!(6, "<pixelaspectratio>Square</pixelaspectratio>".to_string());
-    line!(5, "</samplecharacteristics>".to_string());
-    line!(4, "</format>".to_string());
-    line!(4, "<track>".to_string());
+    line!(6, "<pixelaspectratio>Square</pixelaspectratio>");
+    line!(5, "</samplecharacteristics>");
+    line!(4, "</format>");
+    line!(4, "<track>");
     let mut file_definitions = HashSet::new();
     for clip in &ir.clips {
         let Some(source) = sources.get(clip.source_asset_id.as_str()) else {
@@ -318,23 +318,23 @@ pub fn export_xmeml_v2(input: &XmemlV2Input<'_>) -> String {
             &mut output,
         );
     }
-    line!(4, "</track>".to_string());
+    line!(4, "</track>");
     write_subtitle_track(input.cues, &mut output);
-    line!(3, "</video>".to_string());
-    line!(3, "<audio>".to_string());
-    line!(4, "<in>-1</in>".to_string());
-    line!(4, "<out>-1</out>".to_string());
-    line!(4, "<track>".to_string());
+    line!(3, "</video>");
+    line!(3, "<audio>");
+    line!(4, "<in>-1</in>");
+    line!(4, "<out>-1</out>");
+    line!(4, "<track>");
     for clip in &ir.clips {
         let Some(source) = sources.get(clip.source_asset_id.as_str()) else {
             continue;
         };
         write_audio_clip(source, clip, &safe, &mut output);
     }
-    line!(4, "</track>".to_string());
-    line!(3, "</audio>".to_string());
-    line!(2, "</media>".to_string());
-    line!(1, "</sequence>".to_string());
+    line!(4, "</track>");
+    line!(3, "</audio>");
+    line!(2, "</media>");
+    line!(1, "</sequence>");
     output.push_str("</xmeml>\n");
     output
 }

@@ -2752,9 +2752,11 @@ mod tests {
         store
             .set_output_rate(FrameRate::Fps30)
             .expect("output rate saves");
-        let mut canvas = crate::contracts::CanvasSpec::default();
-        canvas.width = 1080;
-        canvas.height = 1920;
+        let canvas = crate::contracts::CanvasSpec {
+            width: 1080,
+            height: 1920,
+            ..Default::default()
+        };
         let snapshot_revision = store.set_canvas_spec(&canvas).expect("canvas saves");
         store
             .append_main_track_clip("c2", "b", 0, 100)
@@ -3012,8 +3014,10 @@ mod tests {
                 )],
             )
             .expect("assignment");
-        let mut style = crate::contracts::SubtitleStyle::default();
-        style.font_size = 48.0;
+        let style = crate::contracts::SubtitleStyle {
+            font_size: 48.0,
+            ..Default::default()
+        };
         store.set_subtitle_style(&style).expect("style");
         assert_eq!(
             store.speaker_identities().expect("identities"),
