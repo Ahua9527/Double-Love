@@ -5,7 +5,7 @@ import type { FrameRate } from '../../../bindings/FrameRate'
 import type { MainTrackClip } from '../../../bindings/MainTrackClip'
 import type { MediaAssetSummary } from '../../../bindings/MediaAssetSummary'
 import type { TimelineIRv2 } from '../../../bindings/TimelineIRv2'
-import { formatClock, frameRateFps, num } from '../utils'
+import { clampSeconds, formatClock, frameRateFps, num, seekFractionFromClientX } from '../utils'
 
 interface MainTrackTimelineProps {
   clips: MainTrackClip[]
@@ -14,6 +14,7 @@ interface MainTrackTimelineProps {
   timeline: TimelineIRv2 | null
   playheadSec: number
   outputRate: FrameRate | null
+  onSeek: (seconds: number) => void
   onSelect: (clip: MainTrackClip) => void
   onMove: (clipId: string, beforeId: string | null) => void
   onTrim: (clip: MainTrackClip, sourceInFrame: number, sourceOutFrame: number) => void
@@ -54,6 +55,7 @@ export function MainTrackTimeline({
   timeline,
   playheadSec,
   outputRate,
+  onSeek,
   onSelect,
   onMove,
   onTrim,
@@ -62,6 +64,8 @@ export function MainTrackTimeline({
   onAdd,
 }: MainTrackTimelineProps) {
   const trackRef = useRef<HTMLDivElement>(null)
+  const scrubRef = useRef<{ element: HTMLElement; pointerId: number } | null>(null)
+  const draggedRef = useRef(false)
   const [dragId, setDragId] = useState<string | null>(null)
   const [trim, setTrim] = useState<TrimState | null>(null)
   const [draft, setDraft] = useState<Record<string, [number, number]>>({})
@@ -87,9 +91,55 @@ export function MainTrackTimeline({
     return result
   }, [assets, clips, timeline])
   const total = Math.max(1, timeline ? num(timeline.output_duration_frames) / frameRateFps(timeline.rate) : [...timings.values()].reduce((sum, timing) => sum + timing.seconds, 0))
-  const playheadPercent = Math.max(0, Math.min(100, (playheadSec / total) * 100))
+  const clampedPlayheadSec = clampSeconds(playheadSec, total)
+  const playheadPercent = (clampedPlayheadSec / total) * 100
 
   const frameRateLabel = outputRate ? `${frameRateFps(outputRate).toFixed(3).replace(/\.000$/, '')} fps` : '跟随首段素材'
+
+  const seekFromClientX = (clientX: number) => {
+    const rect = trackRef.current?.getBoundingClientRect()
+    if (!rect || rect.width <= 0) return
+    const fraction = seekFractionFromClientX(clientX, rect.left, rect.width)
+    onSeek(clampSeconds(fraction * total, total))
+  }
+
+  const beginScrub = (event: React.PointerEvent<HTMLElement>) => {
+    if (event.button !== 0 || event.isPrimary === false) return
+    const target = event.target
+    if (target instanceof Element && target.closest('[data-timeline-control], [draggable="true"]')) return
+    event.preventDefault()
+    event.currentTarget.setPointerCapture(event.pointerId)
+    scrubRef.current = { element: event.currentTarget, pointerId: event.pointerId }
+    seekFromClientX(event.clientX)
+  }
+
+  const moveScrub = (event: React.PointerEvent<HTMLElement>) => {
+    if (scrubRef.current?.pointerId !== event.pointerId) return
+    seekFromClientX(event.clientX)
+  }
+
+  const endScrub = (event: React.PointerEvent<HTMLElement>) => {
+    const active = scrubRef.current
+    if (!active || active.pointerId !== event.pointerId) return
+    scrubRef.current = null
+    if (active.element.hasPointerCapture(event.pointerId)) active.element.releasePointerCapture(event.pointerId)
+  }
+
+  const loseScrub = (event: React.PointerEvent<HTMLElement>) => {
+    if (scrubRef.current?.pointerId === event.pointerId) scrubRef.current = null
+  }
+
+  const handleRulerKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    let next: number | null = null
+    if (event.key === 'ArrowLeft') next = clampedPlayheadSec - 1
+    if (event.key === 'ArrowRight') next = clampedPlayheadSec + 1
+    if (event.key === 'Home') next = 0
+    if (event.key === 'End') next = total
+    if (next === null) return
+    event.preventDefault()
+    event.stopPropagation()
+    onSeek(clampSeconds(next, total))
+  }
 
   const updateDraft = (event: React.PointerEvent<HTMLButtonElement>) => {
     if (!trim || trim.clip.id !== event.currentTarget.dataset.clipId) return
@@ -108,7 +158,7 @@ export function MainTrackTimeline({
   const commitTrim = (event: React.PointerEvent<HTMLButtonElement>) => {
     const current = trim
     if (!current || current.clip.id !== event.currentTarget.dataset.clipId) return
-    event.currentTarget.releasePointerCapture(event.pointerId)
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId)
     const [sourceIn, sourceOut] = draft[current.clip.id] ?? [current.sourceIn, current.sourceOut]
     setTrim(null)
     setDraft((previous) => {
@@ -119,6 +169,18 @@ export function MainTrackTimeline({
     if (sourceIn !== current.sourceIn || sourceOut !== current.sourceOut) {
       onTrim(current.clip, sourceIn, sourceOut)
     }
+  }
+
+  const cancelTrim = (event: React.PointerEvent<HTMLButtonElement>) => {
+    const current = trim
+    if (!current || current.clip.id !== event.currentTarget.dataset.clipId) return
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId)
+    setTrim(null)
+    setDraft((previous) => {
+      const next = { ...previous }
+      delete next[current.clip.id]
+      return next
+    })
   }
 
   return (
@@ -137,14 +199,41 @@ export function MainTrackTimeline({
         </div>
       ) : (
         <div className="studio-track-scroll">
-          <div className="studio-track-ruler" aria-hidden="true">
+          <div
+            className="studio-track-ruler"
+            role="slider"
+            tabIndex={0}
+            aria-label="时间线播放头"
+            aria-orientation="horizontal"
+            aria-valuemin={0}
+            aria-valuemax={total}
+            aria-valuenow={clampedPlayheadSec}
+            aria-valuetext={`${formatClock(clampedPlayheadSec)} / ${formatClock(total)}`}
+            onPointerDown={beginScrub}
+            onPointerMove={moveScrub}
+            onPointerUp={endScrub}
+            onPointerCancel={endScrub}
+            onLostPointerCapture={loseScrub}
+            onKeyDown={handleRulerKeyDown}
+          >
             <span>00:00</span><span>{formatClock(total / 3)}</span><span>{formatClock((total * 2) / 3)}</span><span>{formatClock(total)}</span>
           </div>
-          <div ref={trackRef} className="studio-track" role="list">
+          <div className="studio-track-layer">
+            <div
+              ref={trackRef}
+              className="studio-track"
+              role="list"
+              onPointerDown={beginScrub}
+              onPointerMove={moveScrub}
+              onPointerUp={endScrub}
+              onPointerCancel={endScrub}
+              onLostPointerCapture={loseScrub}
+            >
             <div className="studio-track-playhead" aria-hidden="true" style={{ left: `${playheadPercent}%` }} />
             {clips.map((clip) => {
               const [sourceIn, sourceOut] = draft[clip.id] ?? [num(clip.source_in_frame), num(clip.source_out_frame)]
-              const seconds = timings.get(clip.id)?.seconds ?? 0
+              const timing = timings.get(clip.id) ?? { startSec: 0, seconds: 0 }
+              const seconds = timing.seconds
               const selected = clip.id === selectedId
               return (
                 <article
@@ -152,9 +241,21 @@ export function MainTrackTimeline({
                   role="listitem"
                   draggable
                   className={`studio-track-clip ${selected ? 'is-selected' : ''} ${dragId === clip.id ? 'is-dragging' : ''}`}
-                  style={{ flexGrow: seconds, flexBasis: 0 }}
-                  onClick={() => onSelect(clip)}
+                  style={{ left: `${(timing.startSec / total) * 100}%`, width: `${(seconds / total) * 100}%` }}
+                  onPointerDown={(event) => {
+                    draggedRef.current = false
+                    event.stopPropagation()
+                  }}
+                  onClick={(event) => {
+                    if (draggedRef.current) {
+                      draggedRef.current = false
+                      return
+                    }
+                    onSelect(clip)
+                    seekFromClientX(event.clientX)
+                  }}
                   onDragStart={(event) => {
+                    draggedRef.current = true
                     setDragId(clip.id)
                     event.dataTransfer.effectAllowed = 'move'
                     event.dataTransfer.setData('text/plain', clip.id)
@@ -163,6 +264,8 @@ export function MainTrackTimeline({
                   onDragOver={(event) => event.preventDefault()}
                   onDrop={(event) => {
                     event.preventDefault()
+                    event.stopPropagation()
+                    draggedRef.current = true
                     const moved = event.dataTransfer.getData('text/plain')
                     if (moved && moved !== clip.id) onMove(moved, clip.id)
                     setDragId(null)
@@ -172,6 +275,7 @@ export function MainTrackTimeline({
                     type="button"
                     aria-label={`裁切 ${clipName(clip, assets)} 的左侧`}
                     data-clip-id={clip.id}
+                    data-timeline-control
                     className="studio-trim-handle is-left"
                     onPointerDown={(event) => {
                       event.stopPropagation()
@@ -180,6 +284,8 @@ export function MainTrackTimeline({
                     }}
                     onPointerMove={updateDraft}
                     onPointerUp={commitTrim}
+                    onPointerCancel={cancelTrim}
+                    onClick={(event) => event.stopPropagation()}
                   />
                   <div className="studio-track-clip-inner">
                     <span className="studio-track-grip"><GripVertical size={13} /></span>
@@ -190,6 +296,7 @@ export function MainTrackTimeline({
                     type="button"
                     aria-label={`裁切 ${clipName(clip, assets)} 的右侧`}
                     data-clip-id={clip.id}
+                    data-timeline-control
                     className="studio-trim-handle is-right"
                     onPointerDown={(event) => {
                       event.stopPropagation()
@@ -198,9 +305,11 @@ export function MainTrackTimeline({
                     }}
                     onPointerMove={updateDraft}
                     onPointerUp={commitTrim}
+                    onPointerCancel={cancelTrim}
+                    onClick={(event) => event.stopPropagation()}
                   />
                   {selected && (
-                    <div className="studio-track-actions" onClick={(event) => event.stopPropagation()}>
+                    <div className="studio-track-actions" data-timeline-control onPointerDown={(event) => event.stopPropagation()} onClick={(event) => event.stopPropagation()}>
                       <button type="button" aria-label="在播放头拆分" title="在播放头拆分" onClick={() => onSplit(clip)}><Scissors size={13} /></button>
                       <button type="button" aria-label="移除片段" title="移除片段" onClick={() => onRemove(clip)}><Trash2 size={13} /></button>
                     </div>
@@ -208,12 +317,17 @@ export function MainTrackTimeline({
                 </article>
               )
             })}
+            </div>
             <div
-              className="studio-track-end-drop"
+              className={`studio-track-end-drop ${dragId ? 'is-drop-active' : ''}`}
               aria-label="拖到这里放在主轨末尾"
+              data-timeline-control
+              onPointerDown={(event) => event.stopPropagation()}
               onDragOver={(event) => event.preventDefault()}
               onDrop={(event) => {
                 event.preventDefault()
+                event.stopPropagation()
+                draggedRef.current = true
                 const moved = event.dataTransfer.getData('text/plain')
                 if (moved) onMove(moved, null)
                 setDragId(null)

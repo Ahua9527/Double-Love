@@ -6,10 +6,6 @@ import type { EditOperation } from '../../bindings/EditOperation'
 import type { FrameRate } from '../../bindings/FrameRate'
 import type { WordAnchor } from '../../bindings/WordAnchor'
 
-// 底部时间线左右内边距（px，与轨道标签占位对齐）
-export const TIMELINE_LEFT_INSET = 28
-export const TIMELINE_RIGHT_INSET = 12
-
 /** ts-rs 把 i64 标成 bigint；JSON 运行时是 number。统一在边界转 number。 */
 export function num(value: bigint | number): number {
   return Number(value)
@@ -24,15 +20,14 @@ export function clampSeconds(seconds: number, durationSec: number): number {
   return Math.min(Math.max(0, seconds), Math.max(0, durationSec))
 }
 
-/** 由指针横坐标换算播放头位置（0..1），扣除左右内边距并 clamp。 */
+/** 由真实时间线内容容器的指针横坐标换算播放头位置（0..1）。 */
 export function seekFractionFromClientX(
   clientX: number,
   rectLeft: number,
   rectWidth: number,
 ): number {
-  const usable = Math.max(0, rectWidth - TIMELINE_LEFT_INSET - TIMELINE_RIGHT_INSET)
-  if (usable === 0) return 0
-  return clamp01((clientX - rectLeft - TIMELINE_LEFT_INSET) / usable)
+  if (!Number.isFinite(clientX) || !Number.isFinite(rectLeft) || !Number.isFinite(rectWidth) || rectWidth <= 0) return 0
+  return clamp01((clientX - rectLeft) / rectWidth)
 }
 
 function pad2(value: number): string {
@@ -49,9 +44,17 @@ export function formatClock(seconds: number): string {
   return `${pad2(minutes)}:${pad2(secs)}`
 }
 
-/** 传输条上的播放头时钟，如 "00:42 / 02:00"。 */
-export function playheadClock(currentSec: number, durationSec: number): string {
-  return `${formatClock(clampSeconds(currentSec, durationSec))} / ${formatClock(durationSec)}`
+function formatClockMilliseconds(seconds: number): string {
+  const clamped = Math.max(0, seconds)
+  const total = Math.floor(clamped)
+  const millis = Math.floor((clamped - total) * 1000)
+  return `${formatClock(total)}.${String(millis).padStart(3, '0')}`
+}
+
+/** 传输条上的播放头时钟；设置开启时显示毫秒。 */
+export function playheadClock(currentSec: number, durationSec: number, showMilliseconds = false): string {
+  const format = showMilliseconds ? formatClockMilliseconds : formatClock
+  return `${format(clampSeconds(currentSec, durationSec))} / ${format(durationSec)}`
 }
 
 // ---- 时间线刻度尺 ----
