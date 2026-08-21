@@ -12,3 +12,4 @@ clap = { version = "4", features = ["derive"] }
 double-love-engine = { path = "../double-love-engine" }
 serde.workspace = true
 serde_json.workspace = true
+uuid.workspace = true

@@ -1,33 +1,58 @@
 mod compile;
 mod contracts;
+mod diarize;
 mod edit;
 pub mod export;
+mod main_track;
 mod media;
 mod project;
 mod rational;
 mod segment;
 mod sidecar;
+mod speaker;
 mod storage;
+mod subtitle;
 mod task;
+mod timeline;
 mod transcribe;
 
 pub use compile::{CompileOptions, compile_rough_cut, output_to_source, source_to_output};
 pub use contracts::{
-    AssetStatus, EditBehavior, EditOperation, EditType, IrClip, MapSegment, MediaAssetSummary,
-    TIMELINE_IR_SCHEMA_VERSION, TimelineIR, TranscriptSegment, TranscriptViewData, WordAnchor,
+    AssetStatus, CanvasFit, CanvasSpec, CompatibilityReport, EditBehavior, EditOperation, EditType,
+    IrClip, MainTrackClip, MapSegment, MediaAssetSummary, OutputMapSegment, ProjectExportPreview,
+    ResolvedTimelineClip, RevisionHistoryEntry, SourceCut, SpeakerAssignment,
+    SpeakerDiarizationResult, SpeakerIdentity, SpeakerMergeProposal, SpeakerNameAgentPayload,
+    SpeakerNameProposal, SpeakerSegment, SubtitleCue, SubtitleStyle, TIMELINE_IR_SCHEMA_VERSION,
+    TIMELINE_IR_V2_SCHEMA_VERSION, TimelineIR, TimelineIRv2, TimelineSource, TranscriptSegment,
+    TranscriptViewData, WordAnchor,
 };
+pub use diarize::{DiarizeConfig, speaker_diarization_result, start_speaker_diarization};
 pub use edit::{DEFAULT_HANDLES_MS, omit_words, restore_words};
+pub use export::project::{export_project_ass_to, export_project_xmeml_to, preview_project_export};
+pub use export::render::{ffmpeg_filter_graph, ffmpeg_supports_ass_filter, render_project_mp4_to};
 pub use export::roughcut::{ExportOutcome, export_rough_cut, export_rough_cut_to};
+pub use main_track::{
+    append_full_main_track_asset, append_main_track_clip, compile_project_timeline,
+    move_main_track_clip, remove_main_track_clip, split_main_track_clip, trim_main_track_clip,
+};
 pub use media::{FfmpegTools, PREPARED_SAMPLE_RATE, import_media, list_media_assets};
 pub use project::{ProjectError, ProjectSummary, create_project, open_project};
-pub use rational::{FrameRate, Rational, Round, frame_to_samples, samples_to_frame};
+pub use rational::{
+    FrameRate, Rational, Round, convert_frame_rate, frame_to_samples, samples_to_frame,
+};
 pub use segment::{segment_words, transcript_view};
 pub use sidecar::{
-    SIDECAR_PROTOCOL_VERSION, Sidecar, SidecarCommand, SidecarError, SidecarEvent, SidecarWord,
-    resolve_python,
+    SIDECAR_PROTOCOL_VERSION, Sidecar, SidecarCommand, SidecarError, SidecarEvent, SidecarPoll,
+    SidecarSpeakerEmbedding, SidecarSpeakerSegment, SidecarWord, resolve_python,
+};
+pub use speaker::{
+    agent_name_payload_preview, assign_words_to_speakers, local_name_proposals,
+    merge_proposals_from_embeddings,
 };
 pub use storage::{MediaAssetRow, NewMediaAsset, NewTranscriptWord, ProjectStore, StorageError};
+pub use subtitle::{apply_speaker_names, build_subtitle_cues, export_ass};
 pub use task::{CancellationToken, ProgressSink, SharedSink, TaskRegistry};
+pub use timeline::compile_main_track;
 pub use transcribe::{TranscribeConfig, start_transcription};
 
 use serde::{Deserialize, Serialize};

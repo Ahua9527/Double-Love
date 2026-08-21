@@ -1,6 +1,6 @@
 //! 转录管线：sidecar 事件流 → transcript_word 批事务落库。
-//! - 每个 words 事件一个事务（chunk 粒度），取消后已落库的词保留
-//! - 重复转录全量替换（先删后写）
+//! - 每个 words 事件一个事务（chunk 粒度），但写入不可见候选版本
+//! - 完整成功后才原子切换活动版本；取消/失败保留旧文本与删改
 //! - 取消/失败/协议异常都经 ProgressEvent 与终态上报，不静默
 
 use std::path::PathBuf;
@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 
 use uuid::Uuid;
 
-use crate::sidecar::{Sidecar, SidecarCommand, SidecarEvent, resolve_python};
+use crate::sidecar::{Sidecar, SidecarCommand, SidecarEvent, SidecarPoll, resolve_python};
 use crate::storage::{NewTranscriptWord, ProjectStore};
 use crate::task::{SharedSink, TaskRegistry};
 use crate::{ProgressEvent, TaskState};
@@ -134,24 +134,37 @@ fn run_transcription(
         return TaskState::Failed;
     }
 
-    // 全量替换语义：开转前清空旧词
-    match store
+    // 新词先进入不可见的候选 run；当前版本（及其 omit）在整个任务期间保持可用。
+    let run_id = match store
         .lock()
         .map_err(|_| "存储锁不可用".to_string())
         .and_then(|guard| {
             guard
-                .delete_transcript_words(&config.asset_id)
+                .begin_transcript_run(&config.asset_id, &config.model, &config.language)
+                .map(|run| run.id)
                 .map_err(|error| error.to_string())
         }) {
-        Ok(removed) if removed > 0 => {
-            report("progress", format!("已清除 {removed} 个旧转录词，重新转录"));
-        }
-        Ok(_) => {}
+        Ok(run_id) => run_id,
         Err(error) => {
-            report("error", format!("清除旧转录失败：{error}"));
+            report("error", format!("建立候选转录版本失败：{error}"));
             return TaskState::Failed;
         }
-    }
+    };
+    report(
+        "progress",
+        "正在生成新的候选转录；旧版本会保留到新版本完整成功。".to_string(),
+    );
+
+    let finish_candidate = |status: &str| {
+        store
+            .lock()
+            .map_err(|_| "存储锁不可用".to_string())
+            .and_then(|guard| {
+                guard
+                    .finish_transcript_run(&run_id, status)
+                    .map_err(|error| error.to_string())
+            })
+    };
 
     let mut next_ordinal: i64 = 0;
     let mut had_error = false;
@@ -173,11 +186,20 @@ fn run_transcription(
                     EVENT_SILENCE_LIMIT.as_secs()
                 ),
             );
+            let _ = finish_candidate("failed");
             return TaskState::Failed;
         }
         let event = match sidecar.next_event(Duration::from_secs(1)) {
-            Some(event) => event,
-            None => continue, // 1 秒轮询，便于及时响应取消
+            SidecarPoll::Event(event) => event,
+            SidecarPoll::TimedOut => continue, // 1 秒轮询，便于及时响应取消
+            SidecarPoll::Closed => {
+                report(
+                    "error",
+                    "sidecar 已关闭 stdout，转录未给出终态。".to_string(),
+                );
+                let _ = finish_candidate("failed");
+                return TaskState::Failed;
+            }
         };
         last_event = Instant::now();
 
@@ -206,11 +228,12 @@ fn run_transcription(
                     .map_err(|_| "存储锁不可用".to_string())
                     .and_then(|guard| {
                         guard
-                            .insert_transcript_words(&batch)
+                            .insert_transcript_words_for_run(&run_id, &batch)
                             .map_err(|error| error.to_string())
                     });
                 if let Err(error) = insert {
                     report("error", format!("转录词落库失败：{error}"));
+                    let _ = finish_candidate("failed");
                     return TaskState::Failed;
                 }
             }
@@ -229,33 +252,46 @@ fn run_transcription(
                 });
             }
             Ok(SidecarEvent::Done { word_count, .. }) => {
-                let set = store
+                if had_error || word_count != next_ordinal as u64 {
+                    let cause = if had_error {
+                        "sidecar 报告了非致命错误"
+                    } else {
+                        "sidecar 的词数与实际写入不一致"
+                    };
+                    report(
+                        "error",
+                        format!("候选转录未切换：{cause}；旧版本保持不变。"),
+                    );
+                    let _ = finish_candidate("partial");
+                    return TaskState::Partial;
+                }
+                let activate = store
                     .lock()
                     .map_err(|_| "存储锁不可用".to_string())
                     .and_then(|guard| {
                         guard
-                            .set_asset_status(&config.asset_id, "transcribed")
+                            .activate_transcript_run(&run_id)
                             .map_err(|error| error.to_string())
                     });
-                if let Err(error) = set {
-                    report("error", format!("更新资产状态失败：{error}"));
+                if let Err(error) = activate {
+                    report("error", format!("切换转录版本失败：{error}"));
+                    let _ = finish_candidate("failed");
                     return TaskState::Failed;
                 }
                 report(
                     "progress",
                     format!("转录完成：{word_count} 词（ordinal 0..{next_ordinal}）"),
                 );
-                return if had_error {
-                    TaskState::Partial
-                } else {
-                    TaskState::Succeeded
-                };
+                return TaskState::Succeeded;
             }
             Ok(SidecarEvent::Cancelled { .. }) => {
                 report(
                     "progress",
-                    format!("已取消：保留 {next_ordinal} 个已转录词"),
+                    format!(
+                        "已取消：丢弃候选显示，旧版本保持不变（候选已写入 {next_ordinal} 词）。"
+                    ),
                 );
+                let _ = finish_candidate("cancelled");
                 return TaskState::Cancelled;
             }
             Ok(SidecarEvent::Error {
@@ -266,13 +302,23 @@ fn run_transcription(
             }) => {
                 report("error", format!("{code}: {message}"));
                 if fatal {
+                    let _ = finish_candidate("failed");
                     return TaskState::Failed;
                 }
                 had_error = true;
             }
             Ok(SidecarEvent::Ready { .. }) => {} // 握手期已消费；重复 ready 忽略
+            Ok(SidecarEvent::SpeakerSegments { .. } | SidecarEvent::DiarizationDone { .. }) => {
+                report(
+                    "error",
+                    "ASR sidecar 返回了不属于转录任务的事件。".to_string(),
+                );
+                let _ = finish_candidate("failed");
+                return TaskState::Failed;
+            }
             Err(reason) => {
                 report("error", format!("sidecar 协议错误：{reason}"));
+                let _ = finish_candidate("failed");
                 return TaskState::Failed;
             }
         }
@@ -335,6 +381,7 @@ mod tests {
                 height: Some(1080),
                 audio_channels: Some(2),
                 source_tc_start_frame: None,
+                source_tc_is_drop_frame: false,
                 ffprobe_json: "{}".to_string(),
             })
             .expect("asset inserts");
@@ -413,7 +460,7 @@ mod tests {
     }
 
     #[test]
-    fn cancel_keeps_partial_words_and_asset_not_transcribed() {
+    fn cancel_preserves_the_previous_active_transcript() {
         let Some(_) = resolve_python(None, Path::new("/nonexistent-venv")) else {
             eprintln!("skip: python3 not found");
             return;
@@ -422,6 +469,41 @@ mod tests {
         let wav = dir.join("prepared.wav");
         write_test_wav(&wav, 30);
         let store = fixture_store(&dir, &wav);
+        {
+            let guard = store.lock().expect("store lock");
+            guard
+                .insert_transcript_words(&[
+                    NewTranscriptWord {
+                        word_id: "old-0".to_string(),
+                        asset_id: "asset-1".to_string(),
+                        ordinal: 0,
+                        raw_text: "旧文本".to_string(),
+                        display_text: "旧文本".to_string(),
+                        language: Some("zh".to_string()),
+                        start_sample: 0,
+                        end_sample: 24_000,
+                        confidence: Some(0.99),
+                    },
+                    NewTranscriptWord {
+                        word_id: "old-1".to_string(),
+                        asset_id: "asset-1".to_string(),
+                        ordinal: 1,
+                        raw_text: "保留".to_string(),
+                        display_text: "保留".to_string(),
+                        language: Some("zh".to_string()),
+                        start_sample: 24_000,
+                        end_sample: 48_000,
+                        confidence: Some(0.99),
+                    },
+                ])
+                .expect("old transcript");
+        }
+        let previous_run = store
+            .lock()
+            .expect("store lock")
+            .active_transcript_run_id("asset-1")
+            .expect("active run")
+            .expect("old active run");
         let registry = TaskRegistry::new();
 
         let task_id = start_transcription(
@@ -431,14 +513,20 @@ mod tests {
             test_config(&dir, true),
         )
         .expect("task starts");
-        // 等至少一批词落库后取消
+        // 等候选版本至少写入一批词后取消；它不应出现在活动文本里。
         let mut waited = 0;
         loop {
-            let count = {
+            let has_candidate_words = {
                 let guard = store.lock().expect("store lock");
-                guard.count_transcript_words("asset-1").expect("count")
+                guard
+                    .transcript_runs("asset-1")
+                    .expect("runs")
+                    .iter()
+                    .any(|run| {
+                        run.id != previous_run && run.status == "running" && run.word_count > 0
+                    })
             };
-            if count > 0 || waited > 100 {
+            if has_candidate_words || waited > 100 {
                 break;
             }
             waited += 1;
@@ -448,14 +536,29 @@ mod tests {
         assert_eq!(wait_terminal(&registry, &task_id), TaskState::Cancelled);
 
         let guard = store.lock().expect("store lock");
-        let kept = guard.count_transcript_words("asset-1").expect("count");
-        assert!(kept > 0 && kept < 120, "partial words kept: {kept}");
+        let kept = guard.transcript_words("asset-1").expect("words");
+        assert_eq!(kept.len(), 2, "旧版本必须仍可编辑");
+        assert_eq!(kept[0].display_text, "旧文本");
+        assert_eq!(
+            guard
+                .active_transcript_run_id("asset-1")
+                .expect("active run"),
+            Some(previous_run),
+            "取消不得切换候选版本"
+        );
+        assert!(
+            guard
+                .transcript_runs("asset-1")
+                .expect("runs")
+                .iter()
+                .any(|run| run.status == "cancelled" && run.word_count > 0)
+        );
         let status = guard
             .media_asset("asset-1")
             .expect("asset")
             .expect("exists")
             .status;
-        assert_ne!(status, "transcribed", "取消的资产不得标为 transcribed");
+        assert_eq!(status, "transcribed", "旧成功版本的状态必须保留");
         drop(guard);
         registry.shutdown();
         std::fs::remove_dir_all(&dir).ok();

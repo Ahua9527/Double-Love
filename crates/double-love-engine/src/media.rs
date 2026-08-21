@@ -2,6 +2,7 @@
 //! 校验规则来自坑清单：无视频流 / 无音频流 / VFR / 帧率白名单外一律拒绝导入，
 //! 全部给出可执行的 suggested_action；时长一律走有理数，不经过 f64。
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -41,6 +42,23 @@ impl FfmpegTools {
                     "安装 ffmpeg（例如 brew install ffmpeg）后重试。".to_string(),
                 ),
             })),
+        }
+    }
+
+    /// 使用 App 打包的显式运行时路径。发布包优先走这里，开发期仍可回退 `discover()`。
+    pub fn from_paths(ffprobe: PathBuf, ffmpeg: PathBuf) -> Result<Self, Box<Diagnostic>> {
+        if is_executable(&ffprobe) && is_executable(&ffmpeg) {
+            Ok(Self { ffprobe, ffmpeg })
+        } else {
+            Err(Box::new(Diagnostic {
+                level: DiagnosticLevel::Error,
+                code: "MEDIA_RUNTIME_MISSING".to_string(),
+                cause: "App 随附的 ffmpeg/ffprobe 运行时不完整。".to_string(),
+                object_id: None,
+                impact: "无法导入或渲染媒体".to_string(),
+                blocks_export: true,
+                suggested_action: Some("重新安装完整的 Double Love Studio 测试版。".to_string()),
+            }))
         }
     }
 }
@@ -103,11 +121,15 @@ struct FfprobeStream {
     sample_rate: Option<String>,
     time_base: Option<String>,
     duration_ts: Option<i64>,
+    #[serde(default)]
+    tags: HashMap<String, String>,
 }
 
 #[derive(Debug, Deserialize)]
 struct FfprobeFormat {
     duration: Option<String>,
+    #[serde(default)]
+    tags: HashMap<String, String>,
 }
 
 /// 探测+校验通过的媒体事实（有理数、整数，无 f64）。
@@ -119,6 +141,36 @@ struct ProbedMedia {
     audio_channels: Option<i64>,
     audio_sample_rate: i64,
     duration_samples: i64,
+    source_tc_start_frame: Option<i64>,
+    source_tc_is_drop_frame: bool,
+}
+
+fn parse_timecode_start(text: &str, rate: FrameRate) -> Option<(i64, bool)> {
+    let text = text.trim();
+    let drop_frame = text.contains(';');
+    let values = text
+        .replace(';', ":")
+        .split(':')
+        .map(|part| part.parse::<i64>().ok())
+        .collect::<Option<Vec<_>>>()?;
+    let [hours, minutes, seconds, frames] = values.as_slice() else {
+        return None;
+    };
+    if !(*minutes < 60 && *seconds < 60 && *frames >= 0 && *frames < rate.timebase()) {
+        return None;
+    }
+    let nominal = rate.timebase();
+    let total_minutes = hours * 60 + minutes;
+    let mut total = ((hours * 3600 + minutes * 60 + seconds) * nominal) + frames;
+    if drop_frame {
+        let dropped = match rate {
+            FrameRate::Fps30Ntsc => 2,
+            FrameRate::Fps60Ntsc => 4,
+            _ => return None,
+        };
+        total -= dropped * (total_minutes - total_minutes / 10);
+    }
+    Some((total, drop_frame))
 }
 
 /// 十进制秒字符串（如 "10.000000"）→ 有理数秒；逐位解析，不经过 f64。
@@ -224,6 +276,16 @@ fn validate_probe(probe: &FfprobeOutput) -> Result<ProbedMedia, Box<Diagnostic>>
             "支持的帧率：24、23.976、25、30、29.97、50、60、59.94；请先转码到其中之一。",
         )
     })?;
+    let source_timecode = video
+        .tags
+        .get("timecode")
+        .or_else(|| {
+            probe
+                .format
+                .as_ref()
+                .and_then(|format| format.tags.get("timecode"))
+        })
+        .and_then(|timecode| parse_timecode_start(timecode, rate));
 
     let audio_sample_rate: i64 = audio
         .sample_rate
@@ -274,6 +336,8 @@ fn validate_probe(probe: &FfprobeOutput) -> Result<ProbedMedia, Box<Diagnostic>>
         audio_channels: audio.channels,
         audio_sample_rate,
         duration_samples,
+        source_tc_start_frame: source_timecode.map(|(frame, _)| frame),
+        source_tc_is_drop_frame: source_timecode.is_some_and(|(_, drop)| drop),
     })
 }
 
@@ -376,11 +440,7 @@ fn row_to_summary(row: MediaAssetRow) -> Option<MediaAssetSummary> {
         width: row.width,
         height: row.height,
         audio_channels: row.audio_channels,
-        status: if row.prepared_wav_path.is_some() {
-            AssetStatus::Prepared
-        } else {
-            AssetStatus::Imported
-        },
+        status: AssetStatus::parse(&row.status)?,
     })
 }
 
@@ -468,7 +528,8 @@ pub fn import_media(
         width: probed.width,
         height: probed.height,
         audio_channels: probed.audio_channels,
-        source_tc_start_frame: None,
+        source_tc_start_frame: probed.source_tc_start_frame,
+        source_tc_is_drop_frame: probed.source_tc_is_drop_frame,
         ffprobe_json,
     };
     if let Err(error) = store.insert_media_asset(&asset) {
@@ -507,6 +568,52 @@ pub fn import_media(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn row_with_status(status: &str) -> MediaAssetRow {
+        MediaAssetRow {
+            id: "asset-1".to_string(),
+            kind: "video".to_string(),
+            original_path: "/tmp/source.mp4".to_string(),
+            display_name: "source.mp4".to_string(),
+            duration_samples: 48_000,
+            audio_sample_rate: 48_000,
+            fps_num: 25,
+            fps_den: 1,
+            video_timebase: 25,
+            is_ntsc: false,
+            width: Some(1920),
+            height: Some(1080),
+            audio_channels: Some(2),
+            source_tc_start_frame: None,
+            source_tc_is_drop_frame: false,
+            prepared_wav_path: Some("/tmp/prepared.wav".to_string()),
+            status: status.to_string(),
+        }
+    }
+
+    #[test]
+    fn list_summary_keeps_persisted_transcribed_state() {
+        let summary = row_to_summary(row_with_status("transcribed")).expect("known status");
+        assert_eq!(summary.status, AssetStatus::Transcribed);
+    }
+
+    #[test]
+    fn list_summary_rejects_unknown_persisted_state() {
+        assert!(row_to_summary(row_with_status("unexpected")).is_none());
+    }
+
+    #[test]
+    fn parses_ntsc_drop_frame_timecode_without_float_seconds() {
+        assert_eq!(
+            parse_timecode_start("01:00:00;00", FrameRate::Fps30Ntsc),
+            Some((107_892, true))
+        );
+        assert_eq!(
+            parse_timecode_start("01:00:00:00", FrameRate::Fps30Ntsc),
+            Some((108_000, false))
+        );
+        assert_eq!(parse_timecode_start("00:01:00;00", FrameRate::Fps25), None);
+    }
 
     fn probe_json(video: &str, audio: &str, format: &str) -> FfprobeOutput {
         let text = format!(r#"{{"streams":[{video},{audio}],"format":{format}}}"#);
