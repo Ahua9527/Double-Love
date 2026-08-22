@@ -25,7 +25,7 @@
 | 3C React renderer 目录整理 | **已完成** | 纯移动至 `studio/src/renderer/`；Tauri/Electron 构建与测试行为不变 | 直接 revert 目录移动与配置路径更新 |
 | 3D renderer 平台接缝 | **已完成** | renderer 运行时选择 Electron/Tauri/preview；Electron host 错误归一为既有 `OperationResult.failed`；本地文件无 bridge 时 fail closed | Tauri adapter 保留，revert renderer 平台接缝批次 |
 | 3 平台基础阶段（3A–3D） | **已完成** | service/host、安全边界、renderer 目录与平台 adapter 均已就位；Phase 4 可按纵向切片迁移业务命令 | 保留 Tauri adapter，按 3D→3A 逆序回退 |
-| 4 纵向业务切片迁移（7 片） | **进行中（Slice 1–5 已完成）** | 每片：Electron E2E 正常+失败/取消/恢复路径；Tauri 对照一致 | 每片独立提交，只 revert 当前切片 |
+| 4 纵向业务切片迁移（7 片） | **进行中（Slice 1–6 已完成）** | 每片：Electron E2E 正常+失败/取消/恢复路径；Tauri 对照一致 | 每片独立提交，只 revert 当前切片 |
 | 5 默认 Electron、打包发布、清理 | 未开始 | 功能矩阵 100%；签名公证门禁通过 | 保留最后可构建 Tauri commit |
 | 6 全量验收与回退演练 | 未开始 | 见计划完成判定 | 文档化手动回退 |
 
@@ -101,6 +101,20 @@ Electron 的 reveal 命令只让 service 返回其自身解析的模型目录或
 Rust service 的本机 HTTP fixture 使用临时合成清单数据（不下载真实权重、无外网），覆盖依赖顺序安装、进度/状态事件、暂停保留 staging、零字节取消、Range 续传、恢复安装、哈希损坏转 corrupt、verify、依赖删除保护和 doctor。host Slice 5 集成测试另覆盖模型/日志路径返回、合成媒体导入、mock 转录进度与终态、路径型 sidecar 错误脱敏、默认 120ms omit、restore、preview 不写、apply 写 XMEML/SHA-256/outputs/export history、`ROUGH_CUT_EMPTY` 阻断，以及取消候选不切换 active transcript。Electron Playwright 使用预置的合成 installed 状态（不含权重）和 test-only mock host 配置，覆盖 reveal 返回值不含路径，以及同一转录、脱敏事件、编辑、export grant、文件/SHA-256、空剪阻断与取消路径；因生产 host 的偏好 endpoint 校验按设计不允许非测试编译的 HTTP，Electron E2E 不伪造本地下载，完整下载生命周期由 Rust fixture 覆盖。
 
 Slice 5 未修改 `src-tauri`、Web/PWA、模型清单 JSON、偏好 endpoint 校验、SQLite schema/migration、sidecar 协议或导出格式；Tauri 继续作为行为参考。门禁证据：workspace fmt 与 clippy `-D warnings` 通过；严格工具模式 workspace Rust 测试全过（engine 148 过、1 个既有 golden regeneration ignored；desktop service 17 过；host Slice 5 集成 2 过；Tauri 参考测试 18 过）；bindings contract 通过；Studio lint、89 项 Vitest、Studio Vite build、独立 `tsc -b`、Electron build 与 host build 通过；Slices 1–5 全部 13 项 Playwright 通过；根 Web lint、99 项 Vitest 与 build 通过；`git diff --check` 通过。
+
+## Phase 4 Slice 6 已交付说话人分离与项目内身份
+
+host-neutral service 已按 Tauri 参考实现注册 `speaker_list`、`speaker_name_proposals`、`speaker_agent_payload_preview`、`speaker_name_confirm`、`speaker_merge_confirm`、`speaker_diarize_start` 与 `speaker_diarization_get`。列表、名称候选、显式确认错误码、姓名/合并 revision、合并后旧身份的 `merged_into` 归档语义和分离结果均直接复用 engine；姓名与合并在 `confirmed:false` 时统一返回 `SPEAKER_CONFIRM_REQUIRED`，不会写项目。
+
+`speaker_diarize_start` 继续从当前偏好的模型根经 service 模型状态解析已安装的 `wespeaker-zh`，未就绪返回 `MODEL_NOT_READY`；VAD 仍使用 bundled Silero 标识。speaker sidecar 定位顺序为 `DOUBLELOVE_SPEAKER_DIR` → 注入的 resource 根 → 开发仓库 `sidecars/speaker`，日志只写当前项目 `.doublelove/logs`。生产 runtime 默认且始终使用 `mock:false`；host 在无显式 `--test-transcribe-mock` 时会在启动阶段清除继承的 `DOUBLELOVE_ASR_MOCK` 与 `DOUBLELOVE_SPEAKER_MOCK`，避免 Electron main 环境绕过 runtime 配置。只有 debug host 的显式 `--test-speaker-mock`（Electron E2E 对应 `--double-love-e2e-speaker-mock`）可由 speaker 配置重新启用既有确定性 mock，不改变 engine/CLI 或 sidecar 协议。
+
+Electron 的 Agent 预览边界会在返回前仅替换 payload 字符串中当前项目根和当前项目全部媒体源路径（含可解析的 canonical 形式）为 `<PROJECT>` / `<MEDIA>`；speaker id、发言选择、条数/字符上限和 instruction 除路径替换外保持 engine 原样。预览仍只包含请求的匿名说话人发言，不会附加音频、其他说话人的文字、项目上下文或任何外部调用。
+
+说话人隐私不变量保持不变：sidecar 的 embedding 只在 worker 内存中短暂存在并写入当前项目 SQLite 的 `speaker_embedding` 表；它不进入 `OperationResult`、host response、DTO/TS bindings、进度或终态事件、项目 revision/operation log、快照、诊断日志和导出物。Electron speaker 任务复用 Slice 5 的 `ServiceProgressSink`，自由文本中的项目、speaker 模型、模型根和 sidecar 路径分别替换为 `<PROJECT>` / `<MODEL>`；畸形 sidecar 原始 JSON 中连续至少 8 个数值的数组替换为 `<REDACTED>`，phase/message 分别以 UTF-8 边界安全地限制在 4096 bytes，task id、状态和计数不变。main 本地日志仍只记录既有字段白名单，不记录请求、响应或事件 payload。
+
+Rust host Slice 6 集成以合成媒体和预置的 ASR/aligner/Silero/WeSpeaker installed 状态运行既有 ASR 与 speaker mock：覆盖模型/项目门禁、两素材分离、任务成功终态、结果、名称候选、仅目标说话人的 Agent payload 与路径脱敏、姓名确认、拒绝确认不增 revision、合并确认、逐词归属改写、可见列表和旧身份 `merged_into` 留存；同时检查项目 DB 中存在 embedding，而所有 host event/response 和项目日志均无向量形状或 embedding 字段。额外 host 边界测试在无 test flag 且预置两个 mock 环境变量时验证 speaker 子进程观察到 `mock=false`，并由显式 test mock 注入含 12 个声纹浮点值的畸形响应，验证 `dl://progress` 只保留 `<REDACTED>`。Electron Playwright Slice 6 经真实 path grant 创建项目并导入两段合成媒体，复用 Slice 5 mock 转录，再覆盖分离、改名后的转录说话人显示映射、跨素材合并、Agent payload 路径脱敏，以及全部捕获事件无结构化向量、浮点数组形状字符串、项目根或媒体源路径。
+
+Slice 6 未修改 `src-tauri`、Web/PWA、SQLite schema/migration、bindings/DTO schema、host 或 sidecar 协议、导出格式和既有 speaker 隐私边界；Tauri 继续作为行为参考。门禁证据：workspace fmt 与 clippy `-D warnings` 通过；严格工具模式 workspace Rust 测试全过（engine 148 过、1 个既有 golden regeneration ignored；desktop service 19 过；host Slice 6 集成 3 过；Tauri 参考测试 18 过）；bindings contract 通过；Studio lint、89 项 Vitest、Studio Vite build、独立 `tsc -b`、Electron build 与 host build 通过；Slices 1–6 及平台/骨架共 14 项 Playwright 全过；根 Web lint、99 项 Vitest 与 build 通过；`git diff --check` 通过。
 
 ## Phase 4 Slice 4 已交付主轨与项目视觉设置
 

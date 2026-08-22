@@ -6,14 +6,16 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use double_love_engine::{
-    CanvasSpec, DEFAULT_HANDLES_MS, Diagnostic, DiagnosticLevel, DoctorEnvironment, FfmpegTools,
-    FrameRate, MediaAssetSummary, ModelError, OperationResult, ProgressEvent, ProgressSink,
-    ProjectStore, ProjectSummary, SharedSink, SubtitleStyle, TaskRegistry, TaskState,
-    TranscribeConfig, append_full_main_track_asset, append_main_track_clip,
+    CanvasSpec, DEFAULT_HANDLES_MS, Diagnostic, DiagnosticLevel, DiarizeConfig, DoctorEnvironment,
+    FfmpegTools, FrameRate, MediaAssetSummary, ModelError, OperationResult, ProgressEvent,
+    ProgressSink, ProjectStore, ProjectSummary, SharedSink, SpeakerIdentity,
+    SpeakerNameAgentPayload, SubtitleStyle, TaskRegistry, TaskState, TranscribeConfig,
+    agent_name_payload_preview, append_full_main_track_asset, append_main_track_clip,
     compile_project_timeline, create_project, export_rough_cut, export_rough_cut_to,
     ffmpeg_supports_ass_filter, import_media as engine_import_media, list_media_assets,
-    move_main_track_clip, omit_words, open_project, remove_main_track_clip, restore_words,
-    split_main_track_clip, start_transcription, transcript_view, trim_main_track_clip,
+    local_name_proposals, move_main_track_clip, omit_words, open_project, remove_main_track_clip,
+    restore_words, speaker_diarization_result, split_main_track_clip, start_speaker_diarization,
+    start_transcription, transcript_view, trim_main_track_clip,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -119,6 +121,8 @@ pub struct DesktopRuntimeConfig {
     pub resource_dir: Option<PathBuf>,
     /// Enabled only by explicit host integration tests; production commands keep mock=false.
     pub test_transcribe_mock: bool,
+    /// Enabled only by explicit host integration tests; production commands keep mock=false.
+    pub test_speaker_mock: bool,
 }
 
 pub struct DesktopState {
@@ -309,6 +313,114 @@ fn sanitize_renderer_text(text: &mut String, replacements: &[(String, &str)]) {
     }
 }
 
+const MAX_PROGRESS_TEXT_BYTES: usize = 4096;
+const MIN_REDACTED_NUMERIC_ARRAY_VALUES: usize = 8;
+const REDACTED_PROGRESS_TEXT: &str = "<REDACTED>";
+const TRUNCATED_PROGRESS_TEXT: &str = "<TRUNCATED>";
+
+fn numeric_array_redaction_end(text: &str, open: usize) -> Option<usize> {
+    let bytes = text.as_bytes();
+    debug_assert_eq!(bytes.get(open), Some(&b'['));
+    let mut cursor = open + 1;
+    let mut value_count = 0;
+
+    loop {
+        while bytes.get(cursor).is_some_and(u8::is_ascii_whitespace) {
+            cursor += 1;
+        }
+        if cursor == bytes.len() {
+            return (value_count >= MIN_REDACTED_NUMERIC_ARRAY_VALUES).then_some(cursor);
+        }
+
+        let token_start = cursor;
+        while let Some(byte) = bytes.get(cursor) {
+            if byte.is_ascii_whitespace() || matches!(byte, b'[' | b',' | b']') {
+                break;
+            }
+            cursor += 1;
+        }
+        let numeric = token_start != cursor && text[token_start..cursor].parse::<f64>().is_ok();
+        if !numeric {
+            return (value_count >= MIN_REDACTED_NUMERIC_ARRAY_VALUES).then_some(token_start);
+        }
+        value_count += 1;
+
+        while bytes.get(cursor).is_some_and(u8::is_ascii_whitespace) {
+            cursor += 1;
+        }
+        match bytes.get(cursor) {
+            Some(b',') => cursor += 1,
+            Some(b']') if value_count >= MIN_REDACTED_NUMERIC_ARRAY_VALUES => {
+                return Some(cursor + 1);
+            }
+            Some(b']') => return None,
+            Some(_) => {
+                return (value_count >= MIN_REDACTED_NUMERIC_ARRAY_VALUES).then_some(cursor);
+            }
+            None => {
+                return (value_count >= MIN_REDACTED_NUMERIC_ARRAY_VALUES).then_some(cursor);
+            }
+        }
+    }
+}
+
+fn redact_large_numeric_arrays(text: &mut String) {
+    let mut ranges = Vec::new();
+    let mut search_from = 0;
+    while let Some(relative) = text[search_from..].find('[') {
+        let start = search_from + relative;
+        if let Some(end) = numeric_array_redaction_end(text, start) {
+            ranges.push((start, end));
+            search_from = end;
+        } else {
+            search_from = start + 1;
+        }
+    }
+    if ranges.is_empty() {
+        return;
+    }
+
+    let mut redacted = String::with_capacity(text.len());
+    let mut copy_from = 0;
+    for (start, end) in ranges {
+        redacted.push_str(&text[copy_from..start]);
+        redacted.push_str(REDACTED_PROGRESS_TEXT);
+        copy_from = end;
+    }
+    redacted.push_str(&text[copy_from..]);
+    *text = redacted;
+}
+
+fn cap_progress_text(text: &mut String) {
+    if text.len() <= MAX_PROGRESS_TEXT_BYTES {
+        return;
+    }
+    let mut boundary = MAX_PROGRESS_TEXT_BYTES - TRUNCATED_PROGRESS_TEXT.len();
+    while !text.is_char_boundary(boundary) {
+        boundary -= 1;
+    }
+    text.truncate(boundary);
+    text.push_str(TRUNCATED_PROGRESS_TEXT);
+}
+
+fn sanitize_progress_text(text: &mut String, replacements: &[(String, &str)]) {
+    sanitize_renderer_text(text, replacements);
+    redact_large_numeric_arrays(text);
+    cap_progress_text(text);
+}
+
+fn sanitize_speaker_agent_payload(
+    mut payload: SpeakerNameAgentPayload,
+    replacements: &[(String, &str)],
+) -> SpeakerNameAgentPayload {
+    sanitize_renderer_text(&mut payload.speaker_id, replacements);
+    for utterance in &mut payload.utterances {
+        sanitize_renderer_text(utterance, replacements);
+    }
+    sanitize_renderer_text(&mut payload.instruction, replacements);
+    payload
+}
+
 #[derive(Deserialize)]
 struct ProjectPathParams {
     path: String,
@@ -448,6 +560,32 @@ struct AssetIdParams {
 }
 
 #[derive(Deserialize)]
+struct SpeakerAgentPayloadParams {
+    #[serde(alias = "assetId")]
+    asset_id: String,
+    #[serde(alias = "speakerId")]
+    speaker_id: String,
+}
+
+#[derive(Deserialize)]
+struct SpeakerNameConfirmParams {
+    #[serde(alias = "speakerId")]
+    speaker_id: String,
+    #[serde(alias = "displayName")]
+    display_name: String,
+    confirmed: bool,
+}
+
+#[derive(Deserialize)]
+struct SpeakerMergeConfirmParams {
+    #[serde(alias = "keepSpeakerId")]
+    keep_speaker_id: String,
+    #[serde(alias = "mergeSpeakerId")]
+    merge_speaker_id: String,
+    confirmed: bool,
+}
+
+#[derive(Deserialize)]
 struct EditOmitParams {
     #[serde(alias = "assetId")]
     asset_id: String,
@@ -510,8 +648,8 @@ struct TaskStateEvent {
 
 impl ProgressSink for ServiceProgressSink {
     fn progress(&self, mut event: ProgressEvent) {
-        sanitize_renderer_text(&mut event.phase, &self.renderer_path_replacements);
-        sanitize_renderer_text(&mut event.message, &self.renderer_path_replacements);
+        sanitize_progress_text(&mut event.phase, &self.renderer_path_replacements);
+        sanitize_progress_text(&mut event.message, &self.renderer_path_replacements);
         if let Ok(payload) = serde_json::to_value(event) {
             let _ = self.events.emit("dl://progress", payload);
         }
@@ -1460,6 +1598,152 @@ pub fn register_commands(registry: &mut CommandRegistry) {
             transcript_view(store, &params.asset_id)
         }))
     });
+    registry.register("speaker_list", |state, _events, _payload| {
+        result_value(with_store(state, |store, _| {
+            match store.speaker_identities() {
+                Ok(speakers) => OperationResult::success(speakers),
+                Err(error) => OperationResult::failed("STORAGE_ERROR", error.to_string()),
+            }
+        }))
+    });
+    registry.register("speaker_name_proposals", |state, _events, payload| {
+        let params: AssetIdParams = params(payload)?;
+        result_value(with_store(state, |store, _| {
+            match store.transcript_words(&params.asset_id) {
+                Ok(words) => OperationResult::success(local_name_proposals(&words)),
+                Err(error) => OperationResult::failed("STORAGE_ERROR", error.to_string()),
+            }
+        }))
+    });
+    registry.register(
+        "speaker_agent_payload_preview",
+        |state, _events, payload| {
+            let params: SpeakerAgentPayloadParams = params(payload)?;
+            result_value(with_store(state, |store, summary| {
+                let words = match store.transcript_words(&params.asset_id) {
+                    Ok(words) => words,
+                    Err(error) => {
+                        return OperationResult::failed("STORAGE_ERROR", error.to_string());
+                    }
+                };
+                let assets = match store.media_assets() {
+                    Ok(assets) => assets,
+                    Err(error) => {
+                        return OperationResult::failed("STORAGE_ERROR", error.to_string());
+                    }
+                };
+                let mut sensitive_paths = assets
+                    .iter()
+                    .map(|asset| (asset.original_path.as_str(), "<MEDIA>"))
+                    .collect::<Vec<_>>();
+                sensitive_paths.push((&summary.root, "<PROJECT>"));
+                let mut replacements = renderer_path_replacements(&sensitive_paths);
+                replacements.sort_by_key(|item| std::cmp::Reverse(item.0.len()));
+                OperationResult::success(sanitize_speaker_agent_payload(
+                    agent_name_payload_preview(&words, &params.speaker_id),
+                    &replacements,
+                ))
+            }))
+        },
+    );
+    registry.register("speaker_name_confirm", |state, _events, payload| {
+        let params: SpeakerNameConfirmParams = params(payload)?;
+        if !params.confirmed {
+            return result_value(OperationResult::<SpeakerIdentity>::failed(
+                "SPEAKER_CONFIRM_REQUIRED",
+                "请确认后再应用说话人姓名。",
+            ));
+        }
+        result_value(with_store(state, |store, _| {
+            match store.confirm_speaker_name(&params.speaker_id, &params.display_name) {
+                Ok(identity) => {
+                    let mut result = OperationResult::success(identity);
+                    result.revision = store.revision().ok();
+                    result
+                }
+                Err(error) => {
+                    OperationResult::failed("SPEAKER_NAME_CONFIRM_FAILED", error.to_string())
+                }
+            }
+        }))
+    });
+    registry.register("speaker_merge_confirm", |state, _events, payload| {
+        let params: SpeakerMergeConfirmParams = params(payload)?;
+        if !params.confirmed {
+            return result_value(OperationResult::<SpeakerIdentity>::failed(
+                "SPEAKER_CONFIRM_REQUIRED",
+                "请确认后再合并说话人。",
+            ));
+        }
+        result_value(with_store(state, |store, _| {
+            match store.merge_speaker_identities(&params.keep_speaker_id, &params.merge_speaker_id)
+            {
+                Ok(identity) => {
+                    let mut result = OperationResult::success(identity);
+                    result.revision = store.revision().ok();
+                    result
+                }
+                Err(error) => OperationResult::failed("SPEAKER_MERGE_FAILED", error.to_string()),
+            }
+        }))
+    });
+    registry.register("speaker_diarize_start", |state, events, payload| {
+        let params: AssetIdParams = params(payload)?;
+        let preferences =
+            match preferences::current_preferences(state.app_data_dir(), state.preferences()) {
+                Ok(preferences) => preferences,
+                Err(error) => {
+                    return result_value(OperationResult::<Value>::failed(
+                        "PREFERENCES_READ_FAILED",
+                        error.to_string(),
+                    ));
+                }
+            };
+        let model_root = Path::new(&preferences.model_root);
+        let speaker_model_dir = match state.models().installed_dir(model_root, "wespeaker-zh") {
+            Ok(path) => path,
+            Err(error) => {
+                return result_value(OperationResult::<Value>::failed("MODEL_NOT_READY", error));
+            }
+        };
+        let result = match state.open_project().with_current(|open| {
+            let package_dir = resolve_speaker_sidecar_dir(state);
+            let model_root_path = model_root.to_string_lossy().into_owned();
+            let speaker_model_dir_path = speaker_model_dir.to_string_lossy().into_owned();
+            let package_dir_path = package_dir.to_string_lossy().into_owned();
+            let replacements = renderer_path_replacements(&[
+                (&open.summary.root, "<PROJECT>"),
+                (&speaker_model_dir_path, "<MODEL>"),
+                (&package_dir_path, "<MODEL>"),
+                (&model_root_path, "<MODEL>"),
+            ]);
+            let config = DiarizeConfig {
+                asset_id: params.asset_id,
+                mock: state.runtime.test_speaker_mock,
+                python: None,
+                package_dir,
+                log_dir: Path::new(&open.summary.root).join(".doublelove/logs"),
+                vad_model_dir: PathBuf::from("bundled"),
+                speaker_model_dir,
+            };
+            let sink: SharedSink = Arc::new(ServiceProgressSink::new(events, replacements));
+            start_speaker_diarization(Arc::clone(&open.store), state.task_registry(), sink, config)
+        }) {
+            Ok(Ok(task_id)) => OperationResult::success(serde_json::json!({"task_id": task_id})),
+            Ok(Err(error)) => OperationResult::failed("SPEAKER_START_FAILED", error),
+            Err(error) if error.code == PROJECT_NOT_OPEN => {
+                OperationResult::failed(PROJECT_NOT_OPEN, "请先打开或创建一个项目。")
+            }
+            Err(error) => OperationResult::failed(error.code, error.message),
+        };
+        result_value(result)
+    });
+    registry.register("speaker_diarization_get", |state, _events, payload| {
+        let params: AssetIdParams = params(payload)?;
+        result_value(with_store(state, |store, _| {
+            speaker_diarization_result(store, &params.asset_id)
+        }))
+    });
     registry.register("edit_omit", |state, _events, payload| {
         let params: EditOmitParams = params(payload)?;
         result_value(with_store(state, |store, _| {
@@ -1830,6 +2114,41 @@ mod tests {
     }
 
     #[test]
+    fn progress_text_redacts_large_numeric_arrays_but_keeps_short_lists() {
+        let mut text = concat!(
+            "speaker protocol error: {\"values\":",
+            "[0.101001, -0.202002, 3.03e-1, 4, 5.05, 6.06, 7.07, 8.08]}",
+            " short=[1.0, 0.0]"
+        )
+        .to_string();
+
+        sanitize_progress_text(&mut text, &[]);
+
+        assert_eq!(
+            text,
+            "speaker protocol error: {\"values\":<REDACTED>} short=[1.0, 0.0]"
+        );
+        for leaked in ["0.101001", "-0.202002", "3.03e-1", "8.08"] {
+            assert!(!text.contains(leaked), "numeric value leaked: {text}");
+        }
+    }
+
+    #[test]
+    fn progress_text_cap_preserves_utf8_and_the_byte_limit() {
+        let mut text = format!(
+            "{}[0.11,0.22,0.33,0.44,0.55,0.66,0.77,0.88]",
+            "隐私文本".repeat(2_000)
+        );
+
+        sanitize_progress_text(&mut text, &[]);
+
+        assert!(text.len() <= MAX_PROGRESS_TEXT_BYTES);
+        assert!(text.ends_with(TRUNCATED_PROGRESS_TEXT));
+        assert!(!text.contains("0.11"));
+        assert!(std::str::from_utf8(text.as_bytes()).is_ok());
+    }
+
+    #[test]
     fn service_progress_sink_sanitizes_free_text_without_changing_task_or_counts() {
         let project = temp_directory("progress-project");
         let model = temp_directory("progress-model");
@@ -1853,7 +2172,9 @@ mod tests {
             phase: format!("load {model_text}"),
             completed: Some(4),
             total: Some(9),
-            message: format!("read {project_text}/prepared.wav with {aligner_text}"),
+            message: format!(
+                "read {project_text}/prepared.wav with {aligner_text}: [0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8]"
+            ),
         });
         sink.task_state("task-123", TaskState::Failed);
 
@@ -1866,7 +2187,7 @@ mod tests {
         assert_eq!(events[0].1["total"], 9);
         assert_eq!(
             events[0].1["message"],
-            "read <PROJECT>/prepared.wav with <MODEL>"
+            "read <PROJECT>/prepared.wav with <MODEL>: <REDACTED>"
         );
         assert_eq!(events[1].0, "dl://task-state");
         assert_eq!(events[1].1["task_id"], "task-123");
@@ -1875,6 +2196,7 @@ mod tests {
         assert!(!serialized.contains(&project_text));
         assert!(!serialized.contains(&model_text));
         assert!(!serialized.contains(&aligner_text));
+        assert!(!serialized.contains("0.1,0.2"));
     }
 
     #[test]

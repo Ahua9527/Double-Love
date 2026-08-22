@@ -75,6 +75,7 @@ impl<W: Write + Send> DesktopEventSink for HostEventSink<W> {
 pub struct HostRuntimeConfig {
     pub resource_dir: Option<PathBuf>,
     pub test_transcribe_mock: bool,
+    pub test_speaker_mock: bool,
 }
 
 pub fn run_host<W: Write + Send + 'static>(
@@ -101,6 +102,7 @@ pub fn run_host_with_config<W: Write + Send + 'static>(
         DesktopRuntimeConfig {
             resource_dir: runtime.resource_dir,
             test_transcribe_mock: runtime.test_transcribe_mock,
+            test_speaker_mock: runtime.test_speaker_mock,
         },
     )?;
 

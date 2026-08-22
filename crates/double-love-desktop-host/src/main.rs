@@ -5,11 +5,14 @@ use std::process::ExitCode;
 
 use double_love_desktop_host::HostRuntimeConfig;
 
+const SIDECAR_MOCK_ENVIRONMENT: [&str; 2] = ["DOUBLELOVE_ASR_MOCK", "DOUBLELOVE_SPEAKER_MOCK"];
+
 #[derive(Debug, Default, PartialEq, Eq)]
 struct HostArguments {
     app_data_dir: Option<PathBuf>,
     resource_dir: Option<PathBuf>,
     test_transcribe_mock: bool,
+    test_speaker_mock: bool,
 }
 
 fn host_arguments(mut arguments: impl Iterator<Item = OsString>) -> Result<HostArguments, String> {
@@ -36,6 +39,11 @@ fn host_arguments(mut arguments: impl Iterator<Item = OsString>) -> Result<HostA
                 return Err("--test-transcribe-mock is unavailable in release builds".to_string());
             }
             parsed.test_transcribe_mock = true;
+        } else if flag == "--test-speaker-mock" {
+            if !cfg!(debug_assertions) {
+                return Err("--test-speaker-mock is unavailable in release builds".to_string());
+            }
+            parsed.test_speaker_mock = true;
         } else {
             return Err(format!(
                 "unknown desktop host argument: {}",
@@ -46,6 +54,17 @@ fn host_arguments(mut arguments: impl Iterator<Item = OsString>) -> Result<HostA
     Ok(parsed)
 }
 
+fn sanitize_mock_environment(test_transcribe_mock: bool) {
+    if test_transcribe_mock {
+        return;
+    }
+    for variable in SIDECAR_MOCK_ENVIRONMENT {
+        // SAFETY: main calls this during single-threaded startup, before the service or any
+        // sidecar worker threads exist. Test mode is configured explicitly after sanitization.
+        unsafe { std::env::remove_var(variable) };
+    }
+}
+
 fn main() -> ExitCode {
     let arguments = match host_arguments(std::env::args_os().skip(1)) {
         Ok(arguments) => arguments,
@@ -54,6 +73,7 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+    sanitize_mock_environment(arguments.test_transcribe_mock);
     let stdin = io::stdin();
     let stdout = io::stdout();
 
@@ -64,6 +84,7 @@ fn main() -> ExitCode {
         HostRuntimeConfig {
             resource_dir: arguments.resource_dir,
             test_transcribe_mock: arguments.test_transcribe_mock,
+            test_speaker_mock: arguments.test_speaker_mock,
         },
     ) {
         Ok(()) => ExitCode::SUCCESS,
@@ -96,15 +117,23 @@ mod tests {
                 app_data_dir: Some(PathBuf::from("/tmp/dl")),
                 resource_dir: Some(PathBuf::from("/tmp/resources")),
                 test_transcribe_mock: false,
+                test_speaker_mock: false,
             }
         );
     }
 
     #[test]
-    fn debug_host_accepts_explicit_test_mock_mode() {
-        let arguments = host_arguments([OsString::from("--test-transcribe-mock")].into_iter())
-            .expect("parse test mode");
+    fn debug_host_accepts_explicit_test_mock_modes() {
+        let arguments = host_arguments(
+            [
+                OsString::from("--test-transcribe-mock"),
+                OsString::from("--test-speaker-mock"),
+            ]
+            .into_iter(),
+        )
+        .expect("parse test modes");
         assert!(arguments.test_transcribe_mock);
+        assert!(arguments.test_speaker_mock);
     }
 
     #[test]

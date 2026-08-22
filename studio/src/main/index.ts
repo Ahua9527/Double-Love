@@ -43,6 +43,7 @@ const SETTINGS_QUERY = 'window=settings'
 const E2E_SWITCH = 'double-love-e2e'
 const E2E_USER_DATA_SWITCH = 'double-love-e2e-user-data'
 const E2E_TRANSCRIBE_MOCK_SWITCH = 'double-love-e2e-transcribe-mock'
+const E2E_SPEAKER_MOCK_SWITCH = 'double-love-e2e-speaker-mock'
 const BOTH_WINDOWS: readonly WindowRole[] = ['main', 'settings']
 
 // Renderer-reachable host commands. Excludes main-only resolution helpers and the
@@ -188,6 +189,9 @@ class HostSupervisor {
     ]
     if (!app.isPackaged && app.commandLine.hasSwitch(E2E_TRANSCRIBE_MOCK_SWITCH)) {
       hostArguments.push('--test-transcribe-mock')
+    }
+    if (!app.isPackaged && app.commandLine.hasSwitch(E2E_SPEAKER_MOCK_SWITCH)) {
+      hostArguments.push('--test-speaker-mock')
     }
     const child = spawn(hostPath, hostArguments, {
       shell: false,
