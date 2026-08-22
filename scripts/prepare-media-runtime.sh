@@ -4,7 +4,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-TARGET="$ROOT/src-tauri/resources/runtime"
+TARGET="$ROOT/studio/build/runtime"
 FFMPEG_SOURCE="${DOUBLELOVE_FFMPEG_SOURCE:-}"
 FFPROBE_SOURCE="${DOUBLELOVE_FFPROBE_SOURCE:-}"
 

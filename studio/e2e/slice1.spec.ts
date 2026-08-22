@@ -11,7 +11,10 @@ const electronExecutable = require('electron') as string
 const studioRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const hostBinary = resolve(studioRoot, '../target/debug/double-love-desktop-host')
 const mainEntry = resolve(studioRoot, 'out/main/index.js')
-const corruptFixture = resolve(studioRoot, '../src-tauri/tests/fixtures/preferences/corrupt.json')
+const corruptFixture = resolve(
+  studioRoot,
+  '../crates/double-love-desktop-service/tests/fixtures/preferences/corrupt.json',
+)
 
 interface InvokeOperation<T> {
   status: 'success' | 'partial' | 'failed' | 'cancelled'

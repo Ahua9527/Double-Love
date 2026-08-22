@@ -5,15 +5,18 @@
   "type": "module",
   "main": "./out/main/index.js",
   "scripts": {
-    "dev": "vite",
+    "dev": "electron-vite dev",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "test": "vitest run",
     "preview": "vite preview",
+    "preview:vite": "vite",
     "postinstall": "install-electron",
     "electron:dev": "electron-vite dev",
     "electron:build": "electron-vite build",
-    "e2e:electron": "electron-vite build && playwright test"
+    "e2e:electron": "electron-vite build && playwright test",
+    "pack:dir": "electron-builder --dir",
+    "pack": "electron-builder --mac --arm64"
   },
   "dependencies": {
     "@tanstack/react-virtual": "3.14.9",

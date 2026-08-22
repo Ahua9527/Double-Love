@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { readFileSync } from 'node:fs'
-import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { once } from 'node:events'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -10,6 +10,7 @@ import {
   BrowserWindow,
   dialog,
   Menu,
+  net,
   protocol,
   session,
   shell,
@@ -24,22 +25,34 @@ import { LocalLog } from './local-log'
 import { mediaNotFound, mediaResponse } from './media-response'
 import { PathGrants, type GrantKind } from './path-grants'
 
-protocol.registerSchemesAsPrivileged([{
-  scheme: 'dl-media',
-  privileges: {
-    standard: false,
-    secure: true,
-    supportFetchAPI: true,
-    stream: true,
-    bypassCSP: false,
+protocol.registerSchemesAsPrivileged([
+  {
+    scheme: 'dl-app',
+    privileges: {
+      standard: true,
+      secure: true,
+      supportFetchAPI: true,
+      bypassCSP: false,
+    },
   },
-}])
+  {
+    scheme: 'dl-media',
+    privileges: {
+      standard: false,
+      secure: true,
+      supportFetchAPI: true,
+      stream: true,
+      bypassCSP: false,
+    },
+  },
+])
 
 const PROTOCOL_VERSION = 1
 const MAX_FRAME_BYTES = 64 * 1024 * 1024
 const REQUEST_TIMEOUT_MS = 5_000
 const SHUTDOWN_TIMEOUT_MS = 1_500
 const SETTINGS_QUERY = 'window=settings'
+const RENDERER_ORIGIN = 'dl-app://app'
 const E2E_SWITCH = 'double-love-e2e'
 const E2E_USER_DATA_SWITCH = 'double-love-e2e-user-data'
 const E2E_TRANSCRIBE_MOCK_SWITCH = 'double-love-e2e-transcribe-mock'
@@ -115,7 +128,9 @@ const moduleDirectory = dirname(fileURLToPath(import.meta.url))
 const rendererHtml = resolve(moduleDirectory, '../renderer/index.html')
 const preloadPath = resolve(moduleDirectory, '../preload/index.cjs')
 const repositoryRoot = resolve(moduleDirectory, '../../..')
-const e2eUserData = app.isPackaged ? undefined : app.commandLine.getSwitchValue(E2E_USER_DATA_SWITCH)
+const e2eUserData = app.isPackaged && !app.commandLine.hasSwitch(E2E_SWITCH)
+  ? undefined
+  : app.commandLine.getSwitchValue(E2E_USER_DATA_SWITCH)
 const userDataPath = e2eUserData || join(app.getPath('appData'), 'space.ahua.doublelove.studio')
 
 // Preserve the Tauri identifier-based Application Support location before any
@@ -409,7 +424,7 @@ function isExpectedNavigation(target: string): boolean {
   try {
     const url = new URL(target)
     if (!usePackagedRenderer) return url.origin === new URL(developmentRendererUrl).origin
-    return url.protocol === 'file:' && url.pathname === pathToFileURL(rendererHtml).pathname
+    return url.protocol === 'dl-app:' && url.hostname === 'app' && url.pathname === '/index.html'
   } catch {
     return false
   }
@@ -449,7 +464,31 @@ async function loadRenderer(window: BrowserWindow, settings = false): Promise<vo
     await window.loadURL(`${developmentRendererUrl}${suffix}`)
     return
   }
-  await window.loadFile(rendererHtml, settings ? { query: { window: 'settings' } } : undefined)
+  const suffix = settings ? `?${SETTINGS_QUERY}` : ''
+  await window.loadURL(`${RENDERER_ORIGIN}/index.html${suffix}`)
+}
+
+function installRendererProtocol(): void {
+  const rendererRoot = dirname(rendererHtml)
+  protocol.handle('dl-app', (request) => {
+    try {
+      const url = new URL(request.url)
+      if (url.hostname !== 'app') return new Response(null, { status: 404 })
+      const candidate = resolve(rendererRoot, `.${decodeURIComponent(url.pathname)}`)
+      const containedPath = relative(rendererRoot, candidate)
+      if (
+        containedPath === '..'
+        || containedPath.startsWith(`..${sep}`)
+        || isAbsolute(containedPath)
+      ) {
+        return new Response(null, { status: 404 })
+      }
+      return net.fetch(pathToFileURL(candidate).toString())
+        .catch(() => new Response(null, { status: 404 }))
+    } catch {
+      return new Response(null, { status: 404 })
+    }
+  })
 }
 
 function createMainWindow(): BrowserWindow {
@@ -834,6 +873,7 @@ if (!hasSingleInstanceLock) {
     await host.start()
     installMenu()
     installIpcHandlers()
+    installRendererProtocol()
     installMediaProtocol()
     mainWindow = createMainWindow()
 

@@ -12,7 +12,7 @@ type PlatformAdapter = Omit<typeof tauriAdapter, 'isDesktop' | 'platformKind'> &
 const hasElectronBridge = 'doubleLove' in window
 const hasTauriBridge = '__TAURI_INTERNALS__' in window
 
-if (location.protocol === 'file:' && !hasElectronBridge && !hasTauriBridge) {
+if (['file:', 'dl-app:'].includes(location.protocol) && !hasElectronBridge && !hasTauriBridge) {
   throw new Error('Double Love Studio packaged renderer started without a desktop bridge')
 }
 

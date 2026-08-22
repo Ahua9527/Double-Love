@@ -1,6 +1,36 @@
 appId: space.ahua.doublelove.studio
 productName: Double Love Studio
 asar: true
-afterPack: scripts/after-pack.cjs
+directories:
+  output: release
 files:
   - out/**
+afterPack: scripts/after-pack.cjs
+mac:
+  target:
+    - target: dmg
+      arch:
+        - arm64
+    - target: zip
+      arch:
+        - arm64
+  category: public.app-category.video
+  minimumSystemVersion: '15.0'
+  hardenedRuntime: true
+  notarize: false
+  icon: build/icon.png
+  forceCodeSigning: false
+extraResources:
+  - from: ../target/release/double-love-desktop-host
+    to: double-love-desktop-host
+  - from: ../bindings/host-protocol/schema
+    to: bindings/host-protocol/schema
+  - from: build/runtime
+    to: runtime
+  - from: build/model-runtime
+    to: model-runtime
+publish:
+  provider: github
+  owner: Ahua9527
+  repo: Double-Love
+  releaseType: release

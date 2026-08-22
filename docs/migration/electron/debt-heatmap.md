@@ -6,7 +6,7 @@
 | --- | --- | --- | --- | --- |
 | D1 | P0 | tauri.ts:255-269,319-324,429-439 | renderer invoke wrapper 可直传绝对路径（打开/导入/导出）；其中 roughcut apply UI 未用，其余无授权边界 | 3（path grant） |
 | D2 | P0 | tauri.ts:170-247；bindings/*.ts | ts-rs `bigint` 类型与 JSON number 运行时错位，靠 renderer `num()`/`normalize*` 兜底 | 3（协议整数策略） |
-| D3 | P0 | engine model.rs:267-268 | engine `include_str!` 反向引用 `src-tauri/resources/model-catalog-v1.json`，删除 src-tauri 会先打断 engine | 5 之前必须移动事实源 |
+| D3 | P0 | engine `resources/model-catalog-v1.json` | **5A 已解决**：事实源已归属 engine，`include_str!` 不再反向引用 `src-tauri` | 5A |
 | D4 | P1 | src-tauri/src/lib.rs（1083 行） | 66 命令大杂烩：状态持有、事件转发、资源定位、历史导航全在一个文件；Tauri 类型（AppHandle/State/Emitter）渗透每个函数 | 3-4（提取 service） |
 | D5 | P1 | engine storage.rs（3128 行） | 单文件承载 schema V1–V10 + 全部读写 + 历史/说话人/主轨；改动半径大 | 4（不改行为，仅随切片补测试） |
 | D6 | P1 | models.rs:296-455 | 下载队列/取消标志/进度节流的并发逻辑绑在 Tauri 命令层（线程+AppHandle emit），无独立可测边界 | 4 切片 5 |

@@ -3,8 +3,8 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-MEDIA="$ROOT/src-tauri/resources/runtime"
-MODELS="$ROOT/src-tauri/resources/model-runtime"
+MEDIA="$ROOT/studio/build/runtime"
+MODELS="$ROOT/studio/build/model-runtime"
 
 for binary in "$MEDIA/ffmpeg" "$MEDIA/ffprobe"; do
   if [[ ! -x "$binary" ]]; then

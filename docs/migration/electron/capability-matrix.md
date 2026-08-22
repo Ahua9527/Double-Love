@@ -142,11 +142,11 @@
 
 | 项 | 证据 | 说明 |
 | --- | --- | --- |
-| `src-tauri/resources/runtime/*`、`model-runtime/**/*` 打包资源 | tauri.conf.json:29 | 仓库内仅 README 占位；发布机由 prepare 脚本填充 |
-| `model-catalog-v1.json` 事实源 | engine `model.rs:267-268` `include_str!("../../../src-tauri/resources/model-catalog-v1.json")` | **engine 反向引用 src-tauri 路径**；清理阶段需移动并改引用 |
+| `studio/build/runtime/*`、`model-runtime/**/*` 打包资源 | `studio/electron-builder.yml`；`src-tauri/tauri.conf.json` | 仓库内仅 README 占位；发布机由 prepare 脚本填充；5A 起 Electron/Tauri 共用该资源树 |
+| `model-catalog-v1.json` 事实源 | engine `model.rs` `include_str!("../resources/model-catalog-v1.json")` | 5A 已归属 `crates/double-love-engine/resources/`，不再反向依赖 `src-tauri` |
 | `scripts/prepare-media-runtime.sh` / `prepare-model-runtime.sh` / `prepare-asr.sh` / `prepare-speaker.sh` | scripts/ | 媒体/模型运行时准备（发布机） |
 | `scripts/verify-release-runtime.sh` | scripts/ | 硬门禁：libass、可重定位 Python |
-| CI `studio-quality.yml` | self-hosted macOS ARM64；pnpm 10.33.0 / Node 24.14.1 / rustfmt+clippy；工具前置检查；cargo fmt/clippy/test；Python 两侧测试+py_compile；studio test/lint/build；`pnpm tauri build --debug`；`git diff --check` | 阶段 2 起需并行构建 Electron skeleton |
+| CI `studio-quality.yml` | self-hosted macOS ARM64；严格工具前置检查；cargo fmt/clippy/test；release host；bindings/Python/Studio 门禁；Electron build/E2E/无证书目录包/打包 smoke；Tauri debug reference build；`git diff --check` | 5A 起打包 smoke 读取 unpacked `.app` 的真实 resourcesPath |
 | CI `web-quality.yml` | Web/PWA 门禁 | 不变 |
 
 ## 5. 已知边界泄漏（迁移时必须收紧）

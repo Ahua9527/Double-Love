@@ -17,7 +17,7 @@ jobs:
   studio:
     runs-on: [self-hosted, macOS, ARM64]
     env:
-      # Missing ffmpeg/ffprobe/python3 must fail tool-dependent Rust tests in CI.
+      # Missing runtime tools must fail tool-dependent Rust tests in CI.
       DOUBLELOVE_REQUIRE_TEST_TOOLS: "1"
     timeout-minutes: 45
     steps:
@@ -26,7 +26,7 @@ jobs:
           fetch-depth: 0
       - name: Add Homebrew tools to PATH
         run: |
-          # GITHUB_PATH prepends later entries first, so add the preferred keg last.
+          # Later GITHUB_PATH entries take priority; add the preferred keg last.
           echo "/opt/homebrew/bin" >> "$GITHUB_PATH"
           if [[ -d /opt/homebrew/opt/ffmpeg-full/bin ]]; then
             echo "/opt/homebrew/opt/ffmpeg-full/bin" >> "$GITHUB_PATH"
@@ -55,7 +55,8 @@ jobs:
               missing=1
             fi
           done
-          if ! ffmpeg -hide_banner -filters 2>/dev/null | awk '$2 == "ass" { found=1 } END { exit !found }'; then
+          if ! ffmpeg -hide_banner -filters 2>/dev/null |
+            awk '$2 == "ass" { found=1 } END { exit !found }'; then
             printf 'missing\tffmpeg filter ass\n'
             missing=1
           else
@@ -70,14 +71,23 @@ jobs:
         run: cargo test --workspace --locked
       - name: Build Electron desktop host
         run: cargo build -p double-love-desktop-host --locked
+      - name: Build release Electron desktop host
+        run: cargo build --release -p double-love-desktop-host --locked
       - name: Check generated bindings and CLI JSON contracts
         run: scripts/migration/check-bindings-contract.sh
       - name: Test ASR sidecar
-        run: python3 -m unittest discover -s sidecars/asr/tests -p 'test_*.py'
+        run: |
+          python3 -m unittest discover \
+            -s sidecars/asr/tests -p 'test_*.py'
       - name: Test speaker sidecar
-        run: python3 -m unittest discover -s sidecars/speaker/tests -p 'test_*.py'
+        run: |
+          python3 -m unittest discover \
+            -s sidecars/speaker/tests -p 'test_*.py'
       - name: Compile sidecar sources
-        run: python3 -m py_compile sidecars/asr/double_love_asr/*.py sidecars/speaker/double_love_speaker/*.py
+        run: |
+          python3 -m py_compile \
+            sidecars/asr/double_love_asr/*.py \
+            sidecars/speaker/double_love_speaker/*.py
       - name: Test Studio
         run: pnpm --dir studio test
       - name: Lint Studio
@@ -86,15 +96,22 @@ jobs:
         run: pnpm --dir studio build
       - name: Build Electron application
         run: pnpm --dir studio exec electron-vite build
-      - name: Test Electron skeleton
+      - name: Test Electron application
         run: pnpm --dir studio exec playwright test
+      - name: Package unpacked Electron application
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+        run: pnpm --dir studio pack:dir
+      - name: Smoke packaged Electron application
+        run: scripts/migration/package-smoke.sh
       - name: Build Tauri debug app
         run: pnpm tauri build --debug
       - name: Check whitespace in pushed commits
         shell: bash
         run: |
-          if [[ "${{ github.event.before }}" != "0000000000000000000000000000000000000000" ]]; then
-            git diff --check "${{ github.event.before }}..${{ github.sha }}"
+          before="${{ github.event.before }}"
+          if [[ "$before" != "0000000000000000000000000000000000000000" ]]; then
+            git diff --check "$before..${{ github.sha }}"
           else
             git show --check --format=fuller "${{ github.sha }}"
           fi

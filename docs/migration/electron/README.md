@@ -26,7 +26,7 @@
 | 3D renderer 平台接缝 | **已完成** | renderer 运行时选择 Electron/Tauri/preview；Electron host 错误归一为既有 `OperationResult.failed`；本地文件无 bridge 时 fail closed | Tauri adapter 保留，revert renderer 平台接缝批次 |
 | 3 平台基础阶段（3A–3D） | **已完成** | service/host、安全边界、renderer 目录与平台 adapter 均已就位；Phase 4 可按纵向切片迁移业务命令 | 保留 Tauri adapter，按 3D→3A 逆序回退 |
 | 4 纵向业务切片迁移（7 片） | **已完成（Slice 1–7）** | 每片：Electron E2E 正常+失败/取消/恢复路径；Tauri 对照一致 | 每片独立提交，只 revert 当前切片 |
-| 5 默认 Electron、打包发布、清理 | 未开始 | 功能矩阵 100%；签名公证门禁通过 | 保留最后可构建 Tauri commit |
+| 5 默认 Electron、打包发布、清理 | **进行中（5A 打包基础设施与资源归属）** | 功能矩阵 100%；签名公证门禁通过 | 保留最后可构建 Tauri commit |
 | 6 全量验收与回退演练 | 未开始 | 见计划完成判定 | 文档化手动回退 |
 
 ## 当前基线证据（2026-08-22，本机 macOS 15.7.7 arm64，Node 24.14.1 / pnpm 10.33.0 / Rust 1.97.1）
@@ -50,7 +50,7 @@
 
 全部 fixture 均为 synthetic、privacy-safe 文本或运行时生成代码，不含真实用户数据库、媒体或模型权重；仓库不跟踪生成的 SQLite：
 
-1. Tauri 偏好：`src-tauri/tests/fixtures/preferences/{v1,partial-v0,corrupt}.json`；v1 解码与 fixture 的完整持久化对象相等，partial-v0 迁移与独立完整预期对象相等，损坏 JSON 分类为 decode failure。
+1. 桌面 service 偏好：`crates/double-love-desktop-service/tests/fixtures/preferences/{v1,partial-v0,corrupt}.json`；v1 解码与 fixture 的完整持久化对象相等，partial-v0 迁移与独立完整预期对象相等，损坏 JSON 分类为 decode failure。
 2. 模型状态：`crates/double-love-engine/tests/fixtures/model-installation-states.json` 描述 `installed`、`paused`（保留 `.part`）与下载中 staging 中断；安装 envelope schema 以字面量 1 冻结，并断言生产常量仍为 1；测试按文本生成最小目录并通过 `ModelManager` 验证恢复。
 3. 项目库：`storage.rs` 以稳定 SHA-256 分别冻结 `MIGRATION_V1`–`V10` 文本，通过后才运行时生成各版本最小 `.doublelove/project.sqlite`；逐个打开两次，断言 migration ledger 恰为 1–10 且 current=10。migration SQL 与生产 schema 均未修改。`tests/project.rs` 同时冻结 manifest camelCase 与 schemaVersion=1。
 4. 绑定/CLI contract：`scripts/migration/check-bindings-contract.sh` 先快照 `bindings/`，运行现有 ts-rs `export_bindings` cargo tests并确认再生成幂等，随后运行 CLI `--json` contract 测试；因此开发新契约时无需暂存或提交生成文件也能执行门禁。XMEML 的 `regenerate_golden_file` 保持故意 ignored，不默认执行。
@@ -78,7 +78,7 @@ Playwright Electron smoke 从 `out/main` 启动本地文件 renderer，使用临
 
 host 现通过统一 `service::register_commands` 注册 Slice 1 命令，偏好变更继续广播 `dl://preferences-changed`。只读模型清单按当前偏好目录惰性初始化 `ModelManager`，内置 `silero-vad` 自动标记为已安装；模型目录变更先复制、校验并切换已安装模型，失败时不持久化新目录。本切片不迁移下载生命周期，也未修改 `src-tauri` 参考实现。
 
-对照证据复用 `src-tauri/tests/fixtures/preferences/{v1,partial-v0,corrupt}.json`：service 测试断言完整 v1 与冻结的 v0→v1 结果逐字段相等，并覆盖磁盘损坏恢复。host 集成测试以临时 `--app-data-dir` 覆盖默认往返、更新与事件、非法 endpoint、模型目录迁移失败保持旧偏好、最近项目 20 条上限/forget 错误、引导 complete/reset、arm64 系统画像及内置模型状态。Electron Playwright 使用同一临时 userData 覆盖偏好事件与落盘、重启持久化、启动损坏恢复、非法 endpoint、引导 reset 和系统画像。
+对照证据复用 `crates/double-love-desktop-service/tests/fixtures/preferences/{v1,partial-v0,corrupt}.json`：service 测试断言完整 v1 与冻结的 v0→v1 结果逐字段相等，并覆盖磁盘损坏恢复。host 集成测试以临时 `--app-data-dir` 覆盖默认往返、更新与事件、非法 endpoint、模型目录迁移失败保持旧偏好、最近项目 20 条上限/forget 错误、引导 complete/reset、arm64 系统画像及内置模型状态。Electron Playwright 使用同一临时 userData 覆盖偏好事件与落盘、重启持久化、启动损坏恢复、非法 endpoint、引导 reset 和系统画像。
 
 Slice 1 门禁已通过：严格工具模式的 `cargo test --workspace --locked`（含未改动 Tauri 参考实现 18 项测试）、workspace clippy `-D warnings`、bindings contract、Studio lint/test/build、Electron build 与全部 8 项 Playwright、根 Web lint/test/build、`git diff --check`。
 
@@ -118,7 +118,7 @@ Slice 6 未修改 `src-tauri`、Web/PWA、SQLite schema/migration、bindings/DTO
 
 ## Phase 4 Slice 7 已交付项目级导出（Phase 4 完成）
 
-host-neutral service 已按 Tauri 参考实现注册 `project_export_preview`、`project_export_xmeml_apply`、`project_export_ass_apply` 与 `project_render_mp4_apply`。预览继续以当前项目目录 basename 加 ` Rough Cut` 调用 `preview_project_export`，只返回同一份 TimelineIR v2、字幕 Cue 与 Premiere/Resolve 兼容性报告，不写文件或 revision。XMEML/ASS apply 直接复用 engine 的原子写入、SHA-256、`outputs` 与 `export_artifact` 落账；MP4 继续由 `FfmpegTools::discover` 发现开发运行时，在 `<project>/.doublelove/cache` 写临时 ASS，并保留 engine 的 libass 前置诊断与实际 ffmpeg 渲染语义。
+host-neutral service 已按 Tauri 参考实现注册 `project_export_preview`、`project_export_xmeml_apply`、`project_export_ass_apply` 与 `project_render_mp4_apply`。预览继续以当前项目目录 basename 加 `Rough Cut` 调用 `preview_project_export`，只返回同一份 TimelineIR v2、字幕 Cue 与 Premiere/Resolve 兼容性报告，不写文件或 revision。XMEML/ASS apply 直接复用 engine 的原子写入、SHA-256、`outputs` 与 `export_artifact` 落账；MP4 继续由 `FfmpegTools::discover` 发现开发运行时，在 `<project>/.doublelove/cache` 写临时 ASS，并保留 engine 的 libass 前置诊断与实际 ffmpeg 渲染语义。
 
 Electron main 已预先限定这三个 apply 只能消费一次性 `export-save` grant；本切片验证 token 重放返回 `INVALID_GRANT`。`project_render_mp4_apply` 不再套用普通 host 请求的 5 秒超时，因为真实项目渲染可以合法运行更久；host 退出或崩溃仍会拒绝 pending。四个导出命令的失败 `OperationResult` 在 renderer 边界只替换当前项目根和已登记媒体源路径为 `<PROJECT>` / `<MEDIA>`，不改 status、data、revision、counts、outputs、SHA-256 或 engine/CLI/Tauri 诊断 code。
 
@@ -126,9 +126,19 @@ Rust host Slice 7 集成使用 25 与 30000/1001 两段真实合成媒体、test
 
 Slice 7 未修改 `src-tauri`、Web/PWA、SQLite schema/migration、TimelineIR、engine 导出器或 XMEML/ASS golden；Tauri 与 CLI 继续作为行为参考。门禁证据：workspace fmt 与 clippy `-D warnings` 通过；ffmpeg-full/libass 严格模式 workspace Rust 测试全过（engine 148 过、1 个既有 golden regeneration ignored；desktop service 19 过；host Slice 7 集成 2 过；Tauri 参考测试 18 过）；bindings contract 通过；Studio lint、89 项 Vitest、Studio/TypeScript/Electron build 与 host build 通过；Slices 1–7 及平台/骨架共 15 项 Playwright 全过；根 Web lint、99 项 Vitest 与 build 通过；`git diff --check` 通过。至此 Phase 4 七个纵向业务切片全部迁移完成，Phase 5 可开始默认 Electron、打包资源、签名发布与 Tauri 清理。
 
+## Phase 5A 已交付打包基础设施与资源归属
+
+模型清单已逐字节移动到 `crates/double-love-engine/resources/model-catalog-v1.json`，偏好 fixture 已归属 desktop service，512×512 图标与媒体/模型运行时占位树已归属 `studio/build/`；搬移前后 SHA-256 一致。三个 runtime 脚本已改写到 Studio 资源树，Tauri 配置通过 source→target 映射继续生成相同的 `runtime/` 与 `model-runtime/` 包内布局，debug `.app` 仍可构建；`src-tauri` 及其行为未删除。
+
+`electron-builder` v26 配置现固定 macOS 15+ arm64 的 DMG/ZIP、ASAR、应用身份、视频分类、GitHub publish 元数据与四组 `extraResources`。本次本地证明与 CI 目录包显式关闭证书自动发现，`notarize:false`，本阶段未做发布签名或公证。afterPack 为 Electron 43 配齐全部九项 Fuse V1；浏览器专用 V8 snapshot 随包生成，renderer 改由受限 `dl-app://app` 协议加载，因此 `GrantFileProtocolExtraPrivileges:false` 与 `OnlyLoadAppFromAsar:true` 下仍可启动。
+
+Electron main 在打包模式只从 `process.resourcesPath` 解析 host、协议 schema 与注入给 host 的资源根。desktop service 的导入与 MP4 渲染按 `runtime/{ffmpeg,ffprobe}` → 既有 `resources/runtime` 兼容位置 → 开发期 `FfmpegTools::discover()` 的顺序解析；新增单测冻结 bundled runtime 优先级。打包 smoke 检查 host、schema、ASAR、图标、runtime 树和九项 Fuse，再经 CDP Playwright 启动 unpacked `.app`，验证 `hostHealth` 与偏好调用均成功且隔离 userData 生效。
+
+5A 门禁证据（2026-08-22，macOS arm64）：release host、Studio/Vite/TypeScript/Electron build、无证书目录包、Fuse 工具所需的本地 ad-hoc 完整性校验和 unpacked boot smoke 通过；ffmpeg-full/libass 严格模式 workspace fmt/clippy/test 全过（engine 148 过、1 ignored；desktop service 20 过；Tauri 18 过）；bindings contract、两组 Python sidecar 测试与 py_compile 通过；Studio 89 项 Vitest、全部 16 项 Playwright、根 Web 99 项 Vitest 及 lint/build 通过；Tauri debug `.app` 与新共享资源布局通过；`git diff --check` 通过。真实 runtime 二进制、Developer ID 签名及公证按计划留给后续 5B/5C，Phase 5D 才删除 Tauri。
+
 ## Phase 4 Slice 4 已交付主轨与项目视觉设置
 
-host-neutral service 已按 Tauri 参考实现注册 `timeline_get`、`main_track_append`、`main_track_append_full`、`main_track_list`、`main_track_move`、`main_track_trim`、`main_track_split`、`main_track_remove`、`canvas_get/set`、`output_rate_get/set`、`subtitle_style_get/set` 与 `apply_default_subtitle_style`。主轨写操作直接复用 engine 函数及其未知资产、非法范围、未知片段、revision 和诊断语义；`timeline_get` 继续调用 `compile_project_timeline`，名称严格取当前项目根目录 basename 加 ` Rough Cut`。未显式设置输出帧率时仍跟随主轨首段素材，`output_rate_set(null)` 删除显式值；应用默认字幕样式仍从 service 偏好读取 `default_subtitle_style`，并与普通 `subtitle_style_set` 产生相同项目写入语义。
+host-neutral service 已按 Tauri 参考实现注册 `timeline_get`、`main_track_append`、`main_track_append_full`、`main_track_list`、`main_track_move`、`main_track_trim`、`main_track_split`、`main_track_remove`、`canvas_get/set`、`output_rate_get/set`、`subtitle_style_get/set` 与 `apply_default_subtitle_style`。主轨写操作直接复用 engine 函数及其未知资产、非法范围、未知片段、revision 和诊断语义；`timeline_get` 继续调用 `compile_project_timeline`，名称严格取当前项目根目录 basename 加 `Rough Cut`。未显式设置输出帧率时仍跟随主轨首段素材，`output_rate_set(null)` 删除显式值；应用默认字幕样式仍从 service 偏好读取 `default_subtitle_style`，并与普通 `subtitle_style_set` 产生相同项目写入语义。
 
 本切片把 Slice 2 为历史导航提前接入的 canvas/subtitle 命令纳入正式迁移范围，并为所有新迁移命令的失败诊断统一替换当前项目根目录为 `<PROJECT>`；未改变成功数据、状态、revision、输出、engine/CLI/Tauri 错误文本或任何存储与 TimelineIR 契约。host 集成测试使用两个真实合成媒体，覆盖完整/区间追加、列表、移动、裁切、拆分、删除、TimelineIR v2 顺序与帧率、canvas、输出帧率设置/清除、项目字幕样式和偏好默认样式应用，以及未打开项目、未知资产、非法范围、未知片段与 renderer 响应路径脱敏。
 

@@ -720,6 +720,25 @@ fn resolve_speaker_sidecar_dir(state: &DesktopState) -> PathBuf {
     manifest_root.join("sidecars/speaker")
 }
 
+/// Prefer the explicitly injected packaged runtime; development falls back to PATH/Homebrew.
+fn resolve_media_tools(
+    state: &DesktopState,
+) -> Result<FfmpegTools, Box<double_love_engine::Diagnostic>> {
+    if let Some(resource_dir) = state.runtime.resource_dir.as_deref() {
+        for runtime_dir in [
+            resource_dir.join("runtime"),
+            resource_dir.join("resources/runtime"),
+        ] {
+            let ffmpeg = runtime_dir.join("ffmpeg");
+            let ffprobe = runtime_dir.join("ffprobe");
+            if ffmpeg.is_file() || ffprobe.is_file() {
+                return FfmpegTools::from_paths(ffprobe, ffmpeg);
+            }
+        }
+    }
+    FfmpegTools::discover()
+}
+
 fn with_store<T>(
     state: &DesktopState,
     operation: impl FnOnce(&ProjectStore, &ProjectSummary) -> OperationResult<T>,
@@ -924,7 +943,7 @@ pub fn register_commands(registry: &mut CommandRegistry) {
                 (&params.path, "<SELECTED_MEDIA>"),
                 (&summary.root, "<PROJECT>"),
             ]);
-            let result = match FfmpegTools::discover() {
+            let result = match resolve_media_tools(state) {
                 Ok(tools) => {
                     let prepared_dir = Path::new(&summary.root).join(".doublelove/prepared");
                     engine_import_media(store, &prepared_dir, &tools, Path::new(&params.path))
@@ -1843,7 +1862,7 @@ pub fn register_commands(registry: &mut CommandRegistry) {
     registry.register("project_render_mp4_apply", |state, _events, payload| {
         let params: ProjectExportApplyParams = params(payload)?;
         result_value(with_store(state, |store, summary| {
-            let result = match FfmpegTools::discover() {
+            let result = match resolve_media_tools(state) {
                 Ok(tools) => render_project_mp4_to(
                     store,
                     &project_timeline_name(summary),
@@ -2152,6 +2171,37 @@ mod tests {
             .expect("missing app data directory should fail");
         assert_eq!(error.code, APP_DATA_DIR_REQUIRED);
         assert!(error.message.contains("--app-data-dir"));
+    }
+
+    #[test]
+    fn bundled_media_runtime_is_preferred_over_path_discovery() -> Result<(), Box<dyn Error>> {
+        let root = temp_directory("bundled-media-runtime");
+        let runtime_dir = root.join("runtime");
+        fs::create_dir_all(&runtime_dir)?;
+        let ffmpeg = runtime_dir.join("ffmpeg");
+        let ffprobe = runtime_dir.join("ffprobe");
+        fs::write(&ffmpeg, "#!/bin/sh\nexit 0\n")?;
+        fs::write(&ffprobe, "#!/bin/sh\nexit 0\n")?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&ffmpeg, fs::Permissions::from_mode(0o755))?;
+            fs::set_permissions(&ffprobe, fs::Permissions::from_mode(0o755))?;
+        }
+
+        let state = DesktopState::new(
+            root.join("app-data"),
+            DesktopRuntimeConfig {
+                resource_dir: Some(root.clone()),
+                ..DesktopRuntimeConfig::default()
+            },
+        );
+        let tools = resolve_media_tools(&state).expect("resolve bundled media runtime");
+
+        assert_eq!(tools.ffmpeg, ffmpeg);
+        assert_eq!(tools.ffprobe, ffprobe);
+        fs::remove_dir_all(root)?;
+        Ok(())
     }
 
     #[test]

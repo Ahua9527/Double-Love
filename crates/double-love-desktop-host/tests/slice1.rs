@@ -283,7 +283,7 @@ fn corrupt_preferences_recover_with_warning_and_backup() {
     fs::create_dir_all(&app_data).expect("app data");
     fs::write(
         app_data.join("preferences.json"),
-        include_bytes!("../../../src-tauri/tests/fixtures/preferences/corrupt.json"),
+        include_bytes!("../../double-love-desktop-service/tests/fixtures/preferences/corrupt.json"),
     )
     .expect("corrupt fixture");
     let mut host = HostProcess::spawn(&app_data);

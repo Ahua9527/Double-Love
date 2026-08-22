@@ -16,6 +16,9 @@
     "test:watch": "vitest",
     "studio:dev": "pnpm --dir studio dev",
     "studio:build": "pnpm --dir studio build",
+    "studio:preview:vite": "pnpm --dir studio preview:vite",
+    "studio:pack:dir": "pnpm --dir studio pack:dir",
+    "studio:pack": "pnpm --dir studio pack",
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build",
     "tauri:release": "bash scripts/verify-release-runtime.sh && tauri build"

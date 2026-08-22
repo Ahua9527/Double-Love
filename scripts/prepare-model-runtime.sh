@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Copy prebuilt, relocatable local model runtimes into the Tauri resource tree before a release.
+# Copy prebuilt, relocatable local model runtimes into the Studio resource tree before a release.
 # This is intentionally a release-machine step: end users should not need Homebrew or Python.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-TARGET="$ROOT/src-tauri/resources/model-runtime"
+TARGET="$ROOT/studio/build/model-runtime"
 ASR_SOURCE="${DOUBLELOVE_ASR_RUNTIME_SOURCE:-}"
 SPEAKER_SOURCE="${DOUBLELOVE_SPEAKER_RUNTIME_SOURCE:-}"
 

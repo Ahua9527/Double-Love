@@ -1,0 +1,43 @@
+{
+  "app_preferences": {
+    "schema_version": 0,
+    "theme": "dark"
+  },
+  "expected_after_migration": {
+    "schema_version": 1,
+    "theme": "dark",
+    "restore_last_project": true,
+    "timecode_precision": "frame",
+    "transcript_section_tint": true,
+    "cjk_spacing": true,
+    "default_subtitle_style": {
+      "font_family": "PingFang SC",
+      "font_weight": 600,
+      "font_size": 52.0,
+      "text_color": "#FFFFFF",
+      "outline_color": "#000000",
+      "outline_width": 3.0,
+      "shadow_color": "#00000099",
+      "shadow_offset_x": 0.0,
+      "shadow_offset_y": 3.0,
+      "shadow_blur": 6.0,
+      "background_color": "#00000000",
+      "background_radius": 12.0,
+      "background_padding_x": 16.0,
+      "background_padding_y": 8.0,
+      "position_x": 0.5,
+      "position_y": 0.88,
+      "max_width_ratio": 0.82,
+      "max_lines": 2,
+      "target_characters_per_line": 22,
+      "show_speaker": false,
+      "cjk_spacing": true
+    },
+    "model_root": "/tmp/double-love/default-models",
+    "model_endpoint": "https://huggingface.co",
+    "default_asr_model": "qwen3-asr-0.6b",
+    "onboarding_version": 1,
+    "onboarding_completed": false,
+    "recent_projects": []
+  }
+}

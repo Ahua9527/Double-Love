@@ -264,9 +264,7 @@ impl ModelCatalog {
 
     /// 加载随源码固定的清单；远程文件不能覆盖它。
     pub fn builtin() -> Result<Self, ModelError> {
-        Self::from_json(include_str!(
-            "../../../src-tauri/resources/model-catalog-v1.json"
-        ))
+        Self::from_json(include_str!("../resources/model-catalog-v1.json"))
     }
 
     pub fn get(&self, model_id: &str) -> Option<&ModelDescriptor> {

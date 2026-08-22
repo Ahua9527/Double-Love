@@ -971,7 +971,7 @@ mod tests {
 
     #[test]
     fn tauri_v1_fixture_decodes_to_the_same_complete_values() {
-        let bytes = include_bytes!("../../../src-tauri/tests/fixtures/preferences/v1.json");
+        let bytes = include_bytes!("../tests/fixtures/preferences/v1.json");
         let fixture: HashMap<String, Value> =
             serde_json::from_slice(bytes).expect("v1 fixture json");
         let expected: AppPreferencesV1 =
@@ -992,7 +992,7 @@ mod tests {
 
     #[test]
     fn tauri_partial_v0_fixture_matches_the_frozen_migration_result() {
-        let bytes = include_bytes!("../../../src-tauri/tests/fixtures/preferences/partial-v0.json");
+        let bytes = include_bytes!("../tests/fixtures/preferences/partial-v0.json");
         let fixture: HashMap<String, Value> =
             serde_json::from_slice(bytes).expect("partial fixture json");
         let expected: AppPreferencesV1 = serde_json::from_value(
@@ -1015,7 +1015,7 @@ mod tests {
         let defaults = default_preferences_for_root("/tmp/double-love/default-models");
         assert!(matches!(
             decode_store_bytes(
-                include_bytes!("../../../src-tauri/tests/fixtures/preferences/corrupt.json"),
+                include_bytes!("../tests/fixtures/preferences/corrupt.json"),
                 &defaults
             ),
             Err(PreferencesError::Decode(_))
@@ -1028,7 +1028,7 @@ mod tests {
         fs::create_dir_all(&app_data).expect("app data");
         fs::write(
             app_data.join(STORE_FILE),
-            include_bytes!("../../../src-tauri/tests/fixtures/preferences/corrupt.json"),
+            include_bytes!("../tests/fixtures/preferences/corrupt.json"),
         )
         .expect("corrupt fixture");
 
