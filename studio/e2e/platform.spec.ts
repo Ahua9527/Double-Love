@@ -79,7 +79,16 @@ test('uses opaque, one-time, kind-bound path grants through the full host chain'
 
   expect(result.mediaGrant).toEqual({ token: expect.any(String) })
   expect(result.projectGrant).toEqual({ token: expect.any(String) })
-  expect(result.first).toMatchObject({ status: 'error', error: { code: 'UNKNOWN_COMMAND' } })
+  expect(result.first).toMatchObject({
+    status: 'ok',
+    result: {
+      type: 'invoke',
+      data: {
+        status: 'failed',
+        diagnostics: [expect.objectContaining({ code: 'PROJECT_NOT_OPEN' })],
+      },
+    },
+  })
   expect(result.replay).toMatchObject({ status: 'error', error: { code: 'INVALID_GRANT' } })
   expect(result.wrongKind).toMatchObject({ status: 'error', error: { code: 'INVALID_GRANT' } })
   expect(result.missing).toMatchObject({ status: 'error', error: { code: 'INVALID_GRANT' } })
@@ -136,12 +145,19 @@ test('restricts event subscriptions and returns unsubscribe for allowed events',
   expect(result).toEqual({ disallowedRejected: true, allowedType: 'function' })
 })
 
-test('surfaces rejection of an unknown invoke command', async () => {
-  // assets_list is renderer-allowlisted but not yet implemented in the host (Phase 4),
-  // so it proves renderer-allowed names reach the host and surface its error.
+test('returns an operation failure for media commands without an open project', async () => {
   const response = await mainPage.evaluate(() =>
     window.doubleLove.invoke('assets_list', {}))
-  expect(response).toMatchObject({ status: 'error', error: { code: 'UNKNOWN_COMMAND' } })
+  expect(response).toMatchObject({
+    status: 'ok',
+    result: {
+      type: 'invoke',
+      data: {
+        status: 'failed',
+        diagnostics: [expect.objectContaining({ code: 'PROJECT_NOT_OPEN' })],
+      },
+    },
+  })
 })
 
 test('blocks renderer access to main-only host commands', async () => {

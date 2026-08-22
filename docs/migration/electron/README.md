@@ -25,7 +25,7 @@
 | 3C React renderer 目录整理 | **已完成** | 纯移动至 `studio/src/renderer/`；Tauri/Electron 构建与测试行为不变 | 直接 revert 目录移动与配置路径更新 |
 | 3D renderer 平台接缝 | **已完成** | renderer 运行时选择 Electron/Tauri/preview；Electron host 错误归一为既有 `OperationResult.failed`；本地文件无 bridge 时 fail closed | Tauri adapter 保留，revert renderer 平台接缝批次 |
 | 3 平台基础阶段（3A–3D） | **已完成** | service/host、安全边界、renderer 目录与平台 adapter 均已就位；Phase 4 可按纵向切片迁移业务命令 | 保留 Tauri adapter，按 3D→3A 逆序回退 |
-| 4 纵向业务切片迁移（7 片） | **进行中（Slice 1–2 已完成）** | 每片：Electron E2E 正常+失败/取消/恢复路径；Tauri 对照一致 | 每片独立提交，只 revert 当前切片 |
+| 4 纵向业务切片迁移（7 片） | **进行中（Slice 1–3 已完成）** | 每片：Electron E2E 正常+失败/取消/恢复路径；Tauri 对照一致 | 每片独立提交，只 revert 当前切片 |
 | 5 默认 Electron、打包发布、清理 | 未开始 | 功能矩阵 100%；签名公证门禁通过 | 保留最后可构建 Tauri commit |
 | 6 全量验收与回退演练 | 未开始 | 见计划完成判定 | 文档化手动回退 |
 
@@ -91,6 +91,16 @@ host-neutral service 已按 Tauri 参考实现注册 `project_create`、`project
 Rust host 集成覆盖创建、打开、同 id 重开与进程重启、revision/history、canvas mutation、undo/redo、restore 新 revision、未打开、非法创建/打开路径与最近项目；service 并发回归测试覆盖进行中的项目操作会阻塞项目替换，且替换完成后的项目与历史一致。Electron Playwright 通过一次性目录 grant 创建临时项目，验证持久化默认字幕样式及样式写入 revision/history，再覆盖 canvas undo/redo；随后使用现有 `double-love` CLI 导入合成媒体并追加主轨，只验证 host 可观察到外部 revision/history，不定义外部写入后的 undo 冲突策略，最后覆盖 restore、失败打开保留旧状态与重启同 id 打开。
 
 Slice 2 未修改 `src-tauri`、Web/PWA、SQLite schema/migration、manifest 或导出格式；Tauri 继续作为行为参考。门禁证据：workspace fmt 与 clippy `-D warnings` 通过；严格工具模式 workspace Rust 测试全过（engine 148 过、1 个既有 golden regeneration ignored；host Slice 2 集成 1 过；Tauri 参考测试 18 过）；bindings contract 通过；Studio lint、88 项 Vitest、Studio Vite build、独立 `tsc -b` 与 Electron build 通过；全部 9 项 Playwright 通过；根 Web lint、99 项 Vitest 与 build 通过；`git diff --check` 通过。
+
+## Phase 4 Slice 3 已交付媒体导入与项目资产播放
+
+host-neutral service 已按 Tauri 参考实现注册 `import_media` 与 `assets_list`：命令必须先有打开项目，媒体工具继续由 engine `FfmpegTools::discover` 按环境变量 → `PATH` → Homebrew 常见位置发现，准备音频仍写入 `<project.root>/.doublelove/prepared`。导入、重复导入、缺失文件、不支持帧率、工具缺失与存储错误继续复用 engine 的状态、诊断 code、revision 与 data；仅 Electron service 返回 renderer 前把诊断文本中的所选媒体路径和项目根目录替换为 `<SELECTED_MEDIA>` / `<PROJECT>`，engine、CLI 与 Tauri 参考行为不变。开发运行时发现已验证，正式打包内 ffmpeg/ffprobe 的资源解析与复制仍明确留在 Phase 5。
+
+Electron main-only 命令 `resolve_media_asset` 只在当前项目 Store 中按 `asset_id` 查找资产，且源文件仍为普通文件时才返回路径；未知资产或已移除源文件返回 `MEDIA_ASSET_NOT_FOUND`。该命令不在 `RENDERER_COMMANDS`，preload 也没有专用暴露；renderer 可见的 `import_media` / `assets_list` 响应不含媒体路径。既有 `dl-media` handler 和 GET/HEAD/单 Range 行为未改，TimelinePreview 的当前视频与下一源预载统一从旧 `media://localhost/<id>` 切换到批准的 `dl-media://asset/<id>`。
+
+Rust host 集成测试在临时目录生成真实合成 MP4，覆盖未打开项目、成功导入与 `prepared` 状态、重复诊断、资产列表、不支持帧率、缺失文件、合成 ffprobe 失败、main-only 解析成功及未知/源文件缺失，并断言成功与失败的 renderer 可达响应都不含媒体或项目绝对路径、资产摘要无路径字段且 allowlist 不含解析命令。Slice 3 Playwright 同样经目录与媒体一次性 grant 导入真实合成 MP4，验证全量 200、单 Range 206 与精确 `Content-Range`、未知及任意磁盘路径 URL 404、renderer 解析命令被拒绝，以及缺失源文件和 ffprobe 失败均不泄露绝对路径且项目仍可继续列出资产。组件单测冻结新 scheme，生产 renderer 已无 `media://localhost`。
+
+Slice 3 未修改 `src-tauri`、Web/PWA、SQLite schema/migration、manifest、导出格式或既有 Electron `dl-media` 协议实现；Tauri 继续作为行为参考。门禁证据：workspace fmt 与 clippy `-D warnings` 通过；严格工具模式 workspace Rust 测试全过；bindings contract 通过；Studio lint、89 项 Vitest、Studio Vite build、独立 `tsc -b` 与 Electron build 通过；Slices 1–3 全部 10 项 Playwright 通过；根 Web lint、99 项 Vitest 与 build 通过；`git diff --check` 通过。
 
 ## Phase 3C 已交付 React renderer 目录整理
 

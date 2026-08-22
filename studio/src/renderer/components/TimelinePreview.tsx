@@ -5,6 +5,7 @@ import type { SubtitleCue } from '../../../../bindings/SubtitleCue'
 import type { SubtitleStyle } from '../../../../bindings/SubtitleStyle'
 import type { TimelineIRv2 } from '../../../../bindings/TimelineIRv2'
 import { frameRateFps, num } from '../utils'
+import { mediaAssetUrl } from '../media-url'
 
 interface TimelinePreviewProps {
   timeline: TimelineIRv2 | null
@@ -118,7 +119,7 @@ export function TimelinePreview(props: TimelinePreviewProps) {
       <video
         key={clip.id}
         ref={videoRef}
-        src={'media://localhost/' + source.asset_id}
+        src={mediaAssetUrl(source.asset_id)}
         preload="auto"
         className="studio-timeline-preview-media"
         style={{
@@ -161,7 +162,7 @@ export function TimelinePreview(props: TimelinePreviewProps) {
           onPlayState(false)
         }}
       />
-      {nextSource && <video className="studio-next-source-preload" src={'media://localhost/' + nextSource.asset_id} preload="auto" aria-hidden="true" tabIndex={-1} />}
+      {nextSource && <video className="studio-next-source-preload" src={mediaAssetUrl(nextSource.asset_id)} preload="auto" aria-hidden="true" tabIndex={-1} />}
       {cueText && <div className="studio-subtitle-preview" style={overlayStyle}>{cueText}</div>}
       <div className="studio-preview-label">{source.display_name}</div>
     </div>

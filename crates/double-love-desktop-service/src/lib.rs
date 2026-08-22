@@ -6,8 +6,9 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use double_love_engine::{
-    CanvasSpec, Diagnostic, DiagnosticLevel, OperationResult, ProjectStore, ProjectSummary,
-    SubtitleStyle, TaskRegistry, create_project, open_project,
+    CanvasSpec, Diagnostic, DiagnosticLevel, FfmpegTools, MediaAssetSummary, OperationResult,
+    ProjectStore, ProjectSummary, SubtitleStyle, TaskRegistry, create_project,
+    import_media as engine_import_media, list_media_assets, open_project,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -258,8 +259,54 @@ fn params<T: for<'de> Deserialize<'de>>(payload: Value) -> Result<T, DesktopServ
         .map_err(|error| DesktopServiceError::invalid_params(error.to_string()))
 }
 
+fn renderer_path_replacements(paths: &[(&str, &'static str)]) -> Vec<(String, &'static str)> {
+    let mut replacements = Vec::with_capacity(paths.len() * 2);
+    for &(path, placeholder) in paths {
+        if path.is_empty() {
+            continue;
+        }
+        if let Ok(canonical) = Path::new(path).canonicalize() {
+            replacements.push((canonical.to_string_lossy().into_owned(), placeholder));
+        }
+        replacements.push((path.to_string(), placeholder));
+    }
+    replacements
+}
+
+fn sanitize_renderer_diagnostics<T>(
+    mut result: OperationResult<T>,
+    replacements: &[(String, &str)],
+) -> OperationResult<T> {
+    for diagnostic in &mut result.diagnostics {
+        sanitize_renderer_text(&mut diagnostic.cause, replacements);
+        sanitize_renderer_text(&mut diagnostic.impact, replacements);
+        if let Some(action) = &mut diagnostic.suggested_action {
+            sanitize_renderer_text(action, replacements);
+        }
+    }
+    result
+}
+
+fn sanitize_renderer_text(text: &mut String, replacements: &[(String, &str)]) {
+    for (sensitive, placeholder) in replacements {
+        if !sensitive.is_empty() && text.contains(sensitive) {
+            *text = text.replace(sensitive, placeholder);
+        }
+    }
+}
+
 #[derive(Deserialize)]
 struct ProjectPathParams {
+    path: String,
+}
+
+#[derive(Deserialize)]
+struct ResolveMediaAssetParams {
+    asset_id: String,
+}
+
+#[derive(Serialize)]
+struct ResolvedMediaAsset {
     path: String,
 }
 
@@ -437,6 +484,51 @@ pub fn register_commands(registry: &mut CommandRegistry) {
             Err(error) => OperationResult::failed("PROJECT_OPEN_FAILED", error.to_string()),
         };
         result_value(result)
+    });
+    registry.register("import_media", |state, _events, payload| {
+        let params: ProjectPathParams = params(payload)?;
+        result_value(with_store(state, |store, summary| {
+            let replacements = renderer_path_replacements(&[
+                (&params.path, "<SELECTED_MEDIA>"),
+                (&summary.root, "<PROJECT>"),
+            ]);
+            let result = match FfmpegTools::discover() {
+                Ok(tools) => {
+                    let prepared_dir = Path::new(&summary.root).join(".doublelove/prepared");
+                    engine_import_media(store, &prepared_dir, &tools, Path::new(&params.path))
+                }
+                Err(diagnostic) => {
+                    let mut result: OperationResult<MediaAssetSummary> =
+                        OperationResult::failed(&diagnostic.code, &diagnostic.cause);
+                    result.diagnostics[0].suggested_action = diagnostic.suggested_action.clone();
+                    result
+                }
+            };
+            sanitize_renderer_diagnostics(result, &replacements)
+        }))
+    });
+    registry.register("assets_list", |state, _events, _payload| {
+        result_value(with_store(state, |store, summary| {
+            let replacements = renderer_path_replacements(&[(&summary.root, "<PROJECT>")]);
+            sanitize_renderer_diagnostics(list_media_assets(store), &replacements)
+        }))
+    });
+    registry.register("resolve_media_asset", |state, _events, payload| {
+        let params: ResolveMediaAssetParams = params(payload)?;
+        result_value(with_store(state, |store, _| {
+            match store.media_asset(&params.asset_id) {
+                Ok(Some(asset)) if Path::new(&asset.original_path).is_file() => {
+                    OperationResult::success(ResolvedMediaAsset {
+                        path: asset.original_path,
+                    })
+                }
+                Ok(Some(_)) | Ok(None) => OperationResult::failed(
+                    "MEDIA_ASSET_NOT_FOUND",
+                    "媒体资产不存在或源文件已不可用。",
+                ),
+                Err(error) => OperationResult::failed("STORAGE_ERROR", error.to_string()),
+            }
+        }))
     });
     registry.register("project_revision", |state, _events, _payload| {
         result_value(with_store(state, |store, _| match store.revision() {
@@ -949,6 +1041,40 @@ mod tests {
             .expect("missing app data directory should fail");
         assert_eq!(error.code, APP_DATA_DIR_REQUIRED);
         assert!(error.message.contains("--app-data-dir"));
+    }
+
+    #[test]
+    fn renderer_diagnostic_sanitization_preserves_the_operation_contract() {
+        let selected = "/private/source/selected.mp4";
+        let project = "/private/project";
+        let mut original: OperationResult<Value> =
+            OperationResult::failed("MEDIA_PROBE_FAILED", format!("probe {selected}"));
+        original.revision = Some(17);
+        original.data = Some(serde_json::json!({"unchanged": selected}));
+        original.diagnostics[0].impact = format!("impact {project}");
+        original.diagnostics[0].suggested_action = Some(format!("retry {selected} from {project}"));
+        let original_counts = original.counts.clone();
+        let original_data = original.data.clone();
+
+        let sanitized = sanitize_renderer_diagnostics(
+            original,
+            &renderer_path_replacements(&[(selected, "<SELECTED_MEDIA>"), (project, "<PROJECT>")]),
+        );
+
+        assert_eq!(
+            sanitized.status,
+            double_love_engine::OperationStatus::Failed
+        );
+        assert_eq!(sanitized.revision, Some(17));
+        assert_eq!(sanitized.data, original_data);
+        assert_eq!(sanitized.counts, original_counts);
+        assert_eq!(sanitized.diagnostics[0].code, "MEDIA_PROBE_FAILED");
+        assert_eq!(sanitized.diagnostics[0].cause, "probe <SELECTED_MEDIA>");
+        assert_eq!(sanitized.diagnostics[0].impact, "impact <PROJECT>");
+        assert_eq!(
+            sanitized.diagnostics[0].suggested_action.as_deref(),
+            Some("retry <SELECTED_MEDIA> from <PROJECT>")
+        );
     }
 
     #[test]
