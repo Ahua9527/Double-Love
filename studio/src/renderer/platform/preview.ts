@@ -1,4 +1,4 @@
-export * from '../tauri'
+export * from './electron'
 
 export const isDesktop = false
 export const platformKind = 'preview' as const

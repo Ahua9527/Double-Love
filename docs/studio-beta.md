@@ -28,9 +28,10 @@ Double Love Studio 是一个本地运行的转录驱动粗剪工作台：
 ## 本地开发
 
     pnpm install
-    pnpm --dir studio build
+    pnpm --dir studio install
+    cargo build -p double-love-desktop-host
     cargo test --workspace --offline
-    pnpm tauri:dev
+    pnpm --dir studio dev
 
 模型运行时单独准备；这一步只发生在开发或发布机器上：
 
@@ -57,9 +58,14 @@ model-verify 会强制离线加载本地权重。缺少权重时它只报错，�
 
     bash scripts/prepare-media-runtime.sh
     bash scripts/prepare-model-runtime.sh
-    pnpm tauri:release
+    bash scripts/verify-release-runtime.sh
+    cargo build --release -p double-love-desktop-host --locked
+    pnpm --dir studio electron:build
+    CSC_IDENTITY_AUTO_DISCOVERY=false pnpm --dir studio pack:dir
+    bash scripts/migration/package-smoke.sh
+    pnpm --dir studio pack
 
-tauri:release 会在打包前运行 verify-release-runtime.sh。没有 libass 或模型运行时会直接失败，不能把依赖 Homebrew/Python 的开发包当成可安装测试版。
+`verify-release-runtime.sh` 必须在 Electron 打包前通过。没有 libass 或模型运行时会直接失败，不能把依赖 Homebrew/Python 的开发包当成可安装测试版；目录包 smoke 通过后再生成候选 DMG/ZIP。
 
 ## NLE 人工验收
 

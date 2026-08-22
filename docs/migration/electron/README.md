@@ -1,5 +1,7 @@
 # Tauri → Electron 迁移：阶段账本与文档索引
 
+> **归档状态（Phase 5D 已完成）**：本目录保存迁移决策、旧路径、旧命令与对照证据；它们不是现行开发或发布指导。当前操作入口见 `docs/studio-foundation.md` 与 `docs/studio-beta.md`。
+
 范围：仅 Studio 桌面端。Web/PWA 与 `double-love` CLI 对外行为不变。首个 Electron 正式版为 Studio 0.2.0（macOS 15+ / arm64，bundle id `space.ahua.doublelove.studio` 不变）。
 
 ## 文档索引
@@ -26,10 +28,11 @@
 | 3D renderer 平台接缝 | **已完成** | renderer 运行时选择 Electron/Tauri/preview；Electron host 错误归一为既有 `OperationResult.failed`；本地文件无 bridge 时 fail closed | Tauri adapter 保留，revert renderer 平台接缝批次 |
 | 3 平台基础阶段（3A–3D） | **已完成** | service/host、安全边界、renderer 目录与平台 adapter 均已就位；Phase 4 可按纵向切片迁移业务命令 | 保留 Tauri adapter，按 3D→3A 逆序回退 |
 | 4 纵向业务切片迁移（7 片） | **已完成（Slice 1–7）** | 每片：Electron E2E 正常+失败/取消/恢复路径；Tauri 对照一致 | 每片独立提交，只 revert 当前切片 |
-| 5 默认 Electron、打包发布、清理 | **进行中（5A 打包基础设施；5B 更新链；5C 一次性数据备份）** | 功能矩阵 100%；签名公证门禁通过 | 保留最后可构建 Tauri commit |
+| 5 默认 Electron、打包发布、清理 | **进行中（5A–5D 已完成；发布机签名/公证门禁待执行）** | 功能矩阵 100%；签名公证门禁通过 | Phase 5D 前最后可构建回退点 `c6d43fb` |
+| 5D 旧桌面容器删除 | **已完成** | renderer/Cargo/npm/CI/基线脚本去旧依赖；Electron package + smoke + 全量 Playwright；workspace 依赖树无旧容器 crate；残留只在本目录历史归档 | 回退到 `c6d43fb`，不覆盖用户一次性备份 |
 | 6 全量验收与回退演练 | 未开始 | 见计划完成判定 | 文档化手动回退 |
 
-## 当前基线证据（2026-08-22，本机 macOS 15.7.7 arm64，Node 24.14.1 / pnpm 10.33.0 / Rust 1.97.1）
+## 历史基线证据（2026-08-22，本机 macOS 15.7.7 arm64，Node 24.14.1 / pnpm 10.33.0 / Rust 1.97.1）
 
 | 门禁 | 结果 |
 | --- | --- |
@@ -44,7 +47,7 @@
 
 ## 基线脚本
 
-`scripts/migration/baseline.sh`：幂等采集环境摘要、门禁命令与退出码、测试/skip 摘要、包体积到忽略目录（默认 `evidence/migration-baseline/`，已 gitignore）。`--fast` 把 Tauri 打包记为 `SKIP`，结果为 `verdict=PASS_FAST`、`completeness=INCOMPLETE`，不能冒充完整 PASS。任一必需门禁（含 ffmpeg 精确 `ass` filter）失败则以非零退出。raw log 会把实际 repo root 与 HOME 替换为占位符，Python bytecode cache 也留在该次 evidence 目录内。
+`scripts/migration/baseline.sh`：幂等采集环境摘要、门禁命令与退出码、测试/skip 摘要、包体积到忽略目录（默认 `evidence/migration-baseline/`，已 gitignore）。完整模式构建 release host 与 Electron 输出，再执行 `pack:dir` 和 `package-smoke.sh`；`--fast` 将这四项记为 `SKIP`，结果为 `verdict=PASS_FAST`、`completeness=INCOMPLETE`，不能冒充完整 PASS。任一必需门禁（含 ffmpeg 精确 `ass` filter）失败则以非零退出。raw log 会把实际 repo root 与 HOME 替换为占位符，Python bytecode cache 也留在该次 evidence 目录内；包体积记录 Web `dist`、Electron `studio/out` 与 unpacked `.app`。
 
 ## Phase 2A 已交付 fixture 与门禁
 
@@ -76,7 +79,7 @@ Playwright Electron smoke 从 `out/main` 启动本地文件 renderer，使用临
 
 `double-love-desktop-service` 已无 Tauri 依赖地迁入 schema v1 偏好、v0 合并迁移、损坏备份恢复、最近项目、系统画像与引导状态；`preferences.json` 继续使用唯一顶层键 `app_preferences`，写入权限为 `0600`。默认 ASR 推荐仍按 16 GiB 内存阈值选择，模型目录仍为应用数据目录下的 `models`。
 
-host 现通过统一 `service::register_commands` 注册 Slice 1 命令，偏好变更继续广播 `dl://preferences-changed`。只读模型清单按当前偏好目录惰性初始化 `ModelManager`，内置 `silero-vad` 自动标记为已安装；模型目录变更先复制、校验并切换已安装模型，失败时不持久化新目录。本切片不迁移下载生命周期，也未修改 `src-tauri` 参考实现。
+host 现通过统一 `service::register_commands` 注册 Slice 1 命令，偏好变更继续广播 `dl://preferences-changed`。只读模型清单按当前偏好目录惰性初始化 `ModelManager`，内置 `silero-vad` 自动标记为已安装；模型目录变更先复制、校验并切换已安装模型，失败时不持久化新目录。本切片不迁移下载生命周期，也未修改旧容器目录参考实现。
 
 对照证据复用 `crates/double-love-desktop-service/tests/fixtures/preferences/{v1,partial-v0,corrupt}.json`：service 测试断言完整 v1 与冻结的 v0→v1 结果逐字段相等，并覆盖磁盘损坏恢复。host 集成测试以临时 `--app-data-dir` 覆盖默认往返、更新与事件、非法 endpoint、模型目录迁移失败保持旧偏好、最近项目 20 条上限/forget 错误、引导 complete/reset、arm64 系统画像及内置模型状态。Electron Playwright 使用同一临时 userData 覆盖偏好事件与落盘、重启持久化、启动损坏恢复、非法 endpoint、引导 reset 和系统画像。
 
@@ -90,7 +93,7 @@ host-neutral service 已按 Tauri 参考实现注册 `project_create`、`project
 
 Rust host 集成覆盖创建、打开、同 id 重开与进程重启、revision/history、canvas mutation、undo/redo、restore 新 revision、未打开、非法创建/打开路径与最近项目；service 并发回归测试覆盖进行中的项目操作会阻塞项目替换，且替换完成后的项目与历史一致。Electron Playwright 通过一次性目录 grant 创建临时项目，验证持久化默认字幕样式及样式写入 revision/history，再覆盖 canvas undo/redo；随后使用现有 `double-love` CLI 导入合成媒体并追加主轨，只验证 host 可观察到外部 revision/history，不定义外部写入后的 undo 冲突策略，最后覆盖 restore、失败打开保留旧状态与重启同 id 打开。
 
-Slice 2 未修改 `src-tauri`、Web/PWA、SQLite schema/migration、manifest 或导出格式；Tauri 继续作为行为参考。门禁证据：workspace fmt 与 clippy `-D warnings` 通过；严格工具模式 workspace Rust 测试全过（engine 148 过、1 个既有 golden regeneration ignored；host Slice 2 集成 1 过；Tauri 参考测试 18 过）；bindings contract 通过；Studio lint、88 项 Vitest、Studio Vite build、独立 `tsc -b` 与 Electron build 通过；全部 9 项 Playwright 通过；根 Web lint、99 项 Vitest 与 build 通过；`git diff --check` 通过。
+Slice 2 未修改旧容器目录、Web/PWA、SQLite schema/migration、manifest 或导出格式；Tauri 继续作为行为参考。门禁证据：workspace fmt 与 clippy `-D warnings` 通过；严格工具模式 workspace Rust 测试全过（engine 148 过、1 个既有 golden regeneration ignored；host Slice 2 集成 1 过；Tauri 参考测试 18 过）；bindings contract 通过；Studio lint、88 项 Vitest、Studio Vite build、独立 `tsc -b` 与 Electron build 通过；全部 9 项 Playwright 通过；根 Web lint、99 项 Vitest 与 build 通过；`git diff --check` 通过。
 
 ## Phase 4 Slice 5 已交付模型生命周期、转录编辑与单素材粗剪
 
@@ -100,7 +103,7 @@ Electron 的 reveal 命令只让 service 返回其自身解析的模型目录或
 
 Rust service 的本机 HTTP fixture 使用临时合成清单数据（不下载真实权重、无外网），覆盖依赖顺序安装、进度/状态事件、暂停保留 staging、零字节取消、Range 续传、恢复安装、哈希损坏转 corrupt、verify、依赖删除保护和 doctor。host Slice 5 集成测试另覆盖模型/日志路径返回、合成媒体导入、mock 转录进度与终态、路径型 sidecar 错误脱敏、默认 120ms omit、restore、preview 不写、apply 写 XMEML/SHA-256/outputs/export history、`ROUGH_CUT_EMPTY` 阻断，以及取消候选不切换 active transcript。Electron Playwright 使用预置的合成 installed 状态（不含权重）和 test-only mock host 配置，覆盖 reveal 返回值不含路径，以及同一转录、脱敏事件、编辑、export grant、文件/SHA-256、空剪阻断与取消路径；因生产 host 的偏好 endpoint 校验按设计不允许非测试编译的 HTTP，Electron E2E 不伪造本地下载，完整下载生命周期由 Rust fixture 覆盖。
 
-Slice 5 未修改 `src-tauri`、Web/PWA、模型清单 JSON、偏好 endpoint 校验、SQLite schema/migration、sidecar 协议或导出格式；Tauri 继续作为行为参考。门禁证据：workspace fmt 与 clippy `-D warnings` 通过；严格工具模式 workspace Rust 测试全过（engine 148 过、1 个既有 golden regeneration ignored；desktop service 17 过；host Slice 5 集成 2 过；Tauri 参考测试 18 过）；bindings contract 通过；Studio lint、89 项 Vitest、Studio Vite build、独立 `tsc -b`、Electron build 与 host build 通过；Slices 1–5 全部 13 项 Playwright 通过；根 Web lint、99 项 Vitest 与 build 通过；`git diff --check` 通过。
+Slice 5 未修改旧容器目录、Web/PWA、模型清单 JSON、偏好 endpoint 校验、SQLite schema/migration、sidecar 协议或导出格式；Tauri 继续作为行为参考。门禁证据：workspace fmt 与 clippy `-D warnings` 通过；严格工具模式 workspace Rust 测试全过（engine 148 过、1 个既有 golden regeneration ignored；desktop service 17 过；host Slice 5 集成 2 过；Tauri 参考测试 18 过）；bindings contract 通过；Studio lint、89 项 Vitest、Studio Vite build、独立 `tsc -b`、Electron build 与 host build 通过；Slices 1–5 全部 13 项 Playwright 通过；根 Web lint、99 项 Vitest 与 build 通过；`git diff --check` 通过。
 
 ## Phase 4 Slice 6 已交付说话人分离与项目内身份
 
@@ -114,7 +117,7 @@ Electron 的 Agent 预览边界会在返回前仅替换 payload 字符串中当�
 
 Rust host Slice 6 集成以合成媒体和预置的 ASR/aligner/Silero/WeSpeaker installed 状态运行既有 ASR 与 speaker mock：覆盖模型/项目门禁、两素材分离、任务成功终态、结果、名称候选、仅目标说话人的 Agent payload 与路径脱敏、姓名确认、拒绝确认不增 revision、合并确认、逐词归属改写、可见列表和旧身份 `merged_into` 留存；同时检查项目 DB 中存在 embedding，而所有 host event/response 和项目日志均无向量形状或 embedding 字段。额外 host 边界测试在无 test flag 且预置两个 mock 环境变量时验证 speaker 子进程观察到 `mock=false`，并由显式 test mock 注入含 12 个声纹浮点值的畸形响应，验证 `dl://progress` 只保留 `<REDACTED>`。Electron Playwright Slice 6 经真实 path grant 创建项目并导入两段合成媒体，复用 Slice 5 mock 转录，再覆盖分离、改名后的转录说话人显示映射、跨素材合并、Agent payload 路径脱敏，以及全部捕获事件无结构化向量、浮点数组形状字符串、项目根或媒体源路径。
 
-Slice 6 未修改 `src-tauri`、Web/PWA、SQLite schema/migration、bindings/DTO schema、host 或 sidecar 协议、导出格式和既有 speaker 隐私边界；Tauri 继续作为行为参考。门禁证据：workspace fmt 与 clippy `-D warnings` 通过；严格工具模式 workspace Rust 测试全过（engine 148 过、1 个既有 golden regeneration ignored；desktop service 19 过；host Slice 6 集成 3 过；Tauri 参考测试 18 过）；bindings contract 通过；Studio lint、89 项 Vitest、Studio Vite build、独立 `tsc -b`、Electron build 与 host build 通过；Slices 1–6 及平台/骨架共 14 项 Playwright 全过；根 Web lint、99 项 Vitest 与 build 通过；`git diff --check` 通过。
+Slice 6 未修改旧容器目录、Web/PWA、SQLite schema/migration、bindings/DTO schema、host 或 sidecar 协议、导出格式和既有 speaker 隐私边界；Tauri 继续作为行为参考。门禁证据：workspace fmt 与 clippy `-D warnings` 通过；严格工具模式 workspace Rust 测试全过（engine 148 过、1 个既有 golden regeneration ignored；desktop service 19 过；host Slice 6 集成 3 过；Tauri 参考测试 18 过）；bindings contract 通过；Studio lint、89 项 Vitest、Studio Vite build、独立 `tsc -b`、Electron build 与 host build 通过；Slices 1–6 及平台/骨架共 14 项 Playwright 全过；根 Web lint、99 项 Vitest 与 build 通过；`git diff --check` 通过。
 
 ## Phase 4 Slice 7 已交付项目级导出（Phase 4 完成）
 
@@ -124,11 +127,11 @@ Electron main 已预先限定这三个 apply 只能消费一次性 `export-save`
 
 Rust host Slice 7 集成使用 25 与 30000/1001 两段真实合成媒体、test-only mock 转录、主轨和 omit，覆盖只读预览、XMEML/ASS 文件与哈希、实际 libass MP4、ffprobe codec/duration、三类导出 ledger、空主轨、未知资产、非法目标、ffmpeg 失败路径脱敏，以及无 libass 时与 Tauri 完全相同的 `RENDER_ASS_FILTER_MISSING` cause/suggested action。Electron Playwright `slice7.spec.ts` 经真实目录/媒体/导出 grant 跑完整链，逐项检查 pathurl、ASS 样式与 cue、真实 MP4、SQLite `export_artifact`、空 cut 阻断和 grant 重放；同一项目再由既有 CLI 写出 XMEML，并与 Electron 产物逐字节相等。
 
-Slice 7 未修改 `src-tauri`、Web/PWA、SQLite schema/migration、TimelineIR、engine 导出器或 XMEML/ASS golden；Tauri 与 CLI 继续作为行为参考。门禁证据：workspace fmt 与 clippy `-D warnings` 通过；ffmpeg-full/libass 严格模式 workspace Rust 测试全过（engine 148 过、1 个既有 golden regeneration ignored；desktop service 19 过；host Slice 7 集成 2 过；Tauri 参考测试 18 过）；bindings contract 通过；Studio lint、89 项 Vitest、Studio/TypeScript/Electron build 与 host build 通过；Slices 1–7 及平台/骨架共 15 项 Playwright 全过；根 Web lint、99 项 Vitest 与 build 通过；`git diff --check` 通过。至此 Phase 4 七个纵向业务切片全部迁移完成，Phase 5 可开始默认 Electron、打包资源、签名发布与 Tauri 清理。
+Slice 7 未修改旧容器目录、Web/PWA、SQLite schema/migration、TimelineIR、engine 导出器或 XMEML/ASS golden；Tauri 与 CLI 继续作为行为参考。门禁证据：workspace fmt 与 clippy `-D warnings` 通过；ffmpeg-full/libass 严格模式 workspace Rust 测试全过（engine 148 过、1 个既有 golden regeneration ignored；desktop service 19 过；host Slice 7 集成 2 过；Tauri 参考测试 18 过）；bindings contract 通过；Studio lint、89 项 Vitest、Studio/TypeScript/Electron build 与 host build 通过；Slices 1–7 及平台/骨架共 15 项 Playwright 全过；根 Web lint、99 项 Vitest 与 build 通过；`git diff --check` 通过。至此 Phase 4 七个纵向业务切片全部迁移完成，Phase 5 可开始默认 Electron、打包资源、签名发布与 Tauri 清理。
 
 ## Phase 5A 已交付打包基础设施与资源归属
 
-模型清单已逐字节移动到 `crates/double-love-engine/resources/model-catalog-v1.json`，偏好 fixture 已归属 desktop service，512×512 图标与媒体/模型运行时占位树已归属 `studio/build/`；搬移前后 SHA-256 一致。三个 runtime 脚本已改写到 Studio 资源树，Tauri 配置通过 source→target 映射继续生成相同的 `runtime/` 与 `model-runtime/` 包内布局，debug `.app` 仍可构建；`src-tauri` 及其行为未删除。
+模型清单已逐字节移动到 `crates/double-love-engine/resources/model-catalog-v1.json`，偏好 fixture 已归属 desktop service，512×512 图标与媒体/模型运行时占位树已归属 `studio/build/`；搬移前后 SHA-256 一致。三个 runtime 脚本已改写到 Studio 资源树，Tauri 配置通过 source→target 映射继续生成相同的 `runtime/` 与 `model-runtime/` 包内布局，debug `.app` 仍可构建；旧容器目录及其行为未删除。
 
 `electron-builder` v26 配置现固定 macOS 15+ arm64 的 DMG/ZIP、ASAR、应用身份、视频分类、GitHub publish 元数据与四组 `extraResources`。本次本地证明与 CI 目录包显式关闭证书自动发现，`notarize:false`，本阶段未做发布签名或公证。afterPack 为 Electron 43 配齐全部九项 Fuse V1；浏览器专用 V8 snapshot 随包生成，renderer 改由受限 `dl-app://app` 协议加载，因此 `GrantFileProtocolExtraPrivileges:false` 与 `OnlyLoadAppFromAsar:true` 下仍可启动。
 
@@ -161,13 +164,23 @@ Electron host 通过 desktop service 首次接触既有 Tauri 数据时，必须
 
 回退时先完全退出 Electron 与 Tauri，另行保留当前文件，再恢复副本；不要移动或改写上述一次性备份本身。偏好回退是把 `preferences.json.pre-electron-backup` 的副本放回 `preferences.json` 并保持 `0600`。项目回退是把 `project.pre-electron-backup.sqlite` 的副本放回同目录的 `project.sqlite`；替换前须把当前 `project.sqlite` 及其 `project.sqlite-wal` / `project.sqlite-shm` 一起移出该目录，避免旧 WAL 套到恢复库。随后可用最后可构建的 Tauri 版本打开原项目目录验证。
 
+## Phase 5D 已交付旧桌面容器删除
+
+renderer 平台接缝现只在 preload bridge 存在时选择 Electron，否则进入 browser preview；`file:` 与 `dl-app:` 缺 bridge 时继续 fail closed。公共 adapter 类型由 Electron adapter 派生，normalize 测试直接使用中立模块；旧 renderer adapter、Studio npm 依赖和专用桥接分支均已删除。
+
+Rust workspace 现只含 engine、CLI、desktop service 与 desktop host；旧 crate 目录整体删除，Cargo lock 由 `cargo build` 重建。根旧容器 scripts/CLI、Studio CI reference build 与 baseline debug-app gate 均已移除；baseline 完整模式改为 release host + Electron build + directory package + packaged smoke，fast 模式将四项记为 `SKIP` 并保持 `INCOMPLETE`，包体积目标改为 `studio/out` 与 unpacked Electron `.app`。
+
+5D 门禁证据（2026-08-23，macOS arm64）：ffmpeg-full 严格模式 workspace fmt/clippy/test 通过（engine 149 过、1 个既有 golden regeneration ignored；desktop service 22 过；全部 host/CLI 集成通过）；bindings contract 通过；Studio lint、102 项 Vitest、Vite/TypeScript/Electron build 通过；release host、`electron-builder --dir`、九项 Fuse 与 packaged boot smoke 通过；全部 18 项 Playwright（含 package smoke、一次性备份与本地 updater feed）通过；根 Web lint、99 项 Vitest 与 build 通过；`git diff --check` 通过。
+
+依赖树门禁 `cargo tree --workspace | grep -i tauri` 无输出（grep 退出 1，符合空结果预期）。tracked-file 六项残留扫描共 13 行，全部位于本目录已明确标记的历史归档文件；排除本目录、CHANGELOG 与 TODO 后为零。Phase 5D 不执行签名、公证、发布、tag、push 或 merge；发布机签名/公证仍是 Phase 5 的独立剩余门禁。
+
 ## Phase 4 Slice 4 已交付主轨与项目视觉设置
 
 host-neutral service 已按 Tauri 参考实现注册 `timeline_get`、`main_track_append`、`main_track_append_full`、`main_track_list`、`main_track_move`、`main_track_trim`、`main_track_split`、`main_track_remove`、`canvas_get/set`、`output_rate_get/set`、`subtitle_style_get/set` 与 `apply_default_subtitle_style`。主轨写操作直接复用 engine 函数及其未知资产、非法范围、未知片段、revision 和诊断语义；`timeline_get` 继续调用 `compile_project_timeline`，名称严格取当前项目根目录 basename 加 `Rough Cut`。未显式设置输出帧率时仍跟随主轨首段素材，`output_rate_set(null)` 删除显式值；应用默认字幕样式仍从 service 偏好读取 `default_subtitle_style`，并与普通 `subtitle_style_set` 产生相同项目写入语义。
 
 本切片把 Slice 2 为历史导航提前接入的 canvas/subtitle 命令纳入正式迁移范围，并为所有新迁移命令的失败诊断统一替换当前项目根目录为 `<PROJECT>`；未改变成功数据、状态、revision、输出、engine/CLI/Tauri 错误文本或任何存储与 TimelineIR 契约。host 集成测试使用两个真实合成媒体，覆盖完整/区间追加、列表、移动、裁切、拆分、删除、TimelineIR v2 顺序与帧率、canvas、输出帧率设置/清除、项目字幕样式和偏好默认样式应用，以及未打开项目、未知资产、非法范围、未知片段与 renderer 响应路径脱敏。
 
-Electron Playwright 同样仅使用临时目录和两段合成 MP4，经目录/媒体 grant 完成导入与整套主轨变更，断言 TimelineIR source/clip 顺序和 `mainTrackList` 最终状态；并覆盖 canvas、输出帧率、字幕样式、默认样式往返、未知片段脱敏，以及剩余 source 的 `dl-media` 正常 200 与未知资产 404。Slice 4 未修改 `src-tauri`、Web/PWA、engine 契约、SQLite schema/migration、TimelineIR shape 或导出格式；Tauri 继续作为行为参考。
+Electron Playwright 同样仅使用临时目录和两段合成 MP4，经目录/媒体 grant 完成导入与整套主轨变更，断言 TimelineIR source/clip 顺序和 `mainTrackList` 最终状态；并覆盖 canvas、输出帧率、字幕样式、默认样式往返、未知片段脱敏，以及剩余 source 的 `dl-media` 正常 200 与未知资产 404。Slice 4 未修改旧容器目录、Web/PWA、engine 契约、SQLite schema/migration、TimelineIR shape 或导出格式；Tauri 继续作为行为参考。
 
 Slice 4 门禁证据：workspace fmt 与 clippy `-D warnings` 通过；严格工具模式 workspace Rust 测试全过（engine 148 过、1 个既有 golden regeneration ignored；host Slice 4 集成 1 过；Tauri 参考测试 18 过）；bindings contract 通过；Studio lint、89 项 Vitest、Studio Vite build、独立 `tsc -b`、Electron build 与 host build 通过；Slices 1–4 全部 11 项 Playwright 通过；根 Web lint、99 项 Vitest 与 build 通过；`git diff --check` 通过。
 
@@ -179,7 +192,7 @@ Electron main-only 命令 `resolve_media_asset` 只在当前项目 Store 中按 
 
 Rust host 集成测试在临时目录生成真实合成 MP4，覆盖未打开项目、成功导入与 `prepared` 状态、重复诊断、资产列表、不支持帧率、缺失文件、合成 ffprobe 失败、main-only 解析成功及未知/源文件缺失，并断言成功与失败的 renderer 可达响应都不含媒体或项目绝对路径、资产摘要无路径字段且 allowlist 不含解析命令。Slice 3 Playwright 同样经目录与媒体一次性 grant 导入真实合成 MP4，验证全量 200、单 Range 206 与精确 `Content-Range`、未知及任意磁盘路径 URL 404、renderer 解析命令被拒绝，以及缺失源文件和 ffprobe 失败均不泄露绝对路径且项目仍可继续列出资产。组件单测冻结新 scheme，生产 renderer 已无 `media://localhost`。
 
-Slice 3 未修改 `src-tauri`、Web/PWA、SQLite schema/migration、manifest、导出格式或既有 Electron `dl-media` 协议实现；Tauri 继续作为行为参考。门禁证据：workspace fmt 与 clippy `-D warnings` 通过；严格工具模式 workspace Rust 测试全过；bindings contract 通过；Studio lint、89 项 Vitest、Studio Vite build、独立 `tsc -b` 与 Electron build 通过；Slices 1–3 全部 10 项 Playwright 通过；根 Web lint、99 项 Vitest 与 build 通过；`git diff --check` 通过。
+Slice 3 未修改旧容器目录、Web/PWA、SQLite schema/migration、manifest、导出格式或既有 Electron `dl-media` 协议实现；Tauri 继续作为行为参考。门禁证据：workspace fmt 与 clippy `-D warnings` 通过；严格工具模式 workspace Rust 测试全过；bindings contract 通过；Studio lint、89 项 Vitest、Studio Vite build、独立 `tsc -b` 与 Electron build 通过；Slices 1–3 全部 10 项 Playwright 通过；根 Web lint、99 项 Vitest 与 build 通过；`git diff --check` 通过。
 
 ## Phase 3C 已交付 React renderer 目录整理
 

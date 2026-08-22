@@ -1,5 +1,7 @@
 # 技术债热力图（按严重度排序）
 
+> **归档快照（Phase 5D 已完成）**：位置与问题栏保留迁移前证据；阶段 5D 已删除旧容器、依赖、脚本与当前式文档指导。
+
 严重度：**P0** 迁移阻断/安全风险；**P1** 必须在对应切片前处理；**P2** 迁移顺手清理；**P3** 记录即可。
 
 | # | 严重度 | 位置 | 问题 | 处置阶段 |
@@ -16,8 +18,8 @@
 | D10 | P2 | tauri.ts:253 | `isTauri` 浏览器降级与生产 fail-closed 语义混在一起 | 3（DesktopClient 显式化） |
 | D11 | P2 | lib.rs:805,948-975 | 死接口：`speaker_save` + 4 个 `METADATA_MVP_PENDING` 占位 | 5（随 Tauri 适配器删除） |
 | D12 | P2 | models.rs:694 | `dl://doctor-result` 已发送但 UI 未订阅（返回值已够用） | 4 切片 5（保留或下线需登记） |
-| D13 | P2 | 根 package.json:21-23 | `tauri:*` 脚本与 `tauri:release` 硬编码 verify 门禁 | 5 |
-| D14 | P3 | docs/studio-foundation.md、docs/studio-beta.md、CLAUDE.md | 文档以 Tauri 为当前架构叙述 | 5（归档+重写） |
+| D13 | P2 | 根 package.json:21-23 | **5D 已解决**：旧容器脚本与 CLI 依赖已删除，发布门禁改用 Electron package/smoke | 5D |
+| D14 | P3 | docs/studio-foundation.md、docs/studio-beta.md、CLAUDE.md | **5D 已解决**：当前指导已改写为 Electron；历史事实只留迁移归档 | 5D |
 | D15 | P3 | bindings/ 目录在仓库根 | ts-rs 产物与根 Web 项目同级，归属含糊 | 3（随 shared 契约重定位） |
 
 测试空白（相对迁移风险）：renderer 侧无 E2E（仅 45 个 vitest 单测/组件测试）；media 协议只有 Rust 纯函数测试，无经 webview 的集成测试；偏好损坏恢复只有 Rust 单测，无端到端验证。阶段 2/3 由 Playwright Electron E2E 与安全测试补齐。

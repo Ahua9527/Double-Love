@@ -1,5 +1,7 @@
 # Tauri 能力矩阵
 
+> **归档基线（Phase 5D 已完成）**：本矩阵冻结迁移前的 66 个命令与平台能力；旧路径、插件名和 bridge 标记仅作历史证据，不是现行依赖或开发指导。
+
 登记来源：`src-tauri/src/lib.rs`（invoke_handler 注册表 `lib.rs:1013-1078`）、`preferences.rs`、`models.rs`、`settings_window.rs`、`media_protocol.rs`、`tauri.conf.json`、`capabilities/default.json`、`studio/src/tauri.ts`（renderer 唯一封装）、`.github/workflows/studio-quality.yml`、`scripts/`。
 
 分类：**在用** = 产品 UI 实际调用；**UI 未用** = 已注册但产品 UI 无调用（可能只有 `studio/src/tauri.ts` wrapper）；**占位** = 固定返回 `METADATA_MVP_PENDING`；**平台能力** = 窗口/菜单/对话框/Store/协议等容器能力。
@@ -146,7 +148,7 @@
 | `model-catalog-v1.json` 事实源 | engine `model.rs` `include_str!("../resources/model-catalog-v1.json")` | 5A 已归属 `crates/double-love-engine/resources/`，不再反向依赖 `src-tauri` |
 | `scripts/prepare-media-runtime.sh` / `prepare-model-runtime.sh` / `prepare-asr.sh` / `prepare-speaker.sh` | scripts/ | 媒体/模型运行时准备（发布机） |
 | `scripts/verify-release-runtime.sh` | scripts/ | 硬门禁：libass、可重定位 Python |
-| CI `studio-quality.yml` | self-hosted macOS ARM64；严格工具前置检查；cargo fmt/clippy/test；release host；bindings/Python/Studio 门禁；Electron build/E2E/无证书目录包/打包 smoke；Tauri debug reference build；`git diff --check` | 5A 起打包 smoke 读取 unpacked `.app` 的真实 resourcesPath |
+| CI `studio-quality.yml` | 当时的 self-hosted macOS ARM64 门禁同时包含 Electron 全链和旧容器 reference build | Phase 5D 后只保留 Electron build/E2E/无证书目录包/打包 smoke 与 `git diff --check` |
 | CI `web-quality.yml` | Web/PWA 门禁 | 不变 |
 
 ## 5. 已知边界泄漏（迁移时必须收紧）

@@ -65,8 +65,8 @@ const E2E_TRANSCRIBE_MOCK_SWITCH = 'double-love-e2e-transcribe-mock'
 const E2E_SPEAKER_MOCK_SWITCH = 'double-love-e2e-speaker-mock'
 const BOTH_WINDOWS: readonly WindowRole[] = ['main', 'settings']
 
-// Renderer-reachable host commands. Excludes main-only resolution helpers and the
-// dead/internal Tauri commands that never enter Electron (capability-matrix §1).
+// Renderer-reachable host commands. Excludes main-only resolution helpers and
+// retired internal commands that never entered Electron (capability-matrix §1).
 const RENDERER_COMMANDS: ReadonlySet<string> = new Set([
   'preferences_get',
   'preferences_update',
@@ -139,8 +139,8 @@ const e2eUserData = app.isPackaged && !app.commandLine.hasSwitch(E2E_SWITCH)
   : app.commandLine.getSwitchValue(E2E_USER_DATA_SWITCH)
 const userDataPath = e2eUserData || join(app.getPath('appData'), 'space.ahua.doublelove.studio')
 
-// Preserve the Tauri identifier-based Application Support location before any
-// session, window, store, or host is created. E2E supplies an isolated override.
+// Preserve the established identifier-based Application Support location before
+// any session, window, store, or host is created. E2E supplies an isolated override.
 app.setPath('userData', userDataPath)
 
 interface PendingRequest {

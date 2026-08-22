@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { normalizeDoctorReport, normalizeModelDescriptor, normalizeModelProgress } from './tauri'
+import { normalizeDoctorReport, normalizeModelDescriptor, normalizeModelProgress } from './platform/normalize'
 
-describe('应用级 Tauri DTO normalize', () => {
+describe('应用级桌面 DTO normalize', () => {
   it('把 Rust 的 descriptor + installation 快照转成 UI 模型行', () => {
     const model = normalizeModelDescriptor({
       descriptor: {

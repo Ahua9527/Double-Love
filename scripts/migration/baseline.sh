@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Purpose: capture a repeatable Phase-1 migration baseline (environment, quality gates, exit codes, test/skip summaries, bundle sizes) into an ignored evidence directory.
-# How to run: scripts/migration/baseline.sh [--fast] [--out DIR]   (--fast skips the Tauri debug packaging gate; default output: evidence/migration-baseline/<utc-timestamp>/)
+# How to run: scripts/migration/baseline.sh [--fast] [--out DIR]   (--fast skips Electron packaging/smoke gates; default output: evidence/migration-baseline/<utc-timestamp>/)
 # Requirements: macOS arm64 dev machine with node, pnpm, cargo, rustc, python3, ffmpeg, ffprobe on PATH; run from anywhere inside the repo; no credentials are read or written.
 set -uo pipefail
 
@@ -106,9 +106,15 @@ run_gate "py:speaker" python3 -m unittest discover -s sidecars/speaker/tests -p 
 # bash expands these globs only after run_gate has changed to ROOT.
 run_gate "py:compile" bash -c "python3 -m py_compile sidecars/asr/double_love_asr/*.py sidecars/speaker/double_love_speaker/*.py" || FAILED=1
 if [ "$FAST" -eq 0 ]; then
-  run_gate "tauri:debug-app" pnpm exec tauri build --debug || FAILED=1
+  run_gate "electron:release-host" cargo build --release -p double-love-desktop-host --locked || FAILED=1
+  run_gate "electron:build" pnpm --dir studio electron:build || FAILED=1
+  run_gate "electron:pack-dir" env CSC_IDENTITY_AUTO_DISCOVERY=false pnpm --dir studio pack:dir || FAILED=1
+  run_gate "electron:package-smoke" scripts/migration/package-smoke.sh || FAILED=1
 else
-  record "tauri:debug-app" "SKIP" "--fast"
+  record "electron:release-host" "SKIP" "--fast"
+  record "electron:build" "SKIP" "--fast"
+  record "electron:pack-dir" "SKIP" "--fast"
+  record "electron:package-smoke" "SKIP" "--fast"
 fi
 run_gate "git:diff-check" git diff --check || FAILED=1
 
@@ -126,7 +132,7 @@ run_gate "git:diff-check" git diff --check || FAILED=1
 
 # ---- bundle sizes (repo-relative paths only) ----
 {
-  for target in "dist" "studio/dist" "target/debug/bundle/macos/Double Love Studio.app"; do
+  for target in "dist" "studio/out" "studio/release/mac-arm64/Double Love Studio.app"; do
     if [ -e "$ROOT/$target" ]; then
       printf '%s\t%s\n' "$target" "$(du -sm "$ROOT/$target" 2>/dev/null | awk '{print $1" MiB"}')"
     else

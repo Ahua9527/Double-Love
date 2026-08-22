@@ -1,7 +1,9 @@
 # Double Love Studio v2 视觉与产品壳差距审计
 
+> **历史审计快照（已被 Phase 5D 后的 Electron 实现取代）**：下文路径和“当前”描述只代表 2026-08-21 的旧实现，不是现行代码导航或开发指导。
+
 审计日期：2026-08-21
-审计范围：`studio/` React/Tailwind 前端、`src-tauri/` 窗口与命令入口，以及本机可安全打开的 BaoCut 界面。只记录产品界面与代码结构，不记录转录文本、素材内容或用户路径。
+审计范围：`studio/` React/Tailwind 前端、旧桌面容器的窗口与命令入口，以及本机可安全打开的 BaoCut 界面。只记录产品界面与代码结构，不记录转录文本、素材内容或用户路径。
 
 ## 先说结论
 
@@ -41,7 +43,7 @@ BaoCut 的项目库和已载入项目编辑器未在本次审计中导入任何�
 
 #### 1. 缺少全局设置、模型、引导和诊断四条产品路径
 
-证据：`studio/src/components/Sidebar.tsx:4-18` 的 `StudioScreen` 只有 `library | editor | tasks | settings`；`studio/src/App.tsx:583-586` 只渲染这四个场景；`studio/src/tauri.ts` 只有项目、转录、说话人和导出命令，没有 `preferences`、`model`、`onboarding`、`doctor` 命令。
+证据：旧 `Sidebar.tsx:4-18` 的 `StudioScreen` 只有 `library | editor | tasks | settings`；旧 `App.tsx:583-586` 只渲染这四个场景；旧 renderer adapter 只有项目、转录、说话人和导出命令，没有 `preferences`、`model`、`onboarding`、`doctor` 命令。
 
 规则：先定义应用级导航和窗口边界，再做颜色微调。设置必须是独立、可用 `Cmd+,` 唤起的 760×580 窗口；右侧至少有通用、快捷键、默认字幕样式、本地模型、隐私、诊断、关于七页。项目级画布、输出帧率、历史和当前字幕样式继续留在项目上下文。
 
@@ -53,13 +55,13 @@ BaoCut 的项目库和已载入项目编辑器未在本次审计中导入任何�
 
 #### 3. 模型下载没有可见的生命周期
 
-证据：`studio/src/App.tsx:585` 的后台任务只持有一个 `task`，任务类型只有转录／说话人；`studio/src/tauri.ts:46-52` 的 `transcribeStart` 只接收一个模型字符串；没有模型清单、依赖、进度、暂停、续传、校验、失败恢复或安装目录 UI。
+证据：旧 `App.tsx:585` 的后台任务只持有一个 `task`，任务类型只有转录／说话人；旧 renderer adapter 的 `transcribeStart` 只接收一个模型字符串；没有模型清单、依赖、进度、暂停、续传、校验、失败恢复或安装目录 UI。
 
 规则：模型页必须使用固定状态 `not_installed / queued / downloading / paused / verifying / installed / corrupt / failed`，显示体积、内存、依赖和操作；下载任务由 Rust 状态持有，不依赖设置窗口是否打开；失败必须给出继续、重试、查看日志或清理 staging 的动作。
 
 #### 4. 设置窗口和原生菜单没有窗口契约
 
-证据：`src-tauri/tauri.conf.json:9-25` 只声明一个主窗口；`src-tauri/src/lib.rs` 没有 `settings_open`、窗口 label 或原生菜单命令。
+证据：旧容器配置只声明一个主窗口；旧 Rust adapter 没有 `settings_open`、窗口 label 或原生菜单命令。
 
 规则：主窗口只负责项目／编辑器；设置窗口用固定 label 单例化，侧栏设置和 `Cmd+,` 都唤起同一窗口。窗口间只同步偏好、模型状态和诊断结果事件，不复制项目状态。
 
@@ -133,7 +135,7 @@ BaoCut 的项目库和已载入项目编辑器未在本次审计中导入任何�
 
 #### 15. 全局设置页的隐私、诊断、关于和许可缺失
 
-证据：当前 `ProjectSettings.tsx` 没有隐私、日志、运行时版本、模型许可或第三方许可区块；`studio/src/tauri.ts` 没有诊断或打开日志目录命令。BaoCut 诊断页实际提供了日志保留边界、自动发送开关和打开日志文件夹。
+证据：当时的 `ProjectSettings.tsx` 没有隐私、日志、运行时版本、模型许可或第三方许可区块；旧 renderer adapter 没有诊断或打开日志目录命令。BaoCut 诊断页实际提供了日志保留边界、自动发送开关和打开日志文件夹。
 
 规则：隐私页明确无默认遥测、无音频／声纹上传；诊断页显示 ffmpeg/libass、模型完整性、剩余磁盘和日志目录，并支持路径脱敏的复制报告；关于页显示版本、构建信息、模型／第三方许可。所有“打开目录”动作都只打开本地目录，不在界面中暴露完整私人路径。
 

@@ -1,5 +1,7 @@
 # 用户可见行为矩阵（Tauri 现状 → Electron 目标）
 
+> **归档基线（Phase 5D 已完成）**：旧路径、行号和容器名称用于保存迁移前行为证据，不是现行实现入口。
+
 来源：`studio/src/App.tsx`（799 行）、`studio/src/tauri.ts`、`src-tauri/`。所有 “保持” 项在阶段 4 对应切片中做 Tauri/Electron 对照验收。
 
 | # | 行为 | 现状证据 | Electron 目标 |

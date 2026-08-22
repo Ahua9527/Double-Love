@@ -36,7 +36,6 @@ import {
 export * from './normalize'
 
 export const isDesktop = true
-export const isTauri = false
 export const platformKind = 'electron' as const
 
 export interface HostResponse {
@@ -178,7 +177,7 @@ export async function pickProjectExportPath(defaultName: string, kind: 'xml' | '
 }
 
 export async function settingsOpen(): Promise<OperationResult<null>> {
-  // 设置窗口由 Electron main 管理（等价于 Tauri 的 settings_open 窗口命令），不走 host。
+  // 设置窗口由 Electron main 管理，不走 host。
   await bridge().openSettings()
   return successOperation(null)
 }

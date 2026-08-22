@@ -1,6 +1,6 @@
 # ADR-0001：Tauri → Electron 目标架构
 
-状态：已确认。日期：2026-08-22。
+状态：**已实施并归档（Phase 5D 完成）**。日期：2026-08-22。文中的旧路径与容器名称作为决策证据保留，不是现行代码导航。
 
 ## 决定
 
@@ -67,4 +67,4 @@ electron-builder 打 arm64 DMG+ZIP（签名+公证）；GitHub Releases `studio-
 
 - 正面：单一业务事实源（engine）不动，CLI/GUI 数据兼容天然保持；Rust 核心性能不变；Electron 生态（updater/builder/Playwright）成熟。
 - 代价：包体积增大（单独记录审查）；新增 host 进程需要监督与协议治理；`media://` → `dl-media://` 为内部 URL 变化。
-- 回退：阶段 5 清理前 Tauri 始终可构建；共享 schema 不变，旧 Tauri/CLI 可重新打开项目。
+- 回退：Phase 5D 清理前的最后可构建回退点为 commit `c6d43fb`；共享 schema 不变，旧桌面版本或 CLI 可重新打开项目。

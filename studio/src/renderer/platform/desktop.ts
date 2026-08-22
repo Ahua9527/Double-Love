@@ -1,28 +1,22 @@
 import * as electronAdapter from './electron'
 import * as previewAdapter from './preview'
-import * as tauriAdapter from './tauri'
 
 export * from './normalize'
 
-type PlatformAdapter = Omit<typeof tauriAdapter, 'isDesktop' | 'platformKind'> & {
+type PlatformAdapter = Omit<typeof electronAdapter, 'isDesktop' | 'platformKind'> & {
   readonly isDesktop: boolean
-  readonly platformKind: 'electron' | 'tauri' | 'preview'
+  readonly platformKind: 'electron' | 'preview'
 }
 
 const hasElectronBridge = 'doubleLove' in window
-const hasTauriBridge = '__TAURI_INTERNALS__' in window
 
-if (['file:', 'dl-app:'].includes(location.protocol) && !hasElectronBridge && !hasTauriBridge) {
+if (['file:', 'dl-app:'].includes(location.protocol) && !hasElectronBridge) {
   throw new Error('Double Love Studio packaged renderer started without a desktop bridge')
 }
 
 const electronPlatform: PlatformAdapter = electronAdapter
-const previewPlatform: PlatformAdapter = previewAdapter
-const adapter: PlatformAdapter = hasElectronBridge
-  ? electronPlatform
-  : hasTauriBridge
-    ? tauriAdapter
-    : previewPlatform
+const previewPlatform: PlatformAdapter = { ...electronAdapter, ...previewAdapter }
+const adapter: PlatformAdapter = hasElectronBridge ? electronPlatform : previewPlatform
 
 export const {
   isDesktop,

@@ -104,8 +104,6 @@ jobs:
         run: pnpm --dir studio pack:dir
       - name: Smoke packaged Electron application
         run: scripts/migration/package-smoke.sh
-      - name: Build Tauri debug app
-        run: pnpm tauri build --debug
       - name: Check whitespace in pushed commits
         shell: bash
         run: |

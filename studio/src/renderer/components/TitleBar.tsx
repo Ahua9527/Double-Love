@@ -34,7 +34,7 @@ export function TitleBar({
   exportDisabled,
 }: TitleBarProps) {
   return (
-    <header className="studio-titlebar" data-tauri-drag-region>
+    <header className="studio-titlebar">
       <button type="button" className="studio-icon-button" aria-label="切换项目栏" aria-pressed={sidebarVisible} onClick={onToggleSidebar}><PanelLeft size={17} /></button>
       {screen === 'editor' && <button type="button" className="studio-icon-button" aria-label="返回项目库" onClick={onBackToLibrary}><ChevronLeft size={18} /></button>}
       <div className="studio-titlebar-title"><strong>{titleFor(screen, projectName)}</strong>{screen === 'editor' && <span>本地粗剪</span>}{screen === 'editor' && <button type="button" className="studio-title-info" aria-label="打开项目设置" onClick={onOpenProjectInfo}><Info size={14} /></button>}</div>

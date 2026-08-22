@@ -1,9 +1,11 @@
 # Double Love Studio v2 实施核对
 
+> **历史实施快照（已被 Phase 5D 后的 Electron 实现取代）**：下文命令式表述和旧容器路径只记录 2026-08-21 的设计输入，不是现行开发或发布指导。
+
 日期：2026-08-21
 
 范围：设置窗口、全局偏好、模型生命周期、ForcedAligner 接线、首次启动引导、诊断。
-本文件是给实现者的接口和验收契约；不包含视觉稿，也不替代产品代码。
+本文件是迁移前的接口和验收契约；不包含视觉稿，也不替代产品代码。
 
 ## 1. 当前基线与可复用能力
 
@@ -11,7 +13,7 @@
 
 | 能力 | 现状 | 复用边界 |
 | --- | --- | --- |
-| Tauri 壳 | `src-tauri/src/lib.rs` 使用 Tauri 2 `Builder`、`AppHandle`、`State`、`Emitter`；`tauri.conf.json` 只声明一个 `main` 窗口（1440×900，最小 960×640）。 | 保留现有主窗口和 `media://` 只读协议；新增设置窗口时仍从同一 `studio/dist` 加载。 |
+| Tauri 壳 | 旧 Rust 桌面 adapter 使用 Tauri 2 `Builder`、`AppHandle`、`State`、`Emitter`；`tauri.conf.json` 只声明一个 `main` 窗口（1440×900，最小 960×640）。 | 保留当时主窗口和 `media://` 只读协议；新增设置窗口时仍从同一 `studio/dist` 加载。 |
 | Rust 状态 | `AppState` 只有当前 `ProjectStore` 和 `TaskRegistry`。转录、说话人任务已经由 Rust 持有，不依赖 React 生命周期。 | 把 `PreferencesStore` 和 `ModelManager` 放入 `AppState`，模型下载任务不得放进 React。 |
 | 命令结果 | 所有现有命令返回 `OperationResult<T>`，状态为 `success | partial | failed | cancelled`，带诊断和 revision。 | 新增命令全部沿用 `OperationResult<T>`；模型内部状态另用下列固定状态机。 |
 | 项目存储 | `crates/double-love-engine/src/project.rs` 创建 `.doublelove/{project.sqlite,manifest.json,cache,logs,exports}`；`ProjectSummary` 有稳定 `project_id`、绝对 `root`、`database`、`revision`。 | `project_create/open` 成功后记录最近项目；不把全局偏好写入项目 SQLite。 |
@@ -29,7 +31,7 @@
 - 没有模型清单、依赖图、下载队列、staging、Range 续传、校验和、安装状态或用户可见恢复动作。
 - `sidecars/asr/double_love_asr/transcriber.py` 只调用 `Session(...).transcribe(return_timestamps=True)`，没有传模型目录或显式 `ForcedAligner` 实例；当前包会在 `return_timestamps=True` 时隐式创建默认对齐器，可能联网或加载错误权重。
 - `sidecars/speaker/double_love_speaker/engine.py` 调用 `wespeaker.load_model("chinese")` 和包内 `load_silero_vad()`；Tauri 未传本地模型目录，也未设置离线环境变量。
-- `src-tauri/capabilities/default.json` 只允许 `main` 窗口；没有 settings 窗口权限、Store 插件权限或打开日志目录的受限能力。
+- 旧 capability 配置只允许 `main` 窗口；没有 settings 窗口权限、Store 插件权限或打开日志目录的受限能力。
 
 ## 2. 全局偏好与最近项目
 
@@ -127,8 +129,8 @@ pub struct SystemProfile {
 - 设置窗口 label 固定为 `settings`，尺寸 760×580，最小 700×500，单例、可调整大小、关闭只隐藏不销毁。
 - `settings_open` 先调用 `app.get_webview_window("settings")`；已存在则 `show()`、`set_focus()`，不存在才用 `WebviewWindowBuilder::new(app, "settings", WebviewUrl::App("index.html?window=settings"))` 创建。所有窗口使用同一个 `studio/dist`，React 根据当前 window label 选择主应用或七页设置应用。
 - `settings_open` 不传项目路径、不复制项目状态；设置页只通过偏好/模型/诊断命令工作。
-- `src-tauri/capabilities/default.json` 至少同时覆盖 `main`、`settings`；窗口、事件、Store、dialog/open-directory 权限只授予这两个 label，不开放任意远程 URL。
-- `model_reveal` 与 `diagnostics_reveal_logs` 使用官方 `tauri-plugin-opener` 的 Rust API，但只传 Rust 自己解析出的模型根/日志根；不接受前端路径，也不开放任意 shell 命令。新增 opener capability 仅给 `main`、`settings`。
+- 旧 capability 配置至少同时覆盖 `main`、`settings`；窗口、事件、Store、dialog/open-directory 权限只授予这两个 label，不开放任意远程 URL。
+- `model_reveal` 与 `diagnostics_reveal_logs` 使用旧容器 opener 插件的 Rust API，但只传 Rust 自己解析出的模型根/日志根；不接受前端路径，也不开放任意 shell 命令。新增 opener capability 仅给 `main`、`settings`。
 
 ### 侧栏和 `Cmd+,`
 
