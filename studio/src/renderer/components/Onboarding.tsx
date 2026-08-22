@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import type { ReactNode } from 'react'
 import { ArrowRight, Check, Download, FolderOpen, HardDrive, LockKeyhole, ShieldCheck } from 'lucide-react'
-import type { ModelDescriptor, SystemProfile } from '../tauri'
+import type { ModelDescriptor, SystemProfile } from '../platform/desktop'
 
 interface OnboardingProps {
   recommendedModel: string

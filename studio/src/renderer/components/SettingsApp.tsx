@@ -16,7 +16,7 @@ import {
   Trash2,
   Wand2,
 } from 'lucide-react'
-import * as api from '../tauri'
+import * as api from '../platform/desktop'
 import type { SubtitleStyle } from '../../../../bindings/SubtitleStyle'
 import { num } from '../utils'
 
@@ -173,7 +173,7 @@ function usePreferences() {
   const [notice, setNotice] = useState<string | null>(null)
 
   const reload = useCallback(async () => {
-    if (!api.isTauri) {
+    if (!api.isDesktop) {
       setLoading(false)
       return
     }
@@ -191,20 +191,20 @@ function usePreferences() {
   useEffect(() => { void reload() }, [reload])
 
   useEffect(() => {
-    if (!api.isTauri) return
+    if (!api.isDesktop) return
     let disposed = false
     let remove: (() => void) | undefined
-    void import('@tauri-apps/api/event').then(({ listen }) => listen<{ changed_keys: string[] }>('dl://preferences-changed', () => {
+    void api.listen<{ changed_keys: string[] }>('dl://preferences-changed', () => {
       if (disposed) return
       void api.preferencesGet().then((result) => {
         if (!disposed && result.status === 'success' && result.data) setPreferences(result.data)
       }).catch(() => undefined)
-    })).then((unlisten) => { remove = unlisten }).catch(() => undefined)
+    }).then((unlisten) => { remove = unlisten }).catch(() => undefined)
     return () => { disposed = true; remove?.() }
   }, [])
 
   const update = useCallback(async (patch: api.PreferencesPatch) => {
-    if (!api.isTauri) {
+    if (!api.isDesktop) {
       setPreferences((current) => ({ ...current, ...patch }))
       setNotice('浏览器预览：设置未写入桌面应用。')
       return
@@ -230,10 +230,10 @@ export function SettingsApp({ initialPage = 'general' }: SettingsAppProps) {
   const [systemProfile, setSystemProfile] = useState<api.SystemProfile | null>(null)
   const [doctor, setDoctor] = useState<api.DoctorReport | null>(null)
   const [doctorLoading, setDoctorLoading] = useState(false)
-  const preview = !api.isTauri
+  const preview = !api.isDesktop
 
   const loadModels = useCallback(async () => {
-    if (!api.isTauri) {
+    if (!api.isDesktop) {
       setModels(PREVIEW_MODELS)
       setModelsLoading(false)
       return
@@ -252,24 +252,24 @@ export function SettingsApp({ initialPage = 'general' }: SettingsAppProps) {
   useEffect(() => { void loadModels() }, [loadModels])
 
   useEffect(() => {
-    if (!api.isTauri) return
+    if (!api.isDesktop) return
     let disposed = false
     const removers: Array<() => void> = []
-    void import('@tauri-apps/api/event').then(({ listen }) => Promise.all([
-      listen<Partial<api.ModelDownloadProgress> & { bytes_downloaded?: number | bigint; bytes_total?: number | bigint }>('dl://model-progress', (event) => {
+    void Promise.all([
+      api.listen<Partial<api.ModelDownloadProgress> & { bytes_downloaded?: number | bigint; bytes_total?: number | bigint }>('dl://model-progress', (event) => {
         if (disposed) return
         const progress = api.normalizeModelProgress(event.payload)
         setModels((current) => current.map((model) => model.id === progress.model_id ? { ...model, state: progress.state, downloaded_bytes: progress.completed_bytes } : model))
       }),
-      listen<Partial<api.ModelInstallation> & { bytes_downloaded?: number | bigint; bytes_total?: number | bigint }>('dl://model-state', () => {
+      api.listen<Partial<api.ModelInstallation> & { bytes_downloaded?: number | bigint; bytes_total?: number | bigint }>('dl://model-state', () => {
         if (!disposed) void loadModels()
       }),
-    ])).then((unlisten) => removers.push(...unlisten)).catch(() => undefined)
+    ]).then((unlisten) => removers.push(...unlisten)).catch(() => undefined)
     return () => { disposed = true; removers.forEach((remove) => remove()) }
   }, [loadModels])
 
   useEffect(() => {
-    if (!api.isTauri) return
+    if (!api.isDesktop) return
     void api.systemProfile().then((result) => {
       if (result.status === 'success') setSystemProfile(result.data ?? null)
     }).catch(() => undefined)
@@ -286,7 +286,7 @@ export function SettingsApp({ initialPage = 'general' }: SettingsAppProps) {
   }, [preferences.theme])
 
   const runDoctor = async () => {
-    if (!api.isTauri) {
+    if (!api.isDesktop) {
       setNotice('浏览器预览：诊断需要在桌面应用中运行。')
       return
     }
@@ -303,7 +303,7 @@ export function SettingsApp({ initialPage = 'general' }: SettingsAppProps) {
   }
 
   const performModelAction = async (model: api.ModelDescriptor, action: 'install' | 'pause' | 'resume' | 'cancel' | 'verify' | 'remove') => {
-    if (!api.isTauri) {
+    if (!api.isDesktop) {
       setNotice('浏览器预览：模型操作需要在桌面应用中执行。')
       return
     }
@@ -325,7 +325,7 @@ export function SettingsApp({ initialPage = 'general' }: SettingsAppProps) {
   }
 
   const resetOnboarding = async () => {
-    if (!api.isTauri) {
+    if (!api.isDesktop) {
       window.dispatchEvent(new CustomEvent('dl://onboarding-reset'))
       setNotice('浏览器预览：下次打开桌面应用时会重新显示引导。')
       return
@@ -340,12 +340,12 @@ export function SettingsApp({ initialPage = 'general' }: SettingsAppProps) {
   }
 
   const changeModelRoot = async () => {
-    if (!api.isTauri) {
+    if (!api.isDesktop) {
       setNotice('浏览器预览：模型目录迁移需要在桌面应用中执行。')
       return
     }
     try {
-      const picked = await api.pickDirectory('选择新的模型目录')
+      const picked = await api.pickDirectory('选择新的模型目录', 'model-root')
       if (!picked || Array.isArray(picked)) return
       await update({ model_root: picked })
     } catch (error) {
@@ -379,7 +379,7 @@ export function SettingsApp({ initialPage = 'general' }: SettingsAppProps) {
               {page === 'general' && <GeneralPage preferences={preferences} onUpdate={update} onResetOnboarding={() => void resetOnboarding()} />}
               {page === 'shortcuts' && <ShortcutsPage />}
               {page === 'subtitle' && <SubtitlePage style={currentStyle} onUpdate={(style) => update({ default_subtitle_style: style })} onApply={async () => {
-                if (!api.isTauri) { setNotice('浏览器预览：需要在桌面应用中应用到当前项目。'); return }
+                if (!api.isDesktop) { setNotice('浏览器预览：需要在桌面应用中应用到当前项目。'); return }
                 try {
                   const result = await api.applyDefaultSubtitleStyle()
                   setNotice(result.status === 'success' ? '已应用到当前项目。' : result.diagnostics[0]?.cause ?? '没有可应用的当前项目')
@@ -387,9 +387,9 @@ export function SettingsApp({ initialPage = 'general' }: SettingsAppProps) {
                   setNotice(error instanceof Error ? error.message : '没有可应用的当前项目')
                 }
               }} />}
-              {page === 'models' && <ModelsPage models={models} modelsLoading={modelsLoading} modelBusy={modelBusy} recommended={recommended} endpoint={preferences.model_endpoint} modelRoot={preferences.model_root} defaultModel={preferences.default_asr_model} modelById={modelById} onUpdate={update} onAction={performModelAction} onReveal={() => { if (api.isTauri) void api.modelReveal().catch(() => setNotice('模型目录暂时无法打开')); else setNotice('浏览器预览：模型目录需要在桌面应用中打开。') }} onChangeRoot={() => void changeModelRoot()} />}
+              {page === 'models' && <ModelsPage models={models} modelsLoading={modelsLoading} modelBusy={modelBusy} recommended={recommended} endpoint={preferences.model_endpoint} modelRoot={preferences.model_root} defaultModel={preferences.default_asr_model} modelById={modelById} onUpdate={update} onAction={performModelAction} onReveal={() => { if (api.isDesktop) void api.modelReveal().catch(() => setNotice('模型目录暂时无法打开')); else setNotice('浏览器预览：模型目录需要在桌面应用中打开。') }} onChangeRoot={() => void changeModelRoot()} />}
               {page === 'privacy' && <PrivacyPage />}
-              {page === 'diagnostics' && <DiagnosticsPage doctor={doctor} loading={doctorLoading} onRun={() => void runDoctor()} onReveal={() => { if (api.isTauri) void api.diagnosticsRevealLogs().catch(() => setNotice('日志目录暂时无法打开')); else setNotice('浏览器预览：日志目录需要在桌面应用中打开。') }} />}
+              {page === 'diagnostics' && <DiagnosticsPage doctor={doctor} loading={doctorLoading} onRun={() => void runDoctor()} onReveal={() => { if (api.isDesktop) void api.diagnosticsRevealLogs().catch(() => setNotice('日志目录暂时无法打开')); else setNotice('浏览器预览：日志目录需要在桌面应用中打开。') }} />}
               {page === 'about' && <AboutPage />}
             </>
           )}

@@ -1,5 +1,5 @@
 import { ArrowRight, Download, X } from 'lucide-react'
-import type { ModelDescriptor } from '../tauri'
+import type { ModelDescriptor } from '../platform/desktop'
 
 interface ModelInstallDialogProps {
   model: ModelDescriptor | null

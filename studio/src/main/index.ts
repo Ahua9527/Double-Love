@@ -46,7 +46,6 @@ const BOTH_WINDOWS: readonly WindowRole[] = ['main', 'settings']
 // Renderer-reachable host commands. Excludes main-only resolution helpers and the
 // dead/internal Tauri commands that never enter Electron (capability-matrix §1).
 const RENDERER_COMMANDS: ReadonlySet<string> = new Set([
-  'settings_open',
   'preferences_get',
   'preferences_update',
   'recent_projects_list',

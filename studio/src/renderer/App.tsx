@@ -18,7 +18,7 @@ import type { SubtitleStyle } from '../../../bindings/SubtitleStyle'
 import type { TaskState } from '../../../bindings/TaskState'
 import type { TimelineIRv2 } from '../../../bindings/TimelineIRv2'
 import type { TranscriptViewData } from '../../../bindings/TranscriptViewData'
-import * as api from './tauri'
+import * as api from './platform/desktop'
 import { frameRateFps, num, playheadClock } from './utils'
 import { MainTrackTimeline } from './components/MainTrackTimeline'
 import { MediaDrawer } from './components/MediaDrawer'
@@ -151,7 +151,7 @@ export default function App() {
   }, [preferences?.transcript_section_tint])
 
   const refreshRecentProjects = useCallback(async () => {
-    if (!api.isTauri) return
+    if (!api.isDesktop) return
     try {
       const result = await api.recentProjectsList()
       if (result.status === 'success') setRecentProjects(result.data ?? [])
@@ -161,7 +161,7 @@ export default function App() {
   }, [])
 
   const refreshModelCatalog = useCallback(async () => {
-    if (!api.isTauri) return
+    if (!api.isDesktop) return
     try {
       const result = await api.modelCatalog()
       if (result.status === 'success') setModels(result.data ?? [])
@@ -171,7 +171,7 @@ export default function App() {
   }, [])
 
   useEffect(() => {
-    if (!api.isTauri) return
+    if (!api.isDesktop) return
     let disposed = false
     const load = async () => {
       try {
@@ -201,7 +201,7 @@ export default function App() {
   }, [])
 
   const refreshAssets = useCallback(async (selectId?: string) => {
-    if (!api.isTauri) return
+    if (!api.isDesktop) return
     const result = await api.assetsList()
     if (result.status === 'failed') {
       setNotice(result.diagnostics[0]?.cause ?? '读取素材失败')
@@ -213,7 +213,7 @@ export default function App() {
   }, [])
 
   const refreshTimeline = useCallback(async () => {
-    if (!api.isTauri) return
+    if (!api.isDesktop) return
     const [clips, compiled, preview] = await Promise.all([
       api.mainTrackList(),
       api.timelineGet(),
@@ -227,7 +227,7 @@ export default function App() {
   }, [])
 
   const refreshProjectSettings = useCallback(async () => {
-    if (!api.isTauri) return
+    if (!api.isDesktop) return
     const [canvasResult, outputRateResult, styleResult, speakersResult, revisionResult] = await Promise.all([api.canvasGet(), api.outputRateGet(), api.subtitleStyleGet(), api.speakerList(), api.projectRevision()])
     if (canvasResult.status === 'success') setCanvas(canvasResult.data ?? null)
     if (outputRateResult.status === 'success') setOutputRate(outputRateResult.data ?? null)
@@ -237,7 +237,7 @@ export default function App() {
   }, [])
 
   const refreshTranscript = useCallback(async (assetId: string | null) => {
-    if (!api.isTauri || !assetId) {
+    if (!api.isDesktop || !assetId) {
       setTranscript(null)
       return
     }
@@ -252,10 +252,11 @@ export default function App() {
   useEffect(() => { void refreshTranscript(currentId) }, [currentId, refreshTranscript])
 
   useEffect(() => {
-    if (!api.isTauri) return
+    if (!api.isDesktop) return
     let disposed = false
     const unlisten: Array<() => void> = []
-    import('@tauri-apps/api/event').then(({ listen }) => {
+    Promise.resolve().then(() => {
+      const listen = api.listen
       if (disposed) return
       void listen<ProgressEvent>('dl://progress', (event) => {
         const current = taskRef.current
@@ -310,7 +311,7 @@ export default function App() {
   }, [refreshAll, refreshTranscript])
 
   const openSettings = async () => {
-    if (!api.isTauri) {
+    if (!api.isDesktop) {
       // Browser preview keeps the legacy settings screen reachable for tests and local UI review.
       setScreen('settings')
       return
@@ -324,11 +325,11 @@ export default function App() {
   }
 
   const openProject = async (create: boolean) => {
-    if (!api.isTauri) {
+    if (!api.isDesktop) {
       setNotice('请在 Double Love Studio 桌面应用中打开本地项目。')
       return
     }
-    const picked = await api.pickDirectory(create ? '选择新项目所在位置' : '选择已有项目')
+    const picked = await api.pickDirectory(create ? '选择新项目所在位置' : '选择已有项目', 'project-open')
     if (!picked || Array.isArray(picked)) return
     const result = create ? await api.projectCreate(picked) : await api.projectOpen(picked)
     if (result.status === 'failed' || !result.data) {
@@ -365,7 +366,7 @@ export default function App() {
   }
 
   const importNewMedia = async () => {
-    if (!api.isTauri) {
+    if (!api.isDesktop) {
       setNotice('请在桌面应用中导入本地媒体。')
       return
     }
@@ -472,7 +473,7 @@ export default function App() {
   }
 
   const installModel = async (modelId: string) => {
-    if (!api.isTauri) {
+    if (!api.isDesktop) {
       setNotice('请在 Double Love Studio 桌面应用中安装本地模型。')
       return
     }
@@ -493,7 +494,7 @@ export default function App() {
   }
 
   const completeOnboarding = async (defaultAsrModel?: string) => {
-    if (api.isTauri) {
+    if (api.isDesktop) {
       try {
         const result = await api.onboardingComplete(defaultAsrModel)
         if (result.status === 'failed') setNotice(result.diagnostics[0]?.cause ?? '新手引导状态没有保存')
@@ -511,7 +512,7 @@ export default function App() {
   const startTranscription = async () => {
     if (!asset) return
     if (!await ensureFreshBeforeWrite()) return
-    if (api.isTauri && !modelReady) {
+    if (api.isDesktop && !modelReady) {
       setModelDialogModel(selectedModel)
       return
     }
@@ -564,7 +565,7 @@ export default function App() {
   }
 
   useEffect(() => {
-    if (editorTab !== 'speakers' || !asset || !api.isTauri) return
+    if (editorTab !== 'speakers' || !asset || !api.isDesktop) return
     void Promise.all([api.speakerNameProposals(asset.id), api.speakerDiarizationGet(asset.id)]).then(([names, diarization]) => {
       setNameProposals(names.status === 'success' ? names.data ?? [] : [])
       setMergeProposals(diarization.status === 'success' ? diarization.data?.merge_proposals.filter((proposal) => proposal.status === 'pending') ?? [] : [])
@@ -572,12 +573,12 @@ export default function App() {
   }, [asset, editorTab])
 
   useEffect(() => {
-    if ((screen !== 'settings' && !projectInfoOpen) || !api.isTauri) return
+    if ((screen !== 'settings' && !projectInfoOpen) || !api.isDesktop) return
     void api.projectHistory().then((result) => setHistory(result.status === 'success' ? result.data ?? [] : []))
   }, [screen, projectInfoOpen, loadedRevision])
 
   const ensureFreshBeforeWrite = async (): Promise<boolean> => {
-    if (!api.isTauri || loadedRevision === null) return true
+    if (!api.isDesktop || loadedRevision === null) return true
     const result = await api.projectRevision()
     if (result.status === 'success' && result.data !== null && num(result.data) !== loadedRevision) {
       await refreshAll()
@@ -713,7 +714,7 @@ export default function App() {
       if (command && key === 'e') { event.preventDefault(); if (screen === 'editor') void showExport(); return }
       if (command && key === 'z') {
         event.preventDefault()
-        if (!api.isTauri) { setNotice('撤销需要在 Double Love Studio 桌面应用中执行。'); return }
+        if (!api.isDesktop) { setNotice('撤销需要在 Double Love Studio 桌面应用中执行。'); return }
         void (event.shiftKey ? api.editRedo() : api.editUndo()).then((result) => {
           if (result.status === 'failed') setNotice(result.diagnostics[0]?.cause ?? '编辑历史没有改变')
           else void refreshAll()
@@ -770,19 +771,19 @@ export default function App() {
     </section>
   )
 
-  if (showOnboarding && api.isTauri) {
+  if (showOnboarding && api.isDesktop) {
     return <Onboarding recommendedModel={systemProfile?.recommended_asr_model ?? preferences?.default_asr_model ?? 'qwen3-asr-0.6b'} systemProfile={systemProfile} models={models} installingModel={installingModel} onInstallModel={(modelId) => void installModel(modelId)} onCreateProject={() => void openProject(true)} onOpenProject={() => void openProject(false)} onSkip={() => void completeOnboarding()} onFinish={() => void completeOnboarding(systemProfile?.recommended_asr_model ?? preferences?.default_asr_model)} />
   }
 
   return (
     <div className="studio-app">
       <a className="studio-skip-link" href="#studio-main-content">跳到主要内容</a>
-      <TitleBar projectName={projectName(project)} screen={screen} sidebarVisible={sidebarVisible} onToggleSidebar={() => setSidebarVisible((visible) => !visible)} onBackToLibrary={() => setScreen('library')} onAddMedia={() => setMediaDrawerOpen(true)} onExport={() => void showExport()} onOpenProjectInfo={() => setProjectInfoOpen(true)} addDisabled={!project || !api.isTauri} exportDisabled={!project || mainTrack.length === 0 || !api.isTauri} />
+      <TitleBar projectName={projectName(project)} screen={screen} sidebarVisible={sidebarVisible} onToggleSidebar={() => setSidebarVisible((visible) => !visible)} onBackToLibrary={() => setScreen('library')} onAddMedia={() => setMediaDrawerOpen(true)} onExport={() => void showExport()} onOpenProjectInfo={() => setProjectInfoOpen(true)} addDisabled={!project || !api.isDesktop} exportDisabled={!project || mainTrack.length === 0 || !api.isDesktop} />
       {notice && <div className="studio-notice" role="status" aria-live="polite"><span>{notice}</span><button type="button" aria-label="关闭提示" onClick={() => setNotice(null)}>×</button></div>}
       <div className="studio-app-body">
         {sidebarVisible && <Sidebar project={project} screen={screen} onNavigate={setScreen} onCreate={() => void openProject(true)} onOpen={() => void openProject(false)} onOpenSettings={() => void openSettings()} />}
         <main className="studio-main" id="studio-main-content">
-          {screen === 'library' && <ProjectLibrary project={project} assets={assets} recentProjects={recentProjects} modelReady={modelReady} onCreate={() => void openProject(true)} onOpen={() => void openProject(false)} onEnterEditor={() => setScreen('editor')} onOpenModels={() => void openSettings()} onForgetRecent={(root) => { if (!api.isTauri) return; void api.recentProjectForget(root).then(() => refreshRecentProjects()).catch(() => setNotice('最近项目记录没有移除')) }} />}
+          {screen === 'library' && <ProjectLibrary project={project} assets={assets} recentProjects={recentProjects} modelReady={modelReady} onCreate={() => void openProject(true)} onOpen={() => void openProject(false)} onEnterEditor={() => setScreen('editor')} onOpenModels={() => void openSettings()} onForgetRecent={(root) => { if (!api.isDesktop) return; void api.recentProjectForget(root).then(() => refreshRecentProjects()).catch(() => setNotice('最近项目记录没有移除')) }} />}
           {screen === 'editor' && editor}
           {screen === 'tasks' && <section className="studio-tasks"><header><h1>后台任务</h1><p>所有模型任务在本机运行，完成前可以继续浏览项目。</p></header>{task ? <article><Activity size={18} /><div><strong>{task.kind === 'speaker' ? '说话人分离' : '转录'}</strong><p>{task.message}</p></div><button type="button" className="studio-secondary-button" onClick={cancelTask}>取消</button></article> : <div className="studio-tasks-empty">当前没有后台任务。</div>}</section>}
           {screen === 'settings' && <ProjectSettings projectOpen={project !== null} canvas={canvas} outputRate={outputRate} subtitleStyle={subtitleStyle} theme={theme} onThemeChange={setTheme} history={history} onCanvasSave={(next) => void saveCanvas(next)} onOutputRateSave={(next) => void saveOutputRate(next)} onStyleSave={(next) => void saveSubtitleStyle(next)} onRestoreRevision={(revision) => void restoreHistory(revision)} />}

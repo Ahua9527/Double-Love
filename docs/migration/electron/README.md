@@ -23,6 +23,8 @@
 | 3A desktop service 与 host 分派基础设施 | **已完成** | service 持有桌面状态容器且不依赖 Tauri/Electron；host 支持无业务命令的通用 invoke 与独立事件 envelope | Tauri adapter 保留，revert service/host 基础设施批次 |
 | 3B 安全边界与平台基础设施 | **已完成** | renderer 无 Node 能力；写能力需 path grant；媒体协议只读当前项目资产 | Tauri adapter 保留，revert 当前批次 |
 | 3C React renderer 目录整理 | **已完成** | 纯移动至 `studio/src/renderer/`；Tauri/Electron 构建与测试行为不变 | 直接 revert 目录移动与配置路径更新 |
+| 3D renderer 平台接缝 | **已完成** | renderer 运行时选择 Electron/Tauri/preview；Electron host 错误归一为既有 `OperationResult.failed`；本地文件无 bridge 时 fail closed | Tauri adapter 保留，revert renderer 平台接缝批次 |
+| 3 平台基础阶段（3A–3D） | **已完成** | service/host、安全边界、renderer 目录与平台 adapter 均已就位；Phase 4 可按纵向切片迁移业务命令 | 保留 Tauri adapter，按 3D→3A 逆序回退 |
 | 4 纵向业务切片迁移（7 片） | 未开始 | 每片：Electron E2E 正常+失败/取消/恢复路径；Tauri 对照一致 | 每片独立提交，只 revert 当前切片 |
 | 5 默认 Electron、打包发布、清理 | 未开始 | 功能矩阵 100%；签名公证门禁通过 | 保留最后可构建 Tauri commit |
 | 6 全量验收与回退演练 | 未开始 | 见计划完成判定 | 文档化手动回退 |
@@ -73,6 +75,12 @@ Playwright Electron smoke 从 `out/main` 启动本地文件 renderer，使用临
 ## Phase 3C 已交付 React renderer 目录整理
 
 React renderer 已保持内部目录树纯移动至 `studio/src/renderer/`；Electron main 与 preload 继续保留在 `studio/src/main/`、`studio/src/preload/`。仅同步更新入口、TypeScript、ESLint、Vitest 与 repo-root bindings 相对路径；Tauri 的 `dist/`、Electron 的 `out/renderer/`、devUrl 与 frontendDist 均不变，未改变业务逻辑或运行时行为。
+
+## Phase 3D 已交付 renderer 平台接缝（Phase 3 完成）
+
+`studio/src/renderer/platform/desktop.ts` 现在按 preload bridge、Tauri internals、browser preview 的顺序选择 Electron/Tauri/preview adapter；Electron 与 Tauri 均保持既有 renderer 命令和 DTO normalize 表面。Electron adapter 将 host invoke 成功数据解包为既有 `OperationResult`，并把 host error 合成为同形状的 `failed` 结果；对话框仅向 renderer 返回 grant token，需路径的命令再透传 token。事件统一经 `api.listen` 暴露 `{ payload }`，React renderer 不再直接导入 Tauri event API。
+
+无 bridge 的普通 HTTP 开发页继续进入 preview，不改变既有预览 notice 路径；`file:` renderer 若同时缺少 Electron/Tauri bridge 会在模块初始化时明确失败，避免打包壳静默降级。至此 Phase 3A–3D 的 service/host、平台安全、目录整理与 renderer 平台边界全部完成；业务命令实现仍按计划留在 Phase 4。
 
 ## Phase 3B 已交付 Electron main 平台基础设施
 
