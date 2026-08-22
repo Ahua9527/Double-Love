@@ -1,9 +1,10 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use ts_rs::TS;
 
 pub const PROTOCOL_VERSION: u32 = 1;
-pub const CAPABILITIES: &[&str] = &["handshake", "health", "shutdown"];
+pub const CAPABILITIES: &[&str] = &["handshake", "health", "shutdown", "invoke"];
 pub const UNKNOWN_REQUEST_ID: &str = "unknown";
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq, JsonSchema, TS)]
@@ -15,6 +16,11 @@ pub enum HostRequestMethod {
     },
     Health,
     Shutdown,
+    Invoke {
+        name: String,
+        #[ts(type = "unknown")]
+        payload: Value,
+    },
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq, JsonSchema, TS)]
@@ -49,12 +55,33 @@ pub struct HostHello {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq, JsonSchema, TS)]
+#[ts(export, export_to = "host-protocol/")]
+pub struct HostEvent {
+    #[schemars(range(min = 1, max = 1))]
+    pub v: u32,
+    pub event: String,
+    #[ts(type = "unknown")]
+    pub payload: Value,
+}
+
+impl HostEvent {
+    pub fn new(event: impl Into<String>, payload: Value) -> Self {
+        Self {
+            v: PROTOCOL_VERSION,
+            event: event.into(),
+            payload,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq, JsonSchema, TS)]
 #[serde(tag = "type", content = "data", rename_all = "snake_case")]
 #[ts(export, export_to = "host-protocol/")]
 pub enum HostResult {
     Hello(HostHello),
     Health { healthy: bool },
     Shutdown,
+    Invoke(#[ts(type = "unknown")] Value),
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq, JsonSchema, TS)]
@@ -113,7 +140,7 @@ pub fn hello() -> HostHello {
     HostHello {
         protocol: PROTOCOL_VERSION,
         host_version: env!("CARGO_PKG_VERSION").to_string(),
-        engine_version: double_love_engine::ENGINE_VERSION.to_string(),
+        engine_version: double_love_desktop_service::ENGINE_VERSION.to_string(),
         capabilities: CAPABILITIES
             .iter()
             .map(|capability| (*capability).to_string())
@@ -129,7 +156,7 @@ mod tests {
 
     use schemars::{JsonSchema, schema_for};
 
-    use super::{HostHello, HostProtocolError, HostRequest, HostResponse, HostResult};
+    use super::{HostEvent, HostHello, HostProtocolError, HostRequest, HostResponse, HostResult};
 
     fn write_schema<T: JsonSchema>(directory: &Path, name: &str) -> Result<(), Box<dyn Error>> {
         let mut json = serde_json::to_string_pretty(&schema_for!(T))?;
@@ -146,6 +173,7 @@ mod tests {
 
         write_schema::<HostRequest>(&directory, "HostRequest.schema.json")?;
         write_schema::<HostHello>(&directory, "HostHello.schema.json")?;
+        write_schema::<HostEvent>(&directory, "HostEvent.schema.json")?;
         write_schema::<HostResult>(&directory, "HostResult.schema.json")?;
         write_schema::<HostProtocolError>(&directory, "HostProtocolError.schema.json")?;
         write_schema::<HostResponse>(&directory, "HostResponse.schema.json")?;

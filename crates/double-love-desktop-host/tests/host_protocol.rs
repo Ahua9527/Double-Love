@@ -1,11 +1,14 @@
-use std::io::{Read, Write};
+use std::io::{Cursor, Read, Write};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 
+use double_love_desktop_host::HostEventSink;
 use double_love_desktop_host::framing::{MAX_FRAME_BYTES, read_frame, write_frame};
 use double_love_desktop_host::protocol::{
-    CAPABILITIES, HostRequest, HostRequestMethod, HostResponse, HostResponseStatus, HostResult,
-    PROTOCOL_VERSION, UNKNOWN_REQUEST_ID,
+    CAPABILITIES, HostEvent, HostRequest, HostRequestMethod, HostResponse, HostResponseStatus,
+    HostResult, PROTOCOL_VERSION, UNKNOWN_REQUEST_ID,
 };
+use double_love_desktop_service::{DesktopEventSink, ENGINE_VERSION, UNKNOWN_COMMAND};
+use serde_json::json;
 
 struct HostProcess {
     child: Child,
@@ -16,6 +19,8 @@ struct HostProcess {
 impl HostProcess {
     fn spawn() -> Self {
         let mut child = Command::new(env!("CARGO_BIN_EXE_double-love-desktop-host"))
+            .arg("--app-data-dir")
+            .arg(std::env::temp_dir().join("double-love-host-protocol-tests"))
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -142,7 +147,7 @@ fn spawned_host_handles_control_protocol_and_recovers_from_request_errors() {
         } => {
             assert_eq!(hello.protocol, PROTOCOL_VERSION);
             assert_eq!(hello.host_version, env!("CARGO_PKG_VERSION"));
-            assert_eq!(hello.engine_version, double_love_engine::ENGINE_VERSION);
+            assert_eq!(hello.engine_version, ENGINE_VERSION);
             assert_eq!(
                 hello.capabilities,
                 CAPABILITIES
@@ -160,12 +165,51 @@ fn spawned_host_handles_control_protocol_and_recovers_from_request_errors() {
         HostResponse::ok("health-1", HostResult::Health { healthy: true })
     );
 
+    host.send_raw(br#"{"v":1,"id":"invoke-invalid-1","method":"invoke","name":""}"#);
+    assert_error(host.response(), "invoke-invalid-1", "INVALID_PARAMS");
+
+    host.send(&HostRequest::new(
+        "invoke-unknown-1",
+        HostRequestMethod::Invoke {
+            name: "project_not_migrated".to_string(),
+            payload: json!({"value": 1}),
+        },
+    ));
+    let response = host.response();
+    assert_eq!(response.id, "invoke-unknown-1");
+    match response.response {
+        HostResponseStatus::Error { error } => {
+            assert_eq!(error.code, UNKNOWN_COMMAND);
+            assert!(error.message.contains("project_not_migrated"));
+        }
+        other => panic!("expected UNKNOWN_COMMAND response, got {other:?}"),
+    }
+
     host.send(&HostRequest::new("shutdown-1", HostRequestMethod::Shutdown));
     assert_eq!(
         host.response(),
         HostResponse::ok("shutdown-1", HostResult::Shutdown)
     );
     host.wait();
+}
+
+#[test]
+fn host_event_sink_writes_valid_uncorrelated_envelope_frame() {
+    let sink = HostEventSink::new(Vec::new());
+    sink.emit("dl://progress", json!({"completed": 3}))
+        .expect("emit host event");
+
+    let bytes = sink.into_inner().expect("event output");
+    let frame = read_frame(&mut Cursor::new(bytes))
+        .expect("read event frame")
+        .expect("event frame");
+    let event: HostEvent = serde_json::from_slice(&frame).expect("deserialize host event");
+    assert_eq!(
+        event,
+        HostEvent::new("dl://progress", json!({"completed": 3}))
+    );
+    let value: serde_json::Value = serde_json::from_slice(&frame).expect("deserialize event JSON");
+    assert!(value.get("id").is_none());
 }
 
 #[test]

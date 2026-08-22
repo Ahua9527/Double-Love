@@ -798,12 +798,22 @@ dependencies = [
 name = "double-love-desktop-host"
 version = "0.1.0"
 dependencies = [
- "double-love-engine",
+ "double-love-desktop-service",
  "schemars 1.2.2",
  "serde",
  "serde_json",
  "thiserror 2.0.20",
  "ts-rs",
+]
+
+[[package]]
+name = "double-love-desktop-service"
+version = "0.1.0"
+dependencies = [
+ "double-love-engine",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
 ]
 
 [[package]]

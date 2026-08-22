@@ -2,32 +2,90 @@ pub mod framing;
 pub mod protocol;
 
 use std::io::{self, Read, Write};
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 
+use double_love_desktop_service::{
+    DesktopEventSink, DesktopService, DesktopServiceError, HOST_UNAVAILABLE, INTERNAL,
+    INVALID_PARAMS,
+};
+use serde::Serialize;
 use serde_json::Value;
 use thiserror::Error;
 
 use crate::framing::{FrameReadError, read_frame, write_frame};
 use crate::protocol::{
-    HostRequest, HostRequestMethod, HostResponse, HostResult, PROTOCOL_VERSION, UNKNOWN_REQUEST_ID,
-    hello,
+    HostEvent, HostRequest, HostRequestMethod, HostResponse, HostResult, PROTOCOL_VERSION,
+    UNKNOWN_REQUEST_ID, hello,
 };
 
 #[derive(Debug, Error)]
 pub enum HostRuntimeError {
     #[error("host input/output failed: {0}")]
     Io(#[from] io::Error),
-    #[error("host could not serialize a response: {0}")]
-    Serialize(#[from] serde_json::Error),
+    #[error("desktop service could not start: {0}")]
+    Service(#[from] DesktopServiceError),
 }
 
-pub fn run_host(reader: &mut impl Read, writer: &mut impl Write) -> Result<(), HostRuntimeError> {
+pub struct HostEventSink<W> {
+    writer: Mutex<W>,
+}
+
+impl<W> HostEventSink<W> {
+    pub fn new(writer: W) -> Self {
+        Self {
+            writer: Mutex::new(writer),
+        }
+    }
+
+    pub fn into_inner(self) -> Result<W, DesktopServiceError> {
+        self.writer
+            .into_inner()
+            .map_err(|_| DesktopServiceError::internal("host stdout lock is unavailable"))
+    }
+}
+
+impl<W: Write> HostEventSink<W> {
+    fn write_serializable(&self, value: &impl Serialize) -> Result<(), DesktopServiceError> {
+        let body = serde_json::to_vec(value).map_err(|error| {
+            DesktopServiceError::new(
+                INTERNAL,
+                format!("host frame serialization failed: {error}"),
+            )
+        })?;
+        let mut writer = self.writer.lock().map_err(|_| {
+            DesktopServiceError::new(HOST_UNAVAILABLE, "host stdout lock is unavailable")
+        })?;
+        write_frame(&mut *writer, &body).map_err(|error| {
+            DesktopServiceError::new(
+                HOST_UNAVAILABLE,
+                format!("host stdout write failed: {error}"),
+            )
+        })
+    }
+}
+
+impl<W: Write + Send> DesktopEventSink for HostEventSink<W> {
+    fn emit(&self, channel: &str, payload: Value) -> Result<(), DesktopServiceError> {
+        self.write_serializable(&HostEvent::new(channel, payload))
+    }
+}
+
+pub fn run_host<W: Write + Send + 'static>(
+    reader: &mut impl Read,
+    writer: W,
+    app_data_dir: Option<PathBuf>,
+) -> Result<(), HostRuntimeError> {
+    let output = Arc::new(HostEventSink::new(writer));
+    let service = DesktopService::new(app_data_dir, output.clone())?;
+
     loop {
         let frame = match read_frame(reader) {
             Ok(Some(frame)) => frame,
             Ok(None) => return Ok(()),
             Err(FrameReadError::TooLarge { declared, maximum }) => {
                 write_response(
-                    writer,
+                    output.as_ref(),
                     &HostResponse::error(
                         UNKNOWN_REQUEST_ID,
                         "FRAME_TOO_LARGE",
@@ -42,13 +100,13 @@ pub fn run_host(reader: &mut impl Read, writer: &mut impl Write) -> Result<(), H
         let request = match parse_request(&frame) {
             Ok(request) => request,
             Err(response) => {
-                write_response(writer, &response)?;
+                write_response(output.as_ref(), &response)?;
                 continue;
             }
         };
 
-        let (response, shutdown) = handle_request(request);
-        write_response(writer, &response)?;
+        let (response, shutdown) = handle_request(&service, request);
+        write_response(output.as_ref(), &response)?;
         if shutdown {
             return Ok(());
         }
@@ -90,14 +148,27 @@ fn parse_request(frame: &[u8]) -> Result<HostRequest, HostResponse> {
         ));
     }
 
-    if let Some(method) = value.get("method").and_then(Value::as_str)
-        && !matches!(method, "handshake" | "health" | "shutdown")
-    {
-        return Err(HostResponse::error(
-            request_id,
-            "UNKNOWN_METHOD",
-            format!("unknown host method: {method}"),
-        ));
+    if let Some(method) = value.get("method").and_then(Value::as_str) {
+        if !matches!(method, "handshake" | "health" | "shutdown" | "invoke") {
+            return Err(HostResponse::error(
+                request_id,
+                "UNKNOWN_METHOD",
+                format!("unknown host method: {method}"),
+            ));
+        }
+        if method == "invoke"
+            && (value
+                .get("name")
+                .and_then(Value::as_str)
+                .is_none_or(|name| name.trim().is_empty())
+                || value.get("payload").is_none())
+        {
+            return Err(HostResponse::error(
+                request_id,
+                INVALID_PARAMS,
+                "invoke requires a non-blank string name and a payload",
+            ));
+        }
     }
 
     serde_json::from_value(value).map_err(|error| {
@@ -109,7 +180,7 @@ fn parse_request(frame: &[u8]) -> Result<HostRequest, HostResponse> {
     })
 }
 
-fn handle_request(request: HostRequest) -> (HostResponse, bool) {
+fn handle_request(service: &DesktopService, request: HostRequest) -> (HostResponse, bool) {
     let HostRequest { id, method, .. } = request;
     match method {
         HostRequestMethod::Handshake {
@@ -133,14 +204,24 @@ fn handle_request(request: HostRequest) -> (HostResponse, bool) {
             false,
         ),
         HostRequestMethod::Shutdown => (HostResponse::ok(id, HostResult::Shutdown), true),
+        HostRequestMethod::Invoke { name, payload } => {
+            let response = match service.invoke(&name, payload) {
+                Ok(result) => HostResponse::ok(id, HostResult::Invoke(result)),
+                Err(error) => HostResponse::error(id, error.code, error.message),
+            };
+            (response, false)
+        }
     }
 }
 
-fn write_response(
-    writer: &mut impl Write,
+fn write_response<W: Write>(
+    output: &HostEventSink<W>,
     response: &HostResponse,
 ) -> Result<(), HostRuntimeError> {
-    let body = serde_json::to_vec(response)?;
-    write_frame(writer, &body)?;
-    Ok(())
+    output.write_serializable(response).map_err(|error| {
+        HostRuntimeError::Io(io::Error::other(format!(
+            "{}: {}",
+            error.code, error.message
+        )))
+    })
 }

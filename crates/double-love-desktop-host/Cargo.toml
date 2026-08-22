@@ -6,7 +6,7 @@ description = "Long-running desktop protocol host for Double Love Studio"
 license = "MIT"
 
 [dependencies]
-double-love-engine = { path = "../double-love-engine" }
+double-love-desktop-service = { path = "../double-love-desktop-service" }
 schemars = "~1.2"
 serde.workspace = true
 serde_json.workspace = true

@@ -148,6 +148,20 @@
           "required": [
             "type"
           ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "data": true,
+            "type": {
+              "type": "string",
+              "const": "invoke"
+            }
+          },
+          "required": [
+            "type",
+            "data"
+          ]
         }
       ]
     }

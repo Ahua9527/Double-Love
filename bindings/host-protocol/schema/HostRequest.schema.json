@@ -60,6 +60,24 @@
       "required": [
         "method"
       ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
+          "const": "invoke"
+        },
+        "name": {
+          "type": "string"
+        },
+        "payload": true
+      },
+      "required": [
+        "method",
+        "name",
+        "payload"
+      ]
     }
   ],
   "required": [

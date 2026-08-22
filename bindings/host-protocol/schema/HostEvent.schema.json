@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "HostEvent",
+  "type": "object",
+  "properties": {
+    "event": {
+      "type": "string"
+    },
+    "payload": true,
+    "v": {
+      "type": "integer",
+      "format": "uint32",
+      "maximum": 1,
+      "minimum": 1
+    }
+  },
+  "required": [
+    "v",
+    "event",
+    "payload"
+  ]
+}

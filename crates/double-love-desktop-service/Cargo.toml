@@ -1,0 +1,12 @@
+[package]
+name = "double-love-desktop-service"
+version = "0.1.0"
+edition = "2024"
+description = "Desktop state and command dispatch service for Double Love Studio"
+license = "MIT"
+
+[dependencies]
+double-love-engine = { path = "../double-love-engine" }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
