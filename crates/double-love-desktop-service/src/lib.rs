@@ -8,14 +8,15 @@ use std::sync::{Arc, Mutex};
 use double_love_engine::{
     CanvasSpec, DEFAULT_HANDLES_MS, Diagnostic, DiagnosticLevel, DiarizeConfig, DoctorEnvironment,
     FfmpegTools, FrameRate, MediaAssetSummary, ModelError, OperationResult, ProgressEvent,
-    ProgressSink, ProjectStore, ProjectSummary, SharedSink, SpeakerIdentity,
+    ProgressSink, ProjectExportPreview, ProjectStore, ProjectSummary, SharedSink, SpeakerIdentity,
     SpeakerNameAgentPayload, SubtitleStyle, TaskRegistry, TaskState, TranscribeConfig,
     agent_name_payload_preview, append_full_main_track_asset, append_main_track_clip,
-    compile_project_timeline, create_project, export_rough_cut, export_rough_cut_to,
-    ffmpeg_supports_ass_filter, import_media as engine_import_media, list_media_assets,
-    local_name_proposals, move_main_track_clip, omit_words, open_project, remove_main_track_clip,
-    restore_words, speaker_diarization_result, split_main_track_clip, start_speaker_diarization,
-    start_transcription, transcript_view, trim_main_track_clip,
+    compile_project_timeline, create_project, export_project_ass_to, export_project_xmeml_to,
+    export_rough_cut, export_rough_cut_to, ffmpeg_supports_ass_filter,
+    import_media as engine_import_media, list_media_assets, local_name_proposals,
+    move_main_track_clip, omit_words, open_project, preview_project_export, remove_main_track_clip,
+    render_project_mp4_to, restore_words, speaker_diarization_result, split_main_track_clip,
+    start_speaker_diarization, start_transcription, transcript_view, trim_main_track_clip,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -298,6 +299,9 @@ fn sanitize_renderer_diagnostics<T>(
     for diagnostic in &mut result.diagnostics {
         sanitize_renderer_text(&mut diagnostic.cause, replacements);
         sanitize_renderer_text(&mut diagnostic.impact, replacements);
+        if let Some(object_id) = &mut diagnostic.object_id {
+            sanitize_renderer_text(object_id, replacements);
+        }
         if let Some(action) = &mut diagnostic.suggested_action {
             sanitize_renderer_text(action, replacements);
         }
@@ -617,6 +621,12 @@ struct RoughcutApplyParams {
     target_path: String,
 }
 
+#[derive(Deserialize)]
+struct ProjectExportApplyParams {
+    #[serde(alias = "targetPath")]
+    target_path: String,
+}
+
 #[derive(Serialize)]
 struct ResolvedPath {
     path: String,
@@ -736,6 +746,22 @@ fn sanitize_project_result<T>(
     summary: &ProjectSummary,
 ) -> OperationResult<T> {
     let replacements = renderer_path_replacements(&[(&summary.root, "<PROJECT>")]);
+    sanitize_renderer_diagnostics(result, &replacements)
+}
+
+fn sanitize_project_export_result<T>(
+    store: &ProjectStore,
+    summary: &ProjectSummary,
+    result: OperationResult<T>,
+) -> OperationResult<T> {
+    let assets = store.media_assets().unwrap_or_default();
+    let mut sensitive_paths = assets
+        .iter()
+        .map(|asset| (asset.original_path.as_str(), "<MEDIA>"))
+        .collect::<Vec<_>>();
+    sensitive_paths.push((&summary.root, "<PROJECT>"));
+    let mut replacements = renderer_path_replacements(&sensitive_paths);
+    replacements.sort_by_key(|item| std::cmp::Reverse(item.0.len()));
     sanitize_renderer_diagnostics(result, &replacements)
 }
 
@@ -1786,6 +1812,55 @@ pub fn register_commands(registry: &mut CommandRegistry) {
             )
         }))
     });
+    registry.register("project_export_preview", |state, _events, _payload| {
+        result_value(with_store(state, |store, summary| {
+            let result = preview_project_export(store, &project_timeline_name(summary));
+            sanitize_project_export_result(store, summary, result)
+        }))
+    });
+    registry.register("project_export_xmeml_apply", |state, _events, payload| {
+        let params: ProjectExportApplyParams = params(payload)?;
+        result_value(with_store(state, |store, summary| {
+            let result = export_project_xmeml_to(
+                store,
+                &project_timeline_name(summary),
+                Path::new(&params.target_path),
+            );
+            sanitize_project_export_result(store, summary, result)
+        }))
+    });
+    registry.register("project_export_ass_apply", |state, _events, payload| {
+        let params: ProjectExportApplyParams = params(payload)?;
+        result_value(with_store(state, |store, summary| {
+            let result = export_project_ass_to(
+                store,
+                &project_timeline_name(summary),
+                Path::new(&params.target_path),
+            );
+            sanitize_project_export_result(store, summary, result)
+        }))
+    });
+    registry.register("project_render_mp4_apply", |state, _events, payload| {
+        let params: ProjectExportApplyParams = params(payload)?;
+        result_value(with_store(state, |store, summary| {
+            let result = match FfmpegTools::discover() {
+                Ok(tools) => render_project_mp4_to(
+                    store,
+                    &project_timeline_name(summary),
+                    &tools,
+                    &Path::new(&summary.root).join(".doublelove/cache"),
+                    Path::new(&params.target_path),
+                ),
+                Err(diagnostic) => {
+                    let mut result: OperationResult<ProjectExportPreview> =
+                        OperationResult::failed(&diagnostic.code, &diagnostic.cause);
+                    result.diagnostics[0].suggested_action = diagnostic.suggested_action.clone();
+                    result
+                }
+            };
+            sanitize_project_export_result(store, summary, result)
+        }))
+    });
 }
 
 pub struct DesktopService {
@@ -2088,6 +2163,7 @@ mod tests {
         original.revision = Some(17);
         original.data = Some(serde_json::json!({"unchanged": selected}));
         original.diagnostics[0].impact = format!("impact {project}");
+        original.diagnostics[0].object_id = Some(selected.to_string());
         original.diagnostics[0].suggested_action = Some(format!("retry {selected} from {project}"));
         let original_counts = original.counts.clone();
         let original_data = original.data.clone();
@@ -2107,6 +2183,10 @@ mod tests {
         assert_eq!(sanitized.diagnostics[0].code, "MEDIA_PROBE_FAILED");
         assert_eq!(sanitized.diagnostics[0].cause, "probe <SELECTED_MEDIA>");
         assert_eq!(sanitized.diagnostics[0].impact, "impact <PROJECT>");
+        assert_eq!(
+            sanitized.diagnostics[0].object_id.as_deref(),
+            Some("<SELECTED_MEDIA>")
+        );
         assert_eq!(
             sanitized.diagnostics[0].suggested_action.as_deref(),
             Some("retry <SELECTED_MEDIA> from <PROJECT>")

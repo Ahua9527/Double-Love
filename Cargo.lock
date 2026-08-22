@@ -800,9 +800,11 @@ version = "0.1.0"
 dependencies = [
  "double-love-desktop-service",
  "double-love-engine",
+ "rusqlite",
  "schemars 1.2.2",
  "serde",
  "serde_json",
+ "sha2",
  "thiserror 2.0.20",
  "ts-rs",
 ]

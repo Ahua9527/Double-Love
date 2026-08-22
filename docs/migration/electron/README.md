@@ -25,7 +25,7 @@
 | 3C React renderer 目录整理 | **已完成** | 纯移动至 `studio/src/renderer/`；Tauri/Electron 构建与测试行为不变 | 直接 revert 目录移动与配置路径更新 |
 | 3D renderer 平台接缝 | **已完成** | renderer 运行时选择 Electron/Tauri/preview；Electron host 错误归一为既有 `OperationResult.failed`；本地文件无 bridge 时 fail closed | Tauri adapter 保留，revert renderer 平台接缝批次 |
 | 3 平台基础阶段（3A–3D） | **已完成** | service/host、安全边界、renderer 目录与平台 adapter 均已就位；Phase 4 可按纵向切片迁移业务命令 | 保留 Tauri adapter，按 3D→3A 逆序回退 |
-| 4 纵向业务切片迁移（7 片） | **进行中（Slice 1–6 已完成）** | 每片：Electron E2E 正常+失败/取消/恢复路径；Tauri 对照一致 | 每片独立提交，只 revert 当前切片 |
+| 4 纵向业务切片迁移（7 片） | **已完成（Slice 1–7）** | 每片：Electron E2E 正常+失败/取消/恢复路径；Tauri 对照一致 | 每片独立提交，只 revert 当前切片 |
 | 5 默认 Electron、打包发布、清理 | 未开始 | 功能矩阵 100%；签名公证门禁通过 | 保留最后可构建 Tauri commit |
 | 6 全量验收与回退演练 | 未开始 | 见计划完成判定 | 文档化手动回退 |
 
@@ -115,6 +115,16 @@ Electron 的 Agent 预览边界会在返回前仅替换 payload 字符串中当�
 Rust host Slice 6 集成以合成媒体和预置的 ASR/aligner/Silero/WeSpeaker installed 状态运行既有 ASR 与 speaker mock：覆盖模型/项目门禁、两素材分离、任务成功终态、结果、名称候选、仅目标说话人的 Agent payload 与路径脱敏、姓名确认、拒绝确认不增 revision、合并确认、逐词归属改写、可见列表和旧身份 `merged_into` 留存；同时检查项目 DB 中存在 embedding，而所有 host event/response 和项目日志均无向量形状或 embedding 字段。额外 host 边界测试在无 test flag 且预置两个 mock 环境变量时验证 speaker 子进程观察到 `mock=false`，并由显式 test mock 注入含 12 个声纹浮点值的畸形响应，验证 `dl://progress` 只保留 `<REDACTED>`。Electron Playwright Slice 6 经真实 path grant 创建项目并导入两段合成媒体，复用 Slice 5 mock 转录，再覆盖分离、改名后的转录说话人显示映射、跨素材合并、Agent payload 路径脱敏，以及全部捕获事件无结构化向量、浮点数组形状字符串、项目根或媒体源路径。
 
 Slice 6 未修改 `src-tauri`、Web/PWA、SQLite schema/migration、bindings/DTO schema、host 或 sidecar 协议、导出格式和既有 speaker 隐私边界；Tauri 继续作为行为参考。门禁证据：workspace fmt 与 clippy `-D warnings` 通过；严格工具模式 workspace Rust 测试全过（engine 148 过、1 个既有 golden regeneration ignored；desktop service 19 过；host Slice 6 集成 3 过；Tauri 参考测试 18 过）；bindings contract 通过；Studio lint、89 项 Vitest、Studio Vite build、独立 `tsc -b`、Electron build 与 host build 通过；Slices 1–6 及平台/骨架共 14 项 Playwright 全过；根 Web lint、99 项 Vitest 与 build 通过；`git diff --check` 通过。
+
+## Phase 4 Slice 7 已交付项目级导出（Phase 4 完成）
+
+host-neutral service 已按 Tauri 参考实现注册 `project_export_preview`、`project_export_xmeml_apply`、`project_export_ass_apply` 与 `project_render_mp4_apply`。预览继续以当前项目目录 basename 加 ` Rough Cut` 调用 `preview_project_export`，只返回同一份 TimelineIR v2、字幕 Cue 与 Premiere/Resolve 兼容性报告，不写文件或 revision。XMEML/ASS apply 直接复用 engine 的原子写入、SHA-256、`outputs` 与 `export_artifact` 落账；MP4 继续由 `FfmpegTools::discover` 发现开发运行时，在 `<project>/.doublelove/cache` 写临时 ASS，并保留 engine 的 libass 前置诊断与实际 ffmpeg 渲染语义。
+
+Electron main 已预先限定这三个 apply 只能消费一次性 `export-save` grant；本切片验证 token 重放返回 `INVALID_GRANT`。`project_render_mp4_apply` 不再套用普通 host 请求的 5 秒超时，因为真实项目渲染可以合法运行更久；host 退出或崩溃仍会拒绝 pending。四个导出命令的失败 `OperationResult` 在 renderer 边界只替换当前项目根和已登记媒体源路径为 `<PROJECT>` / `<MEDIA>`，不改 status、data、revision、counts、outputs、SHA-256 或 engine/CLI/Tauri 诊断 code。
+
+Rust host Slice 7 集成使用 25 与 30000/1001 两段真实合成媒体、test-only mock 转录、主轨和 omit，覆盖只读预览、XMEML/ASS 文件与哈希、实际 libass MP4、ffprobe codec/duration、三类导出 ledger、空主轨、未知资产、非法目标、ffmpeg 失败路径脱敏，以及无 libass 时与 Tauri 完全相同的 `RENDER_ASS_FILTER_MISSING` cause/suggested action。Electron Playwright `slice7.spec.ts` 经真实目录/媒体/导出 grant 跑完整链，逐项检查 pathurl、ASS 样式与 cue、真实 MP4、SQLite `export_artifact`、空 cut 阻断和 grant 重放；同一项目再由既有 CLI 写出 XMEML，并与 Electron 产物逐字节相等。
+
+Slice 7 未修改 `src-tauri`、Web/PWA、SQLite schema/migration、TimelineIR、engine 导出器或 XMEML/ASS golden；Tauri 与 CLI 继续作为行为参考。门禁证据：workspace fmt 与 clippy `-D warnings` 通过；ffmpeg-full/libass 严格模式 workspace Rust 测试全过（engine 148 过、1 个既有 golden regeneration ignored；desktop service 19 过；host Slice 7 集成 2 过；Tauri 参考测试 18 过）；bindings contract 通过；Studio lint、89 项 Vitest、Studio/TypeScript/Electron build 与 host build 通过；Slices 1–7 及平台/骨架共 15 项 Playwright 全过；根 Web lint、99 项 Vitest 与 build 通过；`git diff --check` 通过。至此 Phase 4 七个纵向业务切片全部迁移完成，Phase 5 可开始默认 Electron、打包资源、签名发布与 Tauri 清理。
 
 ## Phase 4 Slice 4 已交付主轨与项目视觉设置
 

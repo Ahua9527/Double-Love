@@ -125,7 +125,7 @@ app.setPath('userData', userDataPath)
 interface PendingRequest {
   resolve: (response: HostResponse) => void
   reject: (error: Error) => void
-  timer: NodeJS.Timeout
+  timer: NodeJS.Timeout | null
 }
 
 interface HostEventFrame {
@@ -267,7 +267,7 @@ class HostSupervisor {
       method: 'invoke',
       name,
       payload,
-    })
+    }, name === 'project_render_mp4_apply' ? null : REQUEST_TIMEOUT_MS)
   }
 
   async stop(): Promise<void> {
@@ -300,7 +300,10 @@ class HostSupervisor {
     this.log.write({ level: 'info', process: 'host', method: 'lifecycle.stop', status: 'stop' })
   }
 
-  private request(request: HostRequest): Promise<HostResponse> {
+  private request(
+    request: HostRequest,
+    timeoutMs: number | null = REQUEST_TIMEOUT_MS,
+  ): Promise<HostResponse> {
     const child = this.child
     if (!child?.stdin.writable) return Promise.reject(new Error('Desktop host is not running'))
 
@@ -312,16 +315,16 @@ class HostSupervisor {
     header.writeUInt32BE(payload.byteLength)
 
     return new Promise<HostResponse>((resolveRequest, rejectRequest) => {
-      const timer = setTimeout(() => {
+      const timer = timeoutMs === null ? null : setTimeout(() => {
         this.pending.delete(request.id)
         rejectRequest(new Error(`Desktop host request timed out: ${request.method}`))
-      }, REQUEST_TIMEOUT_MS)
+      }, timeoutMs)
       this.pending.set(request.id, { resolve: resolveRequest, reject: rejectRequest, timer })
       child.stdin.write(Buffer.concat([header, payload]), (error) => {
         if (!error) return
         const pending = this.pending.get(request.id)
         if (!pending) return
-        clearTimeout(pending.timer)
+        if (pending.timer) clearTimeout(pending.timer)
         this.pending.delete(request.id)
         pending.reject(error)
       })
@@ -374,7 +377,7 @@ class HostSupervisor {
 
     const pending = this.pending.get(value.id)
     if (!pending) return
-    clearTimeout(pending.timer)
+    if (pending.timer) clearTimeout(pending.timer)
     this.pending.delete(value.id)
     pending.resolve(value)
   }
@@ -383,7 +386,7 @@ class HostSupervisor {
     this.healthy = false
     this.capabilities = []
     for (const pending of this.pending.values()) {
-      clearTimeout(pending.timer)
+      if (pending.timer) clearTimeout(pending.timer)
       pending.reject(error)
     }
     this.pending.clear()
