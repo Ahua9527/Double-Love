@@ -50,6 +50,7 @@ next-env.d.ts
 TODO.md
 .playwright-cli/
 .workbuddy/
+.pi/subagents/
 target/
 
 # 独立对比工作区（自有仓库，不属于本项目）
@@ -58,3 +59,6 @@ csv2xml/
 # 私有设计资料（不进入公开 PR / Issue）
 Double_Love_Studio_PRD_Full_v1.0.md
 docs/design/reference-visual.png
+
+# 迁移基线原始运行证据（本机保留，仓库只提交脱敏摘要）
+evidence/migration-baseline/
