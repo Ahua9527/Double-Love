@@ -1,6 +1,6 @@
 import { FileText, Film, Subtitles, X } from 'lucide-react'
-import type { OperationResult } from '../../../bindings/OperationResult'
-import type { ProjectExportPreview } from '../../../bindings/ProjectExportPreview'
+import type { OperationResult } from '../../../../bindings/OperationResult'
+import type { ProjectExportPreview } from '../../../../bindings/ProjectExportPreview'
 import { frameRateFps, num } from '../utils'
 
 interface ProjectExportDialogProps {

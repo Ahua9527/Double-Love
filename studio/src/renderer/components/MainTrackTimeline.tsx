@@ -1,10 +1,10 @@
 import { GripVertical, Scissors, Trash2 } from 'lucide-react'
 import { useMemo, useRef, useState } from 'react'
 import './main-track-timeline.css'
-import type { FrameRate } from '../../../bindings/FrameRate'
-import type { MainTrackClip } from '../../../bindings/MainTrackClip'
-import type { MediaAssetSummary } from '../../../bindings/MediaAssetSummary'
-import type { TimelineIRv2 } from '../../../bindings/TimelineIRv2'
+import type { FrameRate } from '../../../../bindings/FrameRate'
+import type { MainTrackClip } from '../../../../bindings/MainTrackClip'
+import type { MediaAssetSummary } from '../../../../bindings/MediaAssetSummary'
+import type { TimelineIRv2 } from '../../../../bindings/TimelineIRv2'
 import { clampSeconds, formatClock, frameRateFps, num, seekFractionFromClientX } from '../utils'
 
 interface MainTrackTimelineProps {

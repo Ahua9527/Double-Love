@@ -1,6 +1,6 @@
 import { FolderOpen, Plus, Search, Trash2 } from 'lucide-react'
-import type { MediaAssetSummary } from '../../../bindings/MediaAssetSummary'
-import type { ProjectSummary } from '../../../bindings/ProjectSummary'
+import type { MediaAssetSummary } from '../../../../bindings/MediaAssetSummary'
+import type { ProjectSummary } from '../../../../bindings/ProjectSummary'
 import type { RecentProject } from '../tauri'
 
 interface ProjectLibraryProps {

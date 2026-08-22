@@ -1,7 +1,7 @@
 import { fireEvent, render, screen } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type { MainTrackClip } from '../../../bindings/MainTrackClip'
-import type { MediaAssetSummary } from '../../../bindings/MediaAssetSummary'
+import type { MainTrackClip } from '../../../../bindings/MainTrackClip'
+import type { MediaAssetSummary } from '../../../../bindings/MediaAssetSummary'
 import { MainTrackTimeline } from './MainTrackTimeline'
 
 const captureTargets = new Map<number, HTMLElement>()

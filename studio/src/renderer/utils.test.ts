@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import type { Diagnostic } from '../../bindings/Diagnostic'
-import type { EditOperation } from '../../bindings/EditOperation'
-import type { WordAnchor } from '../../bindings/WordAnchor'
+import type { Diagnostic } from '../../../bindings/Diagnostic'
+import type { EditOperation } from '../../../bindings/EditOperation'
+import type { WordAnchor } from '../../../bindings/WordAnchor'
 import {
   EMPTY_SELECTION,
   PANEL_STORAGE_KEY,

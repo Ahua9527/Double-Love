@@ -1,10 +1,10 @@
 // 界面纯函数：秒制播放头、刻度尺、omit 区间换算与诊断汇总。全部无副作用，可单测。
 // 时间约定：UI 显示层允许 f64 秒（PRD 边界）；引擎侧采样/帧整数不经过这里。
 
-import type { Diagnostic } from '../../bindings/Diagnostic'
-import type { EditOperation } from '../../bindings/EditOperation'
-import type { FrameRate } from '../../bindings/FrameRate'
-import type { WordAnchor } from '../../bindings/WordAnchor'
+import type { Diagnostic } from '../../../bindings/Diagnostic'
+import type { EditOperation } from '../../../bindings/EditOperation'
+import type { FrameRate } from '../../../bindings/FrameRate'
+import type { WordAnchor } from '../../../bindings/WordAnchor'
 
 /** ts-rs 把 i64 标成 bigint；JSON 运行时是 number。统一在边界转 number。 */
 export function num(value: bigint | number): number {

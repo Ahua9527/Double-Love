@@ -1,5 +1,5 @@
 import { Clock3, FolderOpen, Grid2X2, PlusCircle, Settings2 } from 'lucide-react'
-import type { ProjectSummary } from '../../../bindings/ProjectSummary'
+import type { ProjectSummary } from '../../../../bindings/ProjectSummary'
 
 export type StudioScreen = 'library' | 'editor' | 'tasks' | 'settings'
 

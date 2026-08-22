@@ -1,6 +1,6 @@
 import { X } from 'lucide-react'
-import type { FrameRate } from '../../../bindings/FrameRate'
-import type { RevisionHistoryEntry } from '../../../bindings/RevisionHistoryEntry'
+import type { FrameRate } from '../../../../bindings/FrameRate'
+import type { RevisionHistoryEntry } from '../../../../bindings/RevisionHistoryEntry'
 import { frameRateLabel, num } from '../utils'
 
 interface ProjectInfoDialogProps {

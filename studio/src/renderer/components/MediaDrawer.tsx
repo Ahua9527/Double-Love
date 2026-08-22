@@ -1,5 +1,5 @@
 import { Film, Plus, X } from 'lucide-react'
-import type { MediaAssetSummary } from '../../../bindings/MediaAssetSummary'
+import type { MediaAssetSummary } from '../../../../bindings/MediaAssetSummary'
 import { assetStatusLabel, formatClock, num } from '../utils'
 
 interface MediaDrawerProps {

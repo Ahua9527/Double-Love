@@ -22,6 +22,7 @@
 | 2B Electron 骨架 | **已完成（Batch A host + Batch B Electron 壳）** | 窗口/host 握手/settings 单例/边界 smoke 全过；Tauri 仍完整可用 | 删除/回退骨架，不触碰用户数据 |
 | 3A desktop service 与 host 分派基础设施 | **已完成** | service 持有桌面状态容器且不依赖 Tauri/Electron；host 支持无业务命令的通用 invoke 与独立事件 envelope | Tauri adapter 保留，revert service/host 基础设施批次 |
 | 3B 安全边界与平台基础设施 | **已完成** | renderer 无 Node 能力；写能力需 path grant；媒体协议只读当前项目资产 | Tauri adapter 保留，revert 当前批次 |
+| 3C React renderer 目录整理 | **已完成** | 纯移动至 `studio/src/renderer/`；Tauri/Electron 构建与测试行为不变 | 直接 revert 目录移动与配置路径更新 |
 | 4 纵向业务切片迁移（7 片） | 未开始 | 每片：Electron E2E 正常+失败/取消/恢复路径；Tauri 对照一致 | 每片独立提交，只 revert 当前切片 |
 | 5 默认 Electron、打包发布、清理 | 未开始 | 功能矩阵 100%；签名公证门禁通过 | 保留最后可构建 Tauri commit |
 | 6 全量验收与回退演练 | 未开始 | 见计划完成判定 | 文档化手动回退 |
@@ -68,6 +69,10 @@ v1 的 `u64`/`u32` 在 wire 上都使用 JSON number；ts-rs 的 `bigint` 仅是
 main 监督唯一 Rust host，按 64 MiB 上限实现四字节大端长度前缀 JSON framing；启动时用生成的 `HostResponse` JSON Schema（Ajv）校验 handshake，确认 protocol 1 并记录 capabilities。受限 `window.doubleLove` 只暴露冻结的 `hostHealth()` 与 `openSettings()`。退出先发 shutdown，超时再 kill；崩溃后标记 unhealthy，不重放业务请求。开发时 host 从仓库根 `target/debug/double-love-desktop-host` 解析，schema 从仓库根 `bindings/host-protocol/schema` 读取；打包时 host 从 `process.resourcesPath` 解析。正式打包的 host/schema resource 复制、`electron-builder`、updater 与 Electron Fuses 加固均属于 Phase 5，本批只锁定依赖而不接线。
 
 Playwright Electron smoke 从 `out/main` 启动本地文件 renderer，使用临时 userData 且不访问网络，覆盖单主窗口标题、renderer Node 隔离、host health、`Cmd+,` settings 单例、close-to-hide/reopen 与 host 持续健康。CI 在保留 Tauri debug reference build 的同时构建 host、Electron 输出并实际运行该 smoke。
+
+## Phase 3C 已交付 React renderer 目录整理
+
+React renderer 已保持内部目录树纯移动至 `studio/src/renderer/`；Electron main 与 preload 继续保留在 `studio/src/main/`、`studio/src/preload/`。仅同步更新入口、TypeScript、ESLint、Vitest 与 repo-root bindings 相对路径；Tauri 的 `dist/`、Electron 的 `out/renderer/`、devUrl 与 frontendDist 均不变，未改变业务逻辑或运行时行为。
 
 ## Phase 3B 已交付 Electron main 平台基础设施
 

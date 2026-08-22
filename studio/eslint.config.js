@@ -23,8 +23,7 @@ export default tseslint.config(
     },
   },
   {
-    files: ['src/**/*.{ts,tsx}'],
-    ignores: ['src/main/**', 'src/preload/**'],
+    files: ['src/renderer/**/*.{ts,tsx}'],
     languageOptions: {
       globals: globals.browser,
     },

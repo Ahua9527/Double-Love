@@ -17,7 +17,7 @@ import {
   Wand2,
 } from 'lucide-react'
 import * as api from '../tauri'
-import type { SubtitleStyle } from '../../../bindings/SubtitleStyle'
+import type { SubtitleStyle } from '../../../../bindings/SubtitleStyle'
 import { num } from '../utils'
 
 type SettingsPage = 'general' | 'shortcuts' | 'subtitle' | 'models' | 'privacy' | 'diagnostics' | 'about'

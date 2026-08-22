@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useRef } from 'react'
 import './timeline-preview.css'
-import type { CanvasSpec } from '../../../bindings/CanvasSpec'
-import type { SubtitleCue } from '../../../bindings/SubtitleCue'
-import type { SubtitleStyle } from '../../../bindings/SubtitleStyle'
-import type { TimelineIRv2 } from '../../../bindings/TimelineIRv2'
+import type { CanvasSpec } from '../../../../bindings/CanvasSpec'
+import type { SubtitleCue } from '../../../../bindings/SubtitleCue'
+import type { SubtitleStyle } from '../../../../bindings/SubtitleStyle'
+import type { TimelineIRv2 } from '../../../../bindings/TimelineIRv2'
 import { frameRateFps, num } from '../utils'
 
 interface TimelinePreviewProps {

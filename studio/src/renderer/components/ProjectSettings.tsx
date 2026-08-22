@@ -1,7 +1,7 @@
-import type { CanvasSpec } from '../../../bindings/CanvasSpec'
-import type { FrameRate } from '../../../bindings/FrameRate'
-import type { SubtitleStyle } from '../../../bindings/SubtitleStyle'
-import type { RevisionHistoryEntry } from '../../../bindings/RevisionHistoryEntry'
+import type { CanvasSpec } from '../../../../bindings/CanvasSpec'
+import type { FrameRate } from '../../../../bindings/FrameRate'
+import type { SubtitleStyle } from '../../../../bindings/SubtitleStyle'
+import type { RevisionHistoryEntry } from '../../../../bindings/RevisionHistoryEntry'
 import { frameRateLabel, num } from '../utils'
 
 interface ProjectSettingsProps {

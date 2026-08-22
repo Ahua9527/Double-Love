@@ -1,9 +1,9 @@
 import { useReducer, useRef } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { Loader2, Scissors, Undo2 } from 'lucide-react'
-import type { MediaAssetSummary } from '../../../bindings/MediaAssetSummary'
-import type { TranscriptViewData } from '../../../bindings/TranscriptViewData'
-import type { WordAnchor } from '../../../bindings/WordAnchor'
+import type { MediaAssetSummary } from '../../../../bindings/MediaAssetSummary'
+import type { TranscriptViewData } from '../../../../bindings/TranscriptViewData'
+import type { WordAnchor } from '../../../../bindings/WordAnchor'
 import {
   formatClock,
   needsSpaceBetween,
