@@ -2474,9 +2474,67 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use rusqlite::{Connection, params};
+    use sha2::{Digest, Sha256};
 
-    use super::{MIGRATION_V1, MIGRATION_V2, MIGRATION_V3, MIGRATION_V4, ProjectStore};
+    use super::{MIGRATION_V1, MIGRATION_V2, MIGRATION_V3, MIGRATION_V4, MIGRATIONS, ProjectStore};
     use crate::rational::FrameRate;
+
+    const HISTORICAL_MIGRATION_SHA256: &[(u32, &str)] = &[
+        (
+            1,
+            "4fbc6f32be347c58831f7b4c2e50dd3db6fa4894bbe52a249ade768b48f74536",
+        ),
+        (
+            2,
+            "e8e994e2ea04c45a78dd78d79ba4db8ce0ca7ef197cc9b6b29fc7a87ab0d58ca",
+        ),
+        (
+            3,
+            "ef2699c088aedcc28d6b182ac171c1639985cdefec4282acb6facf0919feea76",
+        ),
+        (
+            4,
+            "e5b57d35e5861b75a2f0233c221d8b88c3f51382175725e805f150ea0889600b",
+        ),
+        (
+            5,
+            "24a71143282bb0e9be77a9a19627d76677fbf60ccb59d04c223dac08f6e8377d",
+        ),
+        (
+            6,
+            "a7b12e92bd90c3b04da5f8817de938f8cc22fdd9124861de60b7a17b19c5ea98",
+        ),
+        (
+            7,
+            "8de8d01911eef3e5cfec8e804384a14989fa18b822de0f63a0fb0f543c1d2b4c",
+        ),
+        (
+            8,
+            "04a5120ae79cbcd3c90cbacf6b469ffac7735612248e7cd56e42c0cd006bbb57",
+        ),
+        (
+            9,
+            "152426c47350cdf30e8c58fbc2f1c5532d60e344a44f29c8bd73aefdb9301d0c",
+        ),
+        (
+            10,
+            "78f893e53a207c48fbb138dad088b03cac4ccbddae2bc166774254f071a26ab7",
+        ),
+    ];
+
+    fn assert_historical_migration_fingerprints() {
+        assert_eq!(MIGRATIONS.len(), HISTORICAL_MIGRATION_SHA256.len());
+        for ((version, sql), (expected_version, expected_sha256)) in
+            MIGRATIONS.iter().zip(HISTORICAL_MIGRATION_SHA256)
+        {
+            assert_eq!(version, expected_version, "migration order changed");
+            assert_eq!(
+                format!("{:x}", Sha256::digest(sql.as_bytes())),
+                *expected_sha256,
+                "migration v{version} text changed"
+            );
+        }
+    }
 
     fn temp_db_path(label: &str) -> PathBuf {
         let unique = SystemTime::now()
@@ -2484,6 +2542,73 @@ mod tests {
             .expect("system clock is after epoch")
             .as_nanos();
         std::env::temp_dir().join(format!("double-love-{label}-{unique}.sqlite"))
+    }
+
+    fn construct_historical_schema(path: &std::path::Path, target_version: u32) {
+        fs::create_dir_all(path.parent().expect("fixture parent")).expect("fixture directory");
+        let connection = Connection::open(path).expect("historical fixture opens");
+        connection
+            .execute_batch(
+                "CREATE TABLE schema_migrations (
+                    version INTEGER PRIMARY KEY NOT NULL,
+                    applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );",
+            )
+            .expect("schema migration ledger");
+        for (version, sql) in MIGRATIONS
+            .iter()
+            .copied()
+            .take_while(|(version, _)| *version <= target_version)
+        {
+            connection
+                .execute_batch(sql)
+                .unwrap_or_else(|error| panic!("schema {version} fixture applies: {error}"));
+            connection
+                .execute(
+                    "INSERT INTO schema_migrations(version) VALUES (?1)",
+                    [version],
+                )
+                .expect("fixture version records");
+        }
+    }
+
+    #[test]
+    fn every_historical_schema_constructs_and_migrates_idempotently_to_v10() {
+        assert_historical_migration_fingerprints();
+
+        let root = temp_db_path("schema-history").with_extension("");
+        let expected_versions: Vec<u32> = (1..=10).collect();
+
+        for source_version in 1..=10 {
+            let path = root
+                .join(format!("schema-v{source_version}"))
+                .join(".doublelove/project.sqlite");
+            construct_historical_schema(&path, source_version);
+
+            drop(ProjectStore::open(&path).expect("historical fixture migrates"));
+            drop(ProjectStore::open(&path).expect("migration is idempotent"));
+
+            let connection = Connection::open(&path).expect("migrated fixture opens");
+            let versions = connection
+                .prepare("SELECT version FROM schema_migrations ORDER BY version")
+                .expect("versions query")
+                .query_map([], |row| row.get(0))
+                .expect("versions read")
+                .collect::<Result<Vec<u32>, _>>()
+                .expect("versions decode");
+            assert_eq!(
+                versions, expected_versions,
+                "source schema {source_version}"
+            );
+            let current: u32 = connection
+                .query_row("SELECT MAX(version) FROM schema_migrations", [], |row| {
+                    row.get(0)
+                })
+                .expect("current version");
+            assert_eq!(current, 10, "source schema {source_version}");
+        }
+
+        fs::remove_dir_all(root).expect("historical fixtures are removed");
     }
 
     #[test]

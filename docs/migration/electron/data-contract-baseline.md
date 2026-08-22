@@ -19,14 +19,17 @@
 
 i64/u64 字段（revision、frame、sample、字节数）在 JSON 中按 number 传输；host 侧 serde 校验范围，超过 2^53 的值在协议层拒绝（当前领域值均远小于该界）。renderer 继续使用 `num()` 边界转换，禁止把 `bigint` 类型泄漏进新 shared 契约。
 
-## Fixture 计划
+## Phase 2A fixture 与冻结门禁
 
-见 [README.md](README.md#fixture-计划阶段-2-实施本阶段不落盘)。本阶段不生成/提交任何二进制或私有 fixture。
+见 [README.md](README.md#phase-2a-已交付-fixture-与门禁)。已提交的 source fixture 仅为合成 JSON：偏好 v1/partial-v0/corrupt 与模型 installed/paused/staging-interrupted。偏好完整结果与模型安装 envelope schema=1 均由独立 fixture/literal 冻结；schema 1–10 SQLite 在逐条 migration SHA-256 快照通过后才由测试运行时生成并立即删除，未跟踪二进制数据库。项目测试冻结 manifest camelCase 且 schemaVersion 仍为 1。
+
+`scripts/migration/check-bindings-contract.sh` 是确定性 contract gate：现有 ts-rs cargo tests 再生成 bindings 后，`bindings/` 相对 HEAD 的 tracked diff 与 untracked 文件都必须为空，随后运行现有 CLI JSON contract E2E。TimelineIR schema、migration SQL、生产 schema 与导出 schema/golden 均未修改；`regenerate_golden_file` 继续保持 ignored。
 
 ## 假绿风险登记
 
 | 风险 | 证据 | 阶段 2 对策 |
 | --- | --- | --- |
-| `regenerate_golden_file` 恒 ignored | engine export/xmeml 测试 | 仅手工再生成入口，不算失败 |
-| ffmpeg/ffprobe 缺失时相关测试可能不可用 | engine render/import 测试；CI studio-quality.yml:35-46 前置检查 | 强门禁模式缺工具 fail 而非 skip |
-| Homebrew python3 与系统 python3 混用 | sidecar 测试用 `python3` | baseline 脚本只记录版本并强门禁实际 PATH 上的 `python3`；raw log 中 ROOT/HOME 脱敏 |
+| `regenerate_golden_file` 恒 ignored | engine export/xmeml 测试 | 仅手工再生成入口，不算失败；Phase 2A 未改变 ignored 属性 |
+| ffmpeg/ffprobe/libass 缺失时相关测试可能不可用 | engine render/import 测试；CI prerequisite 检查 | `DOUBLELOVE_REQUIRE_TEST_TOOLS=1` 时缺失立即 fail；普通本地测试仍可 self-skip；Studio CI 已设置 |
+| python3 缺失或 Homebrew/system Python 混用 | engine/CLI sidecar 测试用实际 PATH 上的 `python3` | 同一严格 flag 令缺失 fail；baseline 继续记录实际版本且 raw log 中 ROOT/HOME 脱敏 |
+| ts-rs 测试再生成但未核对 tracked/untracked 输出 | `#[ts(export)]` 生成测试 | contract 脚本对 HEAD tracked diff 与 untracked 文件分别强检，CI 必跑 |

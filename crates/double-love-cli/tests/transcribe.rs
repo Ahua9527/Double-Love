@@ -1,6 +1,8 @@
 //! CLI E2E：合成 mp4 → import-media → transcribe --mock → 词落库。
 //! 无 ffmpeg/python3 的环境跳过。
 
+mod common;
+
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -46,7 +48,7 @@ fn sidecar_dir() -> String {
 #[test]
 fn transcribe_mock_after_import() {
     let (Some(ffmpeg), Some(_python)) = (tool_path("ffmpeg"), tool_path("python3")) else {
-        eprintln!("skip: ffmpeg or python3 not found");
+        common::missing_test_tools("ffmpeg or python3 not found");
         return;
     };
     let dir = temp_dir("transcribe");

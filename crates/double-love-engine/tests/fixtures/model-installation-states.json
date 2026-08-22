@@ -1,0 +1,85 @@
+{
+  "installations_schema_version": 1,
+  "catalog": {
+    "schema_version": 1,
+    "models": [
+      {
+        "id": "synthetic-asr",
+        "display_name": "Synthetic ASR",
+        "component": "asr",
+        "repo_id": null,
+        "revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "files": [
+          {
+            "path": "config.json",
+            "size_bytes": 5,
+            "sha256": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+            "allowed": true
+          }
+        ],
+        "license": "CC0-1.0",
+        "license_url": "https://example.invalid/license",
+        "dependencies": [],
+        "min_memory_bytes": null,
+        "source_url_template": "https://example.invalid/{revision}/{path}",
+        "bundled": false
+      }
+    ]
+  },
+  "cases": [
+    {
+      "name": "installed",
+      "installation": {
+        "model_id": "synthetic-asr",
+        "revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "state": "installed",
+        "bytes_downloaded": 5,
+        "bytes_total": 5,
+        "staging_id": null,
+        "last_error_code": null,
+        "last_error_message": null,
+        "updated_at": "2026-01-01T00:00:00Z"
+      },
+      "generated_files": [
+        { "path": "synthetic-asr/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/config.json", "contents": "hello" }
+      ],
+      "expected_state_after_open": "installed"
+    },
+    {
+      "name": "paused",
+      "installation": {
+        "model_id": "synthetic-asr",
+        "revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "state": "paused",
+        "bytes_downloaded": 2,
+        "bytes_total": 5,
+        "staging_id": "paused-fixture",
+        "last_error_code": null,
+        "last_error_message": null,
+        "updated_at": "2026-01-01T00:00:00Z"
+      },
+      "generated_files": [
+        { "path": ".staging/paused-fixture/synthetic-asr/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/config.json.part", "contents": "he" }
+      ],
+      "expected_state_after_open": "paused"
+    },
+    {
+      "name": "staging-interrupted",
+      "installation": {
+        "model_id": "synthetic-asr",
+        "revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "state": "downloading",
+        "bytes_downloaded": 2,
+        "bytes_total": 5,
+        "staging_id": "staging-fixture",
+        "last_error_code": null,
+        "last_error_message": null,
+        "updated_at": "2026-01-01T00:00:00Z"
+      },
+      "generated_files": [
+        { "path": ".staging/staging-fixture/synthetic-asr/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/config.json.part", "contents": "he" }
+      ],
+      "expected_state_after_open": "paused"
+    }
+  ]
+}

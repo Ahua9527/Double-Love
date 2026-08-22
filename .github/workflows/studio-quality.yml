@@ -3,6 +3,7 @@ name: Studio quality
 on:
   push:
     branches: [main, "codex/**"]
+  pull_request:
   workflow_dispatch:
 
 concurrency:
@@ -15,13 +16,21 @@ permissions:
 jobs:
   studio:
     runs-on: [self-hosted, macOS, ARM64]
+    env:
+      # Missing ffmpeg/ffprobe/python3 must fail tool-dependent Rust tests in CI.
+      DOUBLELOVE_REQUIRE_TEST_TOOLS: "1"
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
       - name: Add Homebrew tools to PATH
-        run: echo "/opt/homebrew/bin" >> "$GITHUB_PATH"
+        run: |
+          # GITHUB_PATH prepends later entries first, so add the preferred keg last.
+          echo "/opt/homebrew/bin" >> "$GITHUB_PATH"
+          if [[ -d /opt/homebrew/opt/ffmpeg-full/bin ]]; then
+            echo "/opt/homebrew/opt/ffmpeg-full/bin" >> "$GITHUB_PATH"
+          fi
       - uses: dtolnay/rust-toolchain@032958afbdc797a9164d3bc0b56325c1308924a5
         with:
           components: rustfmt, clippy
@@ -39,13 +48,19 @@ jobs:
         run: |
           missing=0
           for tool in cargo rustc ffmpeg ffprobe python3; do
-            if path="$(command -v "$tool")"; then
-              printf '%s\t%s\n' "$tool" "$path"
+            if command -v "$tool" >/dev/null 2>&1; then
+              printf 'available\t%s\n' "$tool"
             else
               printf 'missing\t%s\n' "$tool"
               missing=1
             fi
           done
+          if ! ffmpeg -hide_banner -filters 2>/dev/null | awk '$2 == "ass" { found=1 } END { exit !found }'; then
+            printf 'missing\tffmpeg filter ass\n'
+            missing=1
+          else
+            printf 'available\tffmpeg filter ass\n'
+          fi
           exit "$missing"
       - name: Check Rust formatting
         run: cargo fmt --all -- --check
@@ -53,6 +68,8 @@ jobs:
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - name: Test Rust workspace
         run: cargo test --workspace --locked
+      - name: Check generated bindings and CLI JSON contracts
+        run: scripts/migration/check-bindings-contract.sh
       - name: Test ASR sidecar
         run: python3 -m unittest discover -s sidecars/asr/tests -p 'test_*.py'
       - name: Test speaker sidecar

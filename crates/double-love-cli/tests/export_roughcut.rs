@@ -2,6 +2,8 @@
 //! export-roughcut（preview 不落盘 / apply 落盘）→ edit-restore → 全删空拒绝导出。
 //! 无 ffmpeg/python3 的环境跳过。
 
+mod common;
+
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -47,7 +49,7 @@ fn sidecar_dir() -> String {
 #[test]
 fn rough_cut_headless_chain() {
     let (Some(ffmpeg), Some(_python)) = (tool_path("ffmpeg"), tool_path("python3")) else {
-        eprintln!("skip: ffmpeg or python3 not found");
+        common::missing_test_tools("ffmpeg or python3 not found");
         return;
     };
     let dir = temp_dir("roughcut");

@@ -1400,4 +1400,88 @@ mod tests {
         );
         fs::remove_dir_all(root).ok();
     }
+
+    #[test]
+    fn synthetic_installation_state_fixtures_recover_through_manager_api() {
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../tests/fixtures/model-installation-states.json"
+        ))
+        .expect("fixture json");
+        let fixture_schema_version = fixture["installations_schema_version"]
+            .as_u64()
+            .expect("installation envelope schema version");
+        assert_eq!(fixture_schema_version, 1);
+        assert_eq!(MODEL_INSTALLATIONS_SCHEMA_VERSION, 1);
+        let catalog_json = serde_json::to_string(&fixture["catalog"]).expect("catalog json");
+        let catalog = ModelCatalog::from_json(&catalog_json).expect("fixture catalog");
+
+        for case in fixture["cases"].as_array().expect("fixture cases") {
+            let name = case["name"].as_str().expect("case name");
+            let root = temp_root(name);
+            fs::create_dir_all(&root).expect("model root");
+            let installation = case["installation"].clone();
+            let model_id = installation["model_id"].as_str().expect("model id");
+            let store = serde_json::json!({
+                "schema_version": fixture_schema_version,
+                "installations": { model_id: installation }
+            });
+            fs::write(
+                root.join("installations.json"),
+                serde_json::to_vec_pretty(&store).expect("state json"),
+            )
+            .expect("state fixture");
+            for file in case["generated_files"].as_array().expect("generated files") {
+                let path = root.join(file["path"].as_str().expect("relative path"));
+                fs::create_dir_all(path.parent().expect("generated parent"))
+                    .expect("generated parent dir");
+                fs::write(
+                    &path,
+                    file["contents"].as_str().expect("synthetic contents"),
+                )
+                .expect("generated file");
+            }
+
+            let mut manager = ModelManager::new(&root, catalog.clone()).expect("manager opens");
+            let recovered = manager.installation(model_id).expect("installation");
+            assert_eq!(
+                recovered.state.as_str(),
+                case["expected_state_after_open"]
+                    .as_str()
+                    .expect("expected state"),
+                "case {name}"
+            );
+            if name == "installed" {
+                assert_eq!(
+                    manager
+                        .verify_installed(model_id)
+                        .expect("installed fixture verifies")
+                        .state,
+                    ModelInstallState::Installed
+                );
+            } else {
+                let staging_id = recovered.staging_id.as_deref().expect("staging id");
+                let part = manager
+                    .staging_root(staging_id)
+                    .expect("safe staging path")
+                    .join(model_id)
+                    .join(&recovered.revision)
+                    .join("config.json.part");
+                assert_eq!(fs::read(part).expect("partial file is preserved"), b"he");
+                assert_eq!(
+                    manager
+                        .queue_install(model_id)
+                        .expect("paused fixture can resume")[0]
+                        .state,
+                    ModelInstallState::Queued
+                );
+            }
+            if name == "staging-interrupted" {
+                assert_eq!(
+                    recovered.last_error_code.as_deref(),
+                    Some("MODEL_TASK_INTERRUPTED")
+                );
+            }
+            fs::remove_dir_all(root).ok();
+        }
+    }
 }

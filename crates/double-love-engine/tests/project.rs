@@ -30,8 +30,19 @@ fn create_project_materializes_doublelove_structure() {
         &fs::read(doublelove.join("manifest.json")).expect("manifest exists"),
     )
     .expect("manifest is valid json");
+    assert_eq!(
+        manifest
+            .as_object()
+            .expect("manifest object")
+            .keys()
+            .collect::<Vec<_>>(),
+        ["projectId", "rawInputs", "schemaVersion"]
+    );
     assert_eq!(manifest["schemaVersion"], 1);
     assert_eq!(manifest["projectId"], summary.project_id);
+    assert_eq!(manifest["rawInputs"], "read-only references");
+    assert!(manifest.get("schema_version").is_none());
+    assert!(manifest.get("project_id").is_none());
 
     fs::remove_dir_all(&root).expect("temporary project is removed");
 }

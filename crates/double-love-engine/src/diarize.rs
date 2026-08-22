@@ -363,6 +363,14 @@ mod tests {
     use super::*;
     use crate::storage::{NewMediaAsset, NewTranscriptWord};
 
+    fn missing_test_tool(reason: &str) {
+        assert!(
+            std::env::var("DOUBLELOVE_REQUIRE_TEST_TOOLS").as_deref() != Ok("1"),
+            "required test tool unavailable: {reason}"
+        );
+        eprintln!("skip: {reason}");
+    }
+
     fn temp_dir() -> std::path::PathBuf {
         let path = std::env::temp_dir().join(format!("double-love-diarize-{}", Uuid::new_v4()));
         std::fs::create_dir_all(&path).expect("temp dir");
@@ -398,7 +406,7 @@ mod tests {
     #[test]
     fn mock_diarization_assigns_words_without_exposing_embeddings() {
         let Some(_) = resolve_python(None, std::path::Path::new("/nonexistent")) else {
-            eprintln!("skip: python3 not found");
+            missing_test_tool("python3 not found");
             return;
         };
         let dir = temp_dir();

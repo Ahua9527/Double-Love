@@ -1,27 +1,13 @@
 //! CLI E2E：合成 mp4 → project-create → import-media → 断言结构化结果。
 //! 无 ffmpeg 的环境直接跳过（本机开发环境有 ffmpeg，会真实执行）。
 
+mod common;
+#[path = "common/binary.rs"]
+mod test_binary;
+
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
-
-fn ffmpeg_path() -> Option<PathBuf> {
-    if let Some(explicit) = std::env::var_os("DOUBLELOVE_FFMPEG") {
-        return Some(PathBuf::from(explicit));
-    }
-    for prefix in ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin"] {
-        let candidate = Path::new(prefix).join("ffmpeg");
-        if candidate.is_file() {
-            return Some(candidate);
-        }
-    }
-    // PATH 查找
-    std::env::var_os("PATH").and_then(|paths| {
-        std::env::split_paths(&paths)
-            .map(|dir| dir.join("ffmpeg"))
-            .find(|candidate| candidate.is_file())
-    })
-}
 
 fn temp_dir(label: &str) -> PathBuf {
     let unique = SystemTime::now()
@@ -61,8 +47,8 @@ fn run_cli(args: &[&str]) -> (bool, serde_json::Value) {
 
 #[test]
 fn import_media_end_to_end_with_synthetic_mp4() {
-    let Some(ffmpeg) = ffmpeg_path() else {
-        eprintln!("skip: ffmpeg not found on this machine");
+    let Some(ffmpeg) = test_binary::discover("DOUBLELOVE_FFMPEG", "ffmpeg") else {
+        common::missing_test_tools("ffmpeg not found on this machine");
         return;
     };
     let dir = temp_dir("e2e");
@@ -124,8 +110,8 @@ fn import_media_end_to_end_with_synthetic_mp4() {
 
 #[test]
 fn import_media_rejects_unsupported_fps() {
-    let Some(ffmpeg) = ffmpeg_path() else {
-        eprintln!("skip: ffmpeg not found on this machine");
+    let Some(ffmpeg) = test_binary::discover("DOUBLELOVE_FFMPEG", "ffmpeg") else {
+        common::missing_test_tools("ffmpeg not found on this machine");
         return;
     };
     let dir = temp_dir("fps");

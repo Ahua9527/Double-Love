@@ -338,6 +338,14 @@ mod tests {
     use std::path::Path;
     use std::time::{SystemTime, UNIX_EPOCH};
 
+    fn missing_test_tool(reason: &str) {
+        assert!(
+            std::env::var("DOUBLELOVE_REQUIRE_TEST_TOOLS").as_deref() != Ok("1"),
+            "required test tool unavailable: {reason}"
+        );
+        eprintln!("skip: {reason}");
+    }
+
     fn temp_dir(label: &str) -> PathBuf {
         let unique = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -436,7 +444,7 @@ mod tests {
     #[test]
     fn transcribes_mock_words_into_storage() {
         let Some(_) = resolve_python(None, Path::new("/nonexistent-venv")) else {
-            eprintln!("skip: python3 not found");
+            missing_test_tool("python3 not found");
             return;
         };
         let dir = temp_dir("flow");
@@ -470,7 +478,7 @@ mod tests {
     #[test]
     fn cancel_preserves_the_previous_active_transcript() {
         let Some(_) = resolve_python(None, Path::new("/nonexistent-venv")) else {
-            eprintln!("skip: python3 not found");
+            missing_test_tool("python3 not found");
             return;
         };
         let dir = temp_dir("cancel");

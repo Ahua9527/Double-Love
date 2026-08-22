@@ -363,6 +363,14 @@ mod tests {
     use crate::rational::FrameRate;
     use crate::storage::NewMediaAsset;
 
+    fn missing_test_tool(reason: &str) {
+        assert!(
+            std::env::var("DOUBLELOVE_REQUIRE_TEST_TOOLS").as_deref() != Ok("1"),
+            "required test tool unavailable: {reason}"
+        );
+        eprintln!("skip: {reason}");
+    }
+
     fn preview() -> ProjectExportPreview {
         let source = TimelineSource {
             asset_id: "a".to_string(),
@@ -417,11 +425,11 @@ mod tests {
     #[test]
     fn renders_a_mixed_rate_project_when_local_ffmpeg_is_available() {
         let Ok(tools) = FfmpegTools::discover() else {
-            eprintln!("skip: ffmpeg unavailable");
+            missing_test_tool("ffmpeg/ffprobe unavailable");
             return;
         };
         if !ffmpeg_supports_ass_filter(&tools) {
-            eprintln!("skip: ffmpeg lacks ass/libass filter");
+            missing_test_tool("ffmpeg lacks ass/libass filter");
             return;
         }
         let root = std::env::temp_dir().join(format!("double-love-render-{}", Uuid::new_v4()));

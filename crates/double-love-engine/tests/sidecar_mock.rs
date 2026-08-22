@@ -6,6 +6,14 @@ use std::time::Duration;
 
 use double_love_engine::{Sidecar, SidecarCommand, SidecarEvent, SidecarPoll, resolve_python};
 
+fn missing_test_tool(reason: &str) {
+    assert!(
+        std::env::var("DOUBLELOVE_REQUIRE_TEST_TOOLS").as_deref() != Ok("1"),
+        "required test tool unavailable: {reason}"
+    );
+    eprintln!("skip: {reason}");
+}
+
 fn package_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../sidecars/asr")
@@ -59,7 +67,7 @@ fn transcribe_cmd(task_id: &str, wav: &Path, chunk_seconds: i64) -> SidecarComma
 #[test]
 fn mock_sidecar_transcribes_full_flow() {
     let Some(python) = resolve_python(None, &package_dir().join(".venv/bin/python")) else {
-        eprintln!("skip: python3 not found");
+        missing_test_tool("python3 not found");
         return;
     };
     let wav = temp_file("flow", "wav");
@@ -113,7 +121,7 @@ fn mock_sidecar_transcribes_full_flow() {
 #[test]
 fn mock_sidecar_honours_cancel() {
     let Some(python) = resolve_python(None, &package_dir().join(".venv/bin/python")) else {
-        eprintln!("skip: python3 not found");
+        missing_test_tool("python3 not found");
         return;
     };
     let wav = temp_file("cancel", "wav");
