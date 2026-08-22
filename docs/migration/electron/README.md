@@ -25,7 +25,7 @@
 | 3C React renderer 目录整理 | **已完成** | 纯移动至 `studio/src/renderer/`；Tauri/Electron 构建与测试行为不变 | 直接 revert 目录移动与配置路径更新 |
 | 3D renderer 平台接缝 | **已完成** | renderer 运行时选择 Electron/Tauri/preview；Electron host 错误归一为既有 `OperationResult.failed`；本地文件无 bridge 时 fail closed | Tauri adapter 保留，revert renderer 平台接缝批次 |
 | 3 平台基础阶段（3A–3D） | **已完成** | service/host、安全边界、renderer 目录与平台 adapter 均已就位；Phase 4 可按纵向切片迁移业务命令 | 保留 Tauri adapter，按 3D→3A 逆序回退 |
-| 4 纵向业务切片迁移（7 片） | **进行中（Slice 1–3 已完成）** | 每片：Electron E2E 正常+失败/取消/恢复路径；Tauri 对照一致 | 每片独立提交，只 revert 当前切片 |
+| 4 纵向业务切片迁移（7 片） | **进行中（Slice 1–4 已完成）** | 每片：Electron E2E 正常+失败/取消/恢复路径；Tauri 对照一致 | 每片独立提交，只 revert 当前切片 |
 | 5 默认 Electron、打包发布、清理 | 未开始 | 功能矩阵 100%；签名公证门禁通过 | 保留最后可构建 Tauri commit |
 | 6 全量验收与回退演练 | 未开始 | 见计划完成判定 | 文档化手动回退 |
 
@@ -91,6 +91,16 @@ host-neutral service 已按 Tauri 参考实现注册 `project_create`、`project
 Rust host 集成覆盖创建、打开、同 id 重开与进程重启、revision/history、canvas mutation、undo/redo、restore 新 revision、未打开、非法创建/打开路径与最近项目；service 并发回归测试覆盖进行中的项目操作会阻塞项目替换，且替换完成后的项目与历史一致。Electron Playwright 通过一次性目录 grant 创建临时项目，验证持久化默认字幕样式及样式写入 revision/history，再覆盖 canvas undo/redo；随后使用现有 `double-love` CLI 导入合成媒体并追加主轨，只验证 host 可观察到外部 revision/history，不定义外部写入后的 undo 冲突策略，最后覆盖 restore、失败打开保留旧状态与重启同 id 打开。
 
 Slice 2 未修改 `src-tauri`、Web/PWA、SQLite schema/migration、manifest 或导出格式；Tauri 继续作为行为参考。门禁证据：workspace fmt 与 clippy `-D warnings` 通过；严格工具模式 workspace Rust 测试全过（engine 148 过、1 个既有 golden regeneration ignored；host Slice 2 集成 1 过；Tauri 参考测试 18 过）；bindings contract 通过；Studio lint、88 项 Vitest、Studio Vite build、独立 `tsc -b` 与 Electron build 通过；全部 9 项 Playwright 通过；根 Web lint、99 项 Vitest 与 build 通过；`git diff --check` 通过。
+
+## Phase 4 Slice 4 已交付主轨与项目视觉设置
+
+host-neutral service 已按 Tauri 参考实现注册 `timeline_get`、`main_track_append`、`main_track_append_full`、`main_track_list`、`main_track_move`、`main_track_trim`、`main_track_split`、`main_track_remove`、`canvas_get/set`、`output_rate_get/set`、`subtitle_style_get/set` 与 `apply_default_subtitle_style`。主轨写操作直接复用 engine 函数及其未知资产、非法范围、未知片段、revision 和诊断语义；`timeline_get` 继续调用 `compile_project_timeline`，名称严格取当前项目根目录 basename 加 ` Rough Cut`。未显式设置输出帧率时仍跟随主轨首段素材，`output_rate_set(null)` 删除显式值；应用默认字幕样式仍从 service 偏好读取 `default_subtitle_style`，并与普通 `subtitle_style_set` 产生相同项目写入语义。
+
+本切片把 Slice 2 为历史导航提前接入的 canvas/subtitle 命令纳入正式迁移范围，并为所有新迁移命令的失败诊断统一替换当前项目根目录为 `<PROJECT>`；未改变成功数据、状态、revision、输出、engine/CLI/Tauri 错误文本或任何存储与 TimelineIR 契约。host 集成测试使用两个真实合成媒体，覆盖完整/区间追加、列表、移动、裁切、拆分、删除、TimelineIR v2 顺序与帧率、canvas、输出帧率设置/清除、项目字幕样式和偏好默认样式应用，以及未打开项目、未知资产、非法范围、未知片段与 renderer 响应路径脱敏。
+
+Electron Playwright 同样仅使用临时目录和两段合成 MP4，经目录/媒体 grant 完成导入与整套主轨变更，断言 TimelineIR source/clip 顺序和 `mainTrackList` 最终状态；并覆盖 canvas、输出帧率、字幕样式、默认样式往返、未知片段脱敏，以及剩余 source 的 `dl-media` 正常 200 与未知资产 404。Slice 4 未修改 `src-tauri`、Web/PWA、engine 契约、SQLite schema/migration、TimelineIR shape 或导出格式；Tauri 继续作为行为参考。
+
+Slice 4 门禁证据：workspace fmt 与 clippy `-D warnings` 通过；严格工具模式 workspace Rust 测试全过（engine 148 过、1 个既有 golden regeneration ignored；host Slice 4 集成 1 过；Tauri 参考测试 18 过）；bindings contract 通过；Studio lint、89 项 Vitest、Studio Vite build、独立 `tsc -b`、Electron build 与 host build 通过；Slices 1–4 全部 11 项 Playwright 通过；根 Web lint、99 项 Vitest 与 build 通过；`git diff --check` 通过。
 
 ## Phase 4 Slice 3 已交付媒体导入与项目资产播放
 

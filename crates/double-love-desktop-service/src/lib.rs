@@ -6,9 +6,11 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use double_love_engine::{
-    CanvasSpec, Diagnostic, DiagnosticLevel, FfmpegTools, MediaAssetSummary, OperationResult,
-    ProjectStore, ProjectSummary, SubtitleStyle, TaskRegistry, create_project,
-    import_media as engine_import_media, list_media_assets, open_project,
+    CanvasSpec, Diagnostic, DiagnosticLevel, FfmpegTools, FrameRate, MediaAssetSummary,
+    OperationResult, ProjectStore, ProjectSummary, SubtitleStyle, TaskRegistry,
+    append_full_main_track_asset, append_main_track_clip, compile_project_timeline, create_project,
+    import_media as engine_import_media, list_media_assets, move_main_track_clip, open_project,
+    remove_main_track_clip, split_main_track_clip, trim_main_track_clip,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -331,6 +333,59 @@ struct SubtitleStyleSetParams {
 }
 
 #[derive(Deserialize)]
+struct MainTrackAppendParams {
+    #[serde(alias = "assetId")]
+    asset_id: String,
+    #[serde(alias = "sourceInFrame")]
+    source_in_frame: i64,
+    #[serde(alias = "sourceOutFrame")]
+    source_out_frame: i64,
+}
+
+#[derive(Deserialize)]
+struct MainTrackAppendFullParams {
+    #[serde(alias = "assetId")]
+    asset_id: String,
+}
+
+#[derive(Deserialize)]
+struct MainTrackMoveParams {
+    #[serde(alias = "clipId")]
+    clip_id: String,
+    #[serde(alias = "beforeClipId")]
+    before_clip_id: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct MainTrackTrimParams {
+    #[serde(alias = "clipId")]
+    clip_id: String,
+    #[serde(alias = "sourceInFrame")]
+    source_in_frame: i64,
+    #[serde(alias = "sourceOutFrame")]
+    source_out_frame: i64,
+}
+
+#[derive(Deserialize)]
+struct MainTrackSplitParams {
+    #[serde(alias = "clipId")]
+    clip_id: String,
+    #[serde(alias = "sourceAtFrame")]
+    source_at_frame: i64,
+}
+
+#[derive(Deserialize)]
+struct MainTrackRemoveParams {
+    #[serde(alias = "clipId")]
+    clip_id: String,
+}
+
+#[derive(Deserialize)]
+struct OutputRateSetParams {
+    rate: Option<FrameRate>,
+}
+
+#[derive(Deserialize)]
 struct PreferencesUpdateParams {
     patch: preferences::PreferencesPatch,
 }
@@ -359,6 +414,38 @@ fn with_store<T>(
         }
         Err(error) => OperationResult::failed(error.code, error.message),
     }
+}
+
+fn project_timeline_name(summary: &ProjectSummary) -> String {
+    Path::new(&summary.root)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .map(|name| format!("{name} Rough Cut"))
+        .unwrap_or_else(|| "Double Love Rough Cut".to_string())
+}
+
+fn sanitize_project_result<T>(
+    result: OperationResult<T>,
+    summary: &ProjectSummary,
+) -> OperationResult<T> {
+    let replacements = renderer_path_replacements(&[(&summary.root, "<PROJECT>")]);
+    sanitize_renderer_diagnostics(result, &replacements)
+}
+
+fn set_project_subtitle_style(
+    store: &ProjectStore,
+    summary: &ProjectSummary,
+    style: SubtitleStyle,
+) -> OperationResult<SubtitleStyle> {
+    let result = match store.set_subtitle_style(&style) {
+        Ok(revision) => {
+            let mut result = OperationResult::success(style);
+            result.revision = Some(revision);
+            result
+        }
+        Err(error) => OperationResult::failed("STORAGE_ERROR", error.to_string()),
+    };
+    sanitize_project_result(result, summary)
 }
 
 fn warning(
@@ -645,44 +732,166 @@ pub fn register_commands(registry: &mut CommandRegistry) {
         });
         result_value(result)
     });
+    registry.register("timeline_get", |state, _events, _payload| {
+        result_value(with_store(state, |store, summary| {
+            sanitize_project_result(
+                compile_project_timeline(store, &project_timeline_name(summary)),
+                summary,
+            )
+        }))
+    });
+    registry.register("main_track_append", |state, _events, payload| {
+        let params: MainTrackAppendParams = params(payload)?;
+        result_value(with_store(state, |store, summary| {
+            sanitize_project_result(
+                append_main_track_clip(
+                    store,
+                    &params.asset_id,
+                    params.source_in_frame,
+                    params.source_out_frame,
+                ),
+                summary,
+            )
+        }))
+    });
+    registry.register("main_track_append_full", |state, _events, payload| {
+        let params: MainTrackAppendFullParams = params(payload)?;
+        result_value(with_store(state, |store, summary| {
+            sanitize_project_result(
+                append_full_main_track_asset(store, &params.asset_id),
+                summary,
+            )
+        }))
+    });
+    registry.register("main_track_list", |state, _events, _payload| {
+        result_value(with_store(state, |store, summary| {
+            let result = match store.main_track_clips() {
+                Ok(clips) => OperationResult::success(clips),
+                Err(error) => OperationResult::failed("STORAGE_ERROR", error.to_string()),
+            };
+            sanitize_project_result(result, summary)
+        }))
+    });
+    registry.register("main_track_move", |state, _events, payload| {
+        let params: MainTrackMoveParams = params(payload)?;
+        result_value(with_store(state, |store, summary| {
+            sanitize_project_result(
+                move_main_track_clip(store, &params.clip_id, params.before_clip_id.as_deref()),
+                summary,
+            )
+        }))
+    });
+    registry.register("main_track_trim", |state, _events, payload| {
+        let params: MainTrackTrimParams = params(payload)?;
+        result_value(with_store(state, |store, summary| {
+            sanitize_project_result(
+                trim_main_track_clip(
+                    store,
+                    &params.clip_id,
+                    params.source_in_frame,
+                    params.source_out_frame,
+                ),
+                summary,
+            )
+        }))
+    });
+    registry.register("main_track_split", |state, _events, payload| {
+        let params: MainTrackSplitParams = params(payload)?;
+        result_value(with_store(state, |store, summary| {
+            sanitize_project_result(
+                split_main_track_clip(store, &params.clip_id, params.source_at_frame),
+                summary,
+            )
+        }))
+    });
+    registry.register("main_track_remove", |state, _events, payload| {
+        let params: MainTrackRemoveParams = params(payload)?;
+        result_value(with_store(state, |store, summary| {
+            sanitize_project_result(remove_main_track_clip(store, &params.clip_id), summary)
+        }))
+    });
     registry.register("canvas_get", |state, _events, _payload| {
-        result_value(with_store(state, |store, _| match store.canvas_spec() {
-            Ok(canvas) => OperationResult::success(canvas),
-            Err(error) => OperationResult::failed("STORAGE_ERROR", error.to_string()),
+        result_value(with_store(state, |store, summary| {
+            let result = match store.canvas_spec() {
+                Ok(canvas) => OperationResult::success(canvas),
+                Err(error) => OperationResult::failed("STORAGE_ERROR", error.to_string()),
+            };
+            sanitize_project_result(result, summary)
         }))
     });
     registry.register("canvas_set", |state, _events, payload| {
         let params: CanvasSetParams = params(payload)?;
-        result_value(with_store(state, |store, _| {
-            match store.set_canvas_spec(&params.canvas) {
+        result_value(with_store(state, |store, summary| {
+            let result = match store.set_canvas_spec(&params.canvas) {
                 Ok(revision) => {
                     let mut result = OperationResult::success(params.canvas);
                     result.revision = Some(revision);
                     result
                 }
                 Err(error) => OperationResult::failed("STORAGE_ERROR", error.to_string()),
-            }
+            };
+            sanitize_project_result(result, summary)
         }))
     });
-    registry.register("subtitle_style_get", |state, _events, _payload| {
-        result_value(with_store(state, |store, _| match store.subtitle_style() {
-            Ok(style) => OperationResult::success(style),
-            Err(error) => OperationResult::failed("STORAGE_ERROR", error.to_string()),
+    registry.register("output_rate_get", |state, _events, _payload| {
+        result_value(with_store(state, |store, summary| {
+            let result = match store.output_rate() {
+                Ok(rate) => OperationResult::success(rate),
+                Err(error) => OperationResult::failed("STORAGE_ERROR", error.to_string()),
+            };
+            sanitize_project_result(result, summary)
         }))
     });
-    registry.register("subtitle_style_set", |state, _events, payload| {
-        let params: SubtitleStyleSetParams = params(payload)?;
-        result_value(with_store(state, |store, _| {
-            match store.set_subtitle_style(&params.style) {
+    registry.register("output_rate_set", |state, _events, payload| {
+        let params: OutputRateSetParams = params(payload)?;
+        result_value(with_store(state, |store, summary| {
+            let revision = match params.rate {
+                Some(rate) => store.set_output_rate(rate),
+                None => store.clear_output_rate(),
+            };
+            let result = match revision {
                 Ok(revision) => {
-                    let mut result = OperationResult::success(params.style);
+                    let mut result = OperationResult::success(params.rate);
                     result.revision = Some(revision);
                     result
                 }
                 Err(error) => OperationResult::failed("STORAGE_ERROR", error.to_string()),
-            }
+            };
+            sanitize_project_result(result, summary)
         }))
     });
+    registry.register("subtitle_style_get", |state, _events, _payload| {
+        result_value(with_store(state, |store, summary| {
+            let result = match store.subtitle_style() {
+                Ok(style) => OperationResult::success(style),
+                Err(error) => OperationResult::failed("STORAGE_ERROR", error.to_string()),
+            };
+            sanitize_project_result(result, summary)
+        }))
+    });
+    registry.register("subtitle_style_set", |state, _events, payload| {
+        let params: SubtitleStyleSetParams = params(payload)?;
+        result_value(with_store(state, |store, summary| {
+            set_project_subtitle_style(store, summary, params.style)
+        }))
+    });
+    registry.register(
+        "apply_default_subtitle_style",
+        |state, _events, _payload| {
+            let preferences =
+                match preferences::current_preferences(state.app_data_dir(), state.preferences()) {
+                    Ok(preferences) => preferences,
+                    Err(error) => {
+                        return result_value(preferences::command_error::<SubtitleStyle>(
+                            error, true,
+                        ));
+                    }
+                };
+            result_value(with_store(state, |store, summary| {
+                set_project_subtitle_style(store, summary, preferences.default_subtitle_style)
+            }))
+        },
+    );
     registry.register("preferences_get", |state, _events, _payload| {
         result_value(preferences::preferences_get(
             state.app_data_dir(),
