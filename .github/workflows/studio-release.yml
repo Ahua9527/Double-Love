@@ -1,0 +1,329 @@
+name: Studio release
+
+on:
+  push:
+    tags:
+      - "studio-v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing Studio tag to release (for example, studio-v0.2.0)
+        required: true
+        type: string
+
+concurrency:
+  group: studio-release
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build signed Studio draft
+    runs-on: [self-hosted, macOS, ARM64]
+    environment:
+      name: studio-release
+    timeout-minutes: 180
+    env:
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ inputs.tag || github.ref }}
+
+      - name: Add Homebrew tools to PATH
+        run: |
+          echo "/opt/homebrew/bin" >> "$GITHUB_PATH"
+          if [[ -d /opt/homebrew/opt/ffmpeg-full/bin ]]; then
+            echo "/opt/homebrew/opt/ffmpeg-full/bin" >> "$GITHUB_PATH"
+          fi
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.14.1
+
+      - uses: dtolnay/rust-toolchain@032958afbdc797a9164d3bc0b56325c1308924a5
+        with:
+          components: rustfmt, clippy
+
+      - name: Verify release tooling
+        run: |
+          set -euo pipefail
+          command -v gh >/dev/null
+
+      - name: Assert Studio tag and version
+        id: release
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(node <<'NODE'
+          const fs = require('node:fs')
+          const metadata = JSON.parse(
+            fs.readFileSync('studio/package.json', 'utf8'),
+          )
+          process.stdout.write(metadata.version)
+          NODE
+          )"
+          expected_tag="studio-v${version}"
+          if [[ "$RELEASE_TAG" != "$expected_tag" ]]; then
+            echo "Release tag must be exactly $expected_tag" >&2
+            echo "Received: $RELEASE_TAG" >&2
+            exit 2
+          fi
+          if ! git show-ref --verify --quiet "refs/tags/$RELEASE_TAG"; then
+            echo "Release tag does not exist: $RELEASE_TAG" >&2
+            exit 2
+          fi
+          tag_commit="$(git rev-list -n 1 "$RELEASE_TAG")"
+          head_commit="$(git rev-parse HEAD)"
+          if [[ "$tag_commit" != "$head_commit" ]]; then
+            echo "Checked-out commit does not match $RELEASE_TAG." >&2
+            exit 2
+          fi
+          printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
+          printf 'tag=%s\n' "$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Prepare bundled release runtimes
+        env:
+          DOUBLELOVE_FFMPEG_SOURCE: >-
+            ${{ vars.DOUBLELOVE_FFMPEG_SOURCE }}
+          DOUBLELOVE_FFPROBE_SOURCE: >-
+            ${{ vars.DOUBLELOVE_FFPROBE_SOURCE }}
+          DOUBLELOVE_ASR_RUNTIME_SOURCE: >-
+            ${{ vars.DOUBLELOVE_ASR_RUNTIME_SOURCE }}
+          DOUBLELOVE_SPEAKER_RUNTIME_SOURCE: >-
+            ${{ vars.DOUBLELOVE_SPEAKER_RUNTIME_SOURCE }}
+        run: |
+          scripts/prepare-media-runtime.sh
+          scripts/prepare-model-runtime.sh
+
+      - name: Verify bundled release runtimes
+        run: scripts/verify-release-runtime.sh
+
+      - name: Build release Electron desktop host
+        run: cargo build --release -p double-love-desktop-host --locked
+
+      - name: Build Playwright debug tools
+        run: cargo build -p double-love-desktop-host -p double-love-cli --locked
+
+      - name: Install Studio dependencies
+        run: pnpm --dir studio install --frozen-lockfile
+
+      - name: Lint Studio
+        run: pnpm --dir studio lint
+
+      - name: Test Studio
+        run: pnpm --dir studio test
+
+      - name: Build Studio
+        run: pnpm --dir studio build
+
+      - name: Build Electron application
+        run: pnpm --dir studio exec electron-vite build
+
+      - name: Run full Playwright suite
+        env:
+          DOUBLELOVE_FFMPEG: >-
+            ${{ github.workspace }}/studio/build/runtime/ffmpeg
+          DOUBLELOVE_FFPROBE: >-
+            ${{ github.workspace }}/studio/build/runtime/ffprobe
+        run: pnpm --dir studio exec playwright test
+
+      - name: Package, sign, and notarize Studio
+        env:
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          CSC_NAME: ${{ secrets.CSC_NAME }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: >-
+            ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_KEYCHAIN: ${{ secrets.APPLE_KEYCHAIN }}
+          APPLE_KEYCHAIN_PROFILE: ${{ secrets.APPLE_KEYCHAIN_PROFILE }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "$CSC_LINK" && -z "$CSC_NAME" ]]; then
+            echo "Configure CSC_LINK or CSC_NAME in studio-release." >&2
+            exit 2
+          fi
+          if [[ -n "$CSC_LINK" && -z "$CSC_KEY_PASSWORD" ]]; then
+            echo "CSC_KEY_PASSWORD is required when CSC_LINK is configured." >&2
+            exit 2
+          fi
+          apple_id_any=0
+          apple_id_ready=0
+          keychain_ready=0
+          if [[ -n "$APPLE_ID" \
+            || -n "$APPLE_APP_SPECIFIC_PASSWORD" \
+            || -n "$APPLE_TEAM_ID" ]]; then
+            apple_id_any=1
+          fi
+          if [[ -n "$APPLE_ID" \
+            && -n "$APPLE_APP_SPECIFIC_PASSWORD" \
+            && -n "$APPLE_TEAM_ID" ]]; then
+            apple_id_ready=1
+          fi
+          if (( apple_id_any == 1 && apple_id_ready == 0 )); then
+            echo "Apple ID notarization requires all three secrets." >&2
+            exit 2
+          fi
+          if [[ -n "$APPLE_KEYCHAIN_PROFILE" ]]; then
+            keychain_ready=1
+          fi
+          if (( apple_id_ready == 0 && keychain_ready == 0 )); then
+            echo "Configure Apple ID credentials or a keychain profile." >&2
+            exit 2
+          fi
+
+          rm -rf studio/release
+          pnpm --dir studio exec electron-builder \
+            --mac --arm64 --publish never \
+            -c.mac.notarize=true \
+            -c.mac.forceCodeSigning=true \
+            -c.publish.releaseType=draft \
+            -c.publish.tagNamePrefix=studio-v
+
+      - name: Verify signed and notarized artifacts
+        id: artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          app="studio/release/mac-arm64/Double Love Studio.app"
+          dmgs=(studio/release/*.dmg)
+          zips=(studio/release/*.zip)
+          if [[ ! -d "$app" ]]; then
+            echo "Missing packaged application: $app" >&2
+            exit 2
+          fi
+          if (( ${#dmgs[@]} != 1 || ${#zips[@]} != 1 )); then
+            echo "Expected exactly one DMG and one ZIP." >&2
+            exit 2
+          fi
+          dmg="${dmgs[0]}"
+          zip="${zips[0]}"
+          required=(
+            "$dmg"
+            "$zip"
+            "studio/release/latest-mac.yml"
+            "${dmg}.blockmap"
+            "${zip}.blockmap"
+          )
+          for artifact in "${required[@]}"; do
+            if [[ ! -f "$artifact" ]]; then
+              echo "Missing release artifact: $artifact" >&2
+              exit 2
+            fi
+          done
+
+          codesign -vvv --deep --strict "$app"
+          spctl --assess --type exec --verbose=4 "$app"
+          xcrun stapler validate "$app"
+          xcrun stapler validate "$dmg"
+
+          printf 'app=%s\n' "$app" >> "$GITHUB_OUTPUT"
+          printf 'dmg=%s\n' "$dmg" >> "$GITHUB_OUTPUT"
+          printf 'zip=%s\n' "$zip" >> "$GITHUB_OUTPUT"
+
+      - name: Smoke packaged application
+        env:
+          PACKAGED_APP: ${{ steps.artifacts.outputs.app }}
+        run: scripts/migration/package-smoke.sh "$PACKAGED_APP"
+
+      - name: Publish artifacts to a draft GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd studio
+          shopt -s nullglob
+          artifacts=(
+            release/*.dmg
+            release/*.zip
+            release/latest-mac.yml
+            release/*.blockmap
+          )
+          if (( ${#artifacts[@]} != 5 )); then
+            echo "Expected DMG, ZIP, metadata, and two blockmaps." >&2
+            exit 2
+          fi
+          gh release create "$RELEASE_TAG" \
+            --draft \
+            --verify-tag \
+            --title "Double Love Studio $RELEASE_TAG" \
+            "${artifacts[@]}"
+
+      - name: Assert the GitHub Release remains a draft
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd studio
+          shopt -s nullglob
+          artifacts=(
+            release/*.dmg
+            release/*.zip
+            release/latest-mac.yml
+            release/*.blockmap
+          )
+          response="$RUNNER_TEMP/studio-release.json"
+          encode_script=
+          encode_script+='process.stdout.write('
+          encode_script+='encodeURIComponent(process.argv[1]))'
+          encoded_tag="$(node -e "$encode_script" "$RELEASE_TAG")"
+          api_base="https://api.github.com/repos/$GITHUB_REPOSITORY"
+          release_url="$api_base/releases/tags/$encoded_tag"
+          found=0
+          for attempt in 1 2 3 4 5; do
+            if curl --fail --silent --show-error \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "$release_url" \
+              -o "$response"; then
+              found=1
+              break
+            fi
+            sleep 2
+          done
+          if (( found == 0 )); then
+            echo "Draft release was not found after publishing." >&2
+            exit 2
+          fi
+          node - "$RELEASE_TAG" "$response" "${artifacts[@]}" <<'NODE'
+          const fs = require('node:fs')
+          const path = require('node:path')
+          const [tag, responsePath, ...artifacts] = process.argv.slice(2)
+          const release = JSON.parse(fs.readFileSync(responsePath, 'utf8'))
+          if (
+            release.tag_name !== tag ||
+            release.draft !== true ||
+            release.prerelease !== false
+          ) {
+            throw new Error(
+              'GitHub release is missing or not a non-prerelease draft',
+            )
+          }
+          const uploaded = new Set(release.assets.map((asset) => asset.name))
+          for (const artifact of artifacts) {
+            const name = path.basename(artifact)
+            if (!uploaded.has(name)) {
+              throw new Error(`Draft release is missing ${name}`)
+            }
+          }
+          NODE
+          {
+            echo "### Studio release candidate"
+            echo "- Tag: \`$RELEASE_TAG\`"
+            echo "- GitHub Release state: **draft**"
+            echo "- Promotion is manual only after clean-machine acceptance."
+          } >> "$GITHUB_STEP_SUMMARY"

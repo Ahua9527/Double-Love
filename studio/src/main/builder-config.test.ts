@@ -39,7 +39,8 @@ describe('electron-builder hardening configuration', () => {
       'provider: github',
       'owner: Ahua9527',
       'repo: Double-Love',
-      'releaseType: release',
+      'releaseType: draft',
+      'tagNamePrefix: studio-v',
     ]) {
       expect(config).toContain(expected)
     }

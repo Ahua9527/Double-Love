@@ -33,4 +33,5 @@ publish:
   provider: github
   owner: Ahua9527
   repo: Double-Love
-  releaseType: release
+  releaseType: draft
+  tagNamePrefix: studio-v

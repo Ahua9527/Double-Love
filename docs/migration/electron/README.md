@@ -1,10 +1,26 @@
 # Tauri → Electron 迁移：阶段账本与文档索引
 
-> **归档状态（Phase 5D 已完成）**：本目录保存迁移决策、旧路径、旧命令与对照证据；它们不是现行开发或发布指导。当前操作入口见 `docs/studio-foundation.md` 与 `docs/studio-beta.md`。
+> **归档状态（Phase 5F 已完成）**：本目录只保存迁移决策、旧路径、旧命令与对照证据；不是现行开发、打包或发布指导。
+
+当前 Electron 指南：
+
+- [架构](../../studio/architecture.md)
+- [打包](../../studio/packaging.md)
+- [发布](../../studio/release.md)
+- [升级与回退](../../studio/upgrade-rollback.md)
+- [排障](../../studio/troubleshooting.md)
 
 范围：仅 Studio 桌面端。Web/PWA 与 `double-love` CLI 对外行为不变。首个 Electron 正式版为 Studio 0.2.0（macOS 15+ / arm64，bundle id `space.ahua.doublelove.studio` 不变）。
 
-## 文档索引
+## 回退锚点
+
+- 最后可构建 Tauri 的提交：`cf3831a^`（当前解析为 `c6d43fb`）。
+- 删除旧容器、完成 Electron-only 收口的提交：`cf3831a`。
+
+`cf3831a~1` 与 `cf3831a^` 都表示删除提交的父提交；不要把 `cf3831a`
+本身当作 Tauri 构建点。数据恢复步骤见现行[升级与回退指南](../../studio/upgrade-rollback.md)。
+
+## 归档文档索引
 
 | 文档 | 内容 |
 | --- | --- |
@@ -28,8 +44,12 @@
 | 3D renderer 平台接缝 | **已完成** | renderer 运行时选择 Electron/Tauri/preview；Electron host 错误归一为既有 `OperationResult.failed`；本地文件无 bridge 时 fail closed | Tauri adapter 保留，revert renderer 平台接缝批次 |
 | 3 平台基础阶段（3A–3D） | **已完成** | service/host、安全边界、renderer 目录与平台 adapter 均已就位；Phase 4 可按纵向切片迁移业务命令 | 保留 Tauri adapter，按 3D→3A 逆序回退 |
 | 4 纵向业务切片迁移（7 片） | **已完成（Slice 1–7）** | 每片：Electron E2E 正常+失败/取消/恢复路径；Tauri 对照一致 | 每片独立提交，只 revert 当前切片 |
-| 5 默认 Electron、打包发布、清理 | **进行中（5A–5D 已完成；发布机签名/公证门禁待执行）** | 功能矩阵 100%；签名公证门禁通过 | Phase 5D 前最后可构建回退点 `c6d43fb` |
-| 5D 旧桌面容器删除 | **已完成** | renderer/Cargo/npm/CI/基线脚本去旧依赖；Electron package + smoke + 全量 Playwright；workspace 依赖树无旧容器 crate；残留只在本目录历史归档 | 回退到 `c6d43fb`，不覆盖用户一次性备份 |
+| 5 默认 Electron、打包发布、清理 | **工程收口已完成（5A–5D、5F）；首个真实签名候选仍须运行受保护工作流验收** | 发布工作流只写草稿；真实签名、公证与干净机器验收通过后人工公开 | 最后 Tauri 构建点 `cf3831a^`；Electron-only 收口 `cf3831a` |
+| 5A 打包与资源 | **已完成** | ASAR、host/schema/runtime extraResources、Fuses 与 package smoke | 回退 5A 资源和 builder 接线 |
+| 5B 更新器 | **已完成** | 两次确认、本地更新链证明、草稿/prerelease 不可见 | 手动安装已保留的旧版 |
+| 5C 一次性数据备份 | **已完成** | 首次 Electron 写入前创建偏好与项目备份且不覆盖 | 复制备份恢复，不改写备份原件 |
+| 5D 旧桌面容器删除 | **已完成** | renderer/Cargo/npm/CI/基线脚本去旧依赖；Electron package + smoke + 全量 Playwright；workspace 依赖树无旧容器 crate；残留只在本目录历史归档 | 回退到 `cf3831a^`，不覆盖用户一次性备份 |
+| 5F 发布工作流与最终文档 | **已完成** | tag/version 精确门禁；受保护 environment；签名、公证、候选验证；只上传草稿；现行文档齐全 | 工作流不公开 Release；按现行回退指南处理 |
 | 6 全量验收与回退演练 | 未开始 | 见计划完成判定 | 文档化手动回退 |
 
 ## 历史基线证据（2026-08-22，本机 macOS 15.7.7 arm64，Node 24.14.1 / pnpm 10.33.0 / Rust 1.97.1）
@@ -173,6 +193,26 @@ Rust workspace 现只含 engine、CLI、desktop service 与 desktop host；旧 c
 5D 门禁证据（2026-08-23，macOS arm64）：ffmpeg-full 严格模式 workspace fmt/clippy/test 通过（engine 149 过、1 个既有 golden regeneration ignored；desktop service 22 过；全部 host/CLI 集成通过）；bindings contract 通过；Studio lint、102 项 Vitest、Vite/TypeScript/Electron build 通过；release host、`electron-builder --dir`、九项 Fuse 与 packaged boot smoke 通过；全部 18 项 Playwright（含 package smoke、一次性备份与本地 updater feed）通过；根 Web lint、99 项 Vitest 与 build 通过；`git diff --check` 通过。
 
 依赖树门禁 `cargo tree --workspace | grep -i tauri` 无输出（grep 退出 1，符合空结果预期）。tracked-file 六项残留扫描共 13 行，全部位于本目录已明确标记的历史归档文件；排除本目录、CHANGELOG 与 TODO 后为零。Phase 5D 不执行签名、公证、发布、tag、push 或 merge；发布机签名/公证仍是 Phase 5 的独立剩余门禁。
+
+## Phase 5F 已交付发布工作流与最终迁移文档
+
+`.github/workflows/studio-release.yml` 只接受 `studio-v*` tag push 或带明确
+既有 tag 的手动 dispatch，并强制 tag 精确等于 `studio-v` 加
+`studio/package.json` 版本。受保护的 `studio-release` environment 在 job
+开始前提供人工批准门禁；工作流随后准备并验证 release runtime，运行 Studio
+与 Electron 门禁，构建 Developer ID 签名、公证的 arm64 DMG/ZIP，验证
+`.app`/DMG 票据、package smoke、更新元数据与两个 blockmap。
+
+GitHub publisher 使用 `onTagOrDraft`、`releaseType: draft`、`EP_DRAFT=true`
+与 `studio-v` tag prefix；上传后还会通过 API 断言 Release 仍为非 prerelease
+草稿且五项资产齐全。工作流没有公开 Release 的操作；干净机器验收后只能
+人工公开。本阶段未执行 workflow、签名、公证、tag、push、上传或 Release
+操作，也未读取任何 secret 值。
+
+现行架构、打包、发布、升级回退与排障分别迁至 `docs/studio/` 的五份短文档；
+本目录继续只保存历史。回退锚点冻结为最后 Tauri-buildable 的
+`cf3831a^` / `cf3831a~1`（`c6d43fb`），以及删除旧容器的 Electron-only
+收口提交 `cf3831a`。
 
 ## Phase 4 Slice 4 已交付主轨与项目视觉设置
 
