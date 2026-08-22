@@ -811,9 +811,12 @@ name = "double-love-desktop-service"
 version = "0.1.0"
 dependencies = [
  "double-love-engine",
+ "libc",
  "serde",
  "serde_json",
  "thiserror 2.0.20",
+ "time",
+ "url",
 ]
 
 [[package]]

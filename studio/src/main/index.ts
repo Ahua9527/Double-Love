@@ -644,7 +644,7 @@ function installIpcHandlers(): void {
     }
 
     const startedAt = performance.now()
-    const granted = applyGrantPolicy(grants, name, payload)
+    const granted = applyGrantPolicy(grants, name, payload ?? {})
     if (!granted.ok) {
       log.write({
         level: 'warn',

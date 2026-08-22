@@ -1,8 +1,12 @@
+pub mod models;
+pub mod preferences;
+
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use double_love_engine::{ProjectStore, ProjectSummary, TaskRegistry};
+use double_love_engine::{OperationResult, ProjectStore, ProjectSummary, TaskRegistry};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use thiserror::Error;
 
@@ -81,14 +85,6 @@ impl OpenProjectSlot {
     }
 }
 
-/// Phase 4 home for the Tauri preferences state and persistence adapter.
-#[derive(Debug, Default)]
-pub struct PreferencesState;
-
-/// Phase 4 home for model installation and runtime state.
-#[derive(Debug, Default)]
-pub struct ModelState;
-
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct HistoryNavigation {
     pub project_id: Option<String>,
@@ -102,8 +98,8 @@ pub struct DesktopState {
     app_data_dir: PathBuf,
     open_project: OpenProjectSlot,
     task_registry: TaskRegistry,
-    preferences: PreferencesState,
-    models: ModelState,
+    preferences: preferences::PreferencesState,
+    models: models::ModelState,
     history_navigation: Mutex<HistoryNavigation>,
 }
 
@@ -113,8 +109,8 @@ impl DesktopState {
             app_data_dir,
             open_project: OpenProjectSlot::default(),
             task_registry: TaskRegistry::new(),
-            preferences: PreferencesState,
-            models: ModelState,
+            preferences: preferences::PreferencesState::default(),
+            models: models::ModelState::default(),
             history_navigation: Mutex::new(HistoryNavigation::default()),
         }
     }
@@ -131,11 +127,11 @@ impl DesktopState {
         &self.task_registry
     }
 
-    pub fn preferences(&self) -> &PreferencesState {
+    pub fn preferences(&self) -> &preferences::PreferencesState {
         &self.preferences
     }
 
-    pub fn models(&self) -> &ModelState {
+    pub fn models(&self) -> &models::ModelState {
         &self.models
     }
 
@@ -209,6 +205,136 @@ impl CommandRegistry {
         })?;
         handler(state, event_sink, payload)
     }
+}
+
+fn result_value<T: Serialize>(result: OperationResult<T>) -> Result<Value, DesktopServiceError> {
+    serde_json::to_value(result).map_err(|error| DesktopServiceError::internal(error.to_string()))
+}
+
+fn params<T: for<'de> Deserialize<'de>>(payload: Value) -> Result<T, DesktopServiceError> {
+    serde_json::from_value(payload)
+        .map_err(|error| DesktopServiceError::invalid_params(error.to_string()))
+}
+
+#[derive(Deserialize)]
+struct PreferencesUpdateParams {
+    patch: preferences::PreferencesPatch,
+}
+
+#[derive(Deserialize)]
+struct RecentProjectForgetParams {
+    root: String,
+}
+
+#[derive(Default, Deserialize)]
+struct OnboardingCompleteParams {
+    #[serde(default, alias = "defaultAsrModel")]
+    default_asr_model: Option<String>,
+    #[serde(default)]
+    step: Option<u8>,
+}
+
+/// Registers the Phase 4 Slice 1 commands on the host-neutral service registry.
+pub fn register_commands(registry: &mut CommandRegistry) {
+    registry.register("preferences_get", |state, _events, _payload| {
+        result_value(preferences::preferences_get(
+            state.app_data_dir(),
+            state.preferences(),
+        ))
+    });
+    registry.register("preferences_update", |state, events, payload| {
+        let params: PreferencesUpdateParams = params(payload)?;
+        if let Some(model_root) = params.patch.model_root.as_deref() {
+            let current =
+                match preferences::current_preferences(state.app_data_dir(), state.preferences()) {
+                    Ok(current) => current,
+                    Err(error) => {
+                        return result_value(preferences::command_error::<
+                            preferences::AppPreferencesV1,
+                        >(error, true));
+                    }
+                };
+            if let Err(error) = state
+                .models()
+                .migrate_root(Path::new(&current.model_root), Path::new(model_root))
+            {
+                return result_value(OperationResult::<preferences::AppPreferencesV1>::failed(
+                    "MODEL_ROOT_MIGRATION_FAILED",
+                    error,
+                ));
+            }
+        }
+        result_value(preferences::preferences_update(
+            state.app_data_dir(),
+            state.preferences(),
+            events,
+            params.patch,
+        ))
+    });
+    registry.register("recent_projects_list", |state, _events, _payload| {
+        result_value(preferences::recent_projects_list(
+            state.app_data_dir(),
+            state.preferences(),
+        ))
+    });
+    registry.register("recent_project_forget", |state, events, payload| {
+        let params: RecentProjectForgetParams = params(payload)?;
+        result_value(preferences::recent_project_forget(
+            state.app_data_dir(),
+            state.preferences(),
+            events,
+            params.root,
+        ))
+    });
+    registry.register("system_profile", |state, _events, _payload| {
+        result_value(preferences::system_profile(
+            state.app_data_dir(),
+            state.preferences(),
+        ))
+    });
+    registry.register("onboarding_get", |state, _events, _payload| {
+        result_value(preferences::onboarding_get(
+            state.app_data_dir(),
+            state.preferences(),
+        ))
+    });
+    registry.register("onboarding_complete", |state, events, payload| {
+        let params = if payload.is_null() {
+            OnboardingCompleteParams::default()
+        } else {
+            params(payload)?
+        };
+        result_value(preferences::onboarding_complete(
+            state.app_data_dir(),
+            state.preferences(),
+            events,
+            params.default_asr_model,
+            params.step,
+        ))
+    });
+    registry.register("onboarding_reset", |state, events, _payload| {
+        result_value(preferences::onboarding_reset(
+            state.app_data_dir(),
+            state.preferences(),
+            events,
+        ))
+    });
+    registry.register("model_catalog", |state, _events, _payload| {
+        let preferences =
+            match preferences::current_preferences(state.app_data_dir(), state.preferences()) {
+                Ok(preferences) => preferences,
+                Err(error) => {
+                    return result_value(preferences::command_error::<
+                        Vec<double_love_engine::ModelDescriptorWithInstallation>,
+                    >(error, true));
+                }
+            };
+        let result = match state.models().snapshot(Path::new(&preferences.model_root)) {
+            Ok(snapshot) => OperationResult::success(snapshot),
+            Err(error) => OperationResult::failed("MODEL_CATALOG_FAILED", error),
+        };
+        result_value(result)
+    });
 }
 
 pub struct DesktopService {

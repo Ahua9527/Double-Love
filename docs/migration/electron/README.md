@@ -25,7 +25,7 @@
 | 3C React renderer 目录整理 | **已完成** | 纯移动至 `studio/src/renderer/`；Tauri/Electron 构建与测试行为不变 | 直接 revert 目录移动与配置路径更新 |
 | 3D renderer 平台接缝 | **已完成** | renderer 运行时选择 Electron/Tauri/preview；Electron host 错误归一为既有 `OperationResult.failed`；本地文件无 bridge 时 fail closed | Tauri adapter 保留，revert renderer 平台接缝批次 |
 | 3 平台基础阶段（3A–3D） | **已完成** | service/host、安全边界、renderer 目录与平台 adapter 均已就位；Phase 4 可按纵向切片迁移业务命令 | 保留 Tauri adapter，按 3D→3A 逆序回退 |
-| 4 纵向业务切片迁移（7 片） | 未开始 | 每片：Electron E2E 正常+失败/取消/恢复路径；Tauri 对照一致 | 每片独立提交，只 revert 当前切片 |
+| 4 纵向业务切片迁移（7 片） | **进行中（Slice 1 已完成）** | 每片：Electron E2E 正常+失败/取消/恢复路径；Tauri 对照一致 | 每片独立提交，只 revert 当前切片 |
 | 5 默认 Electron、打包发布、清理 | 未开始 | 功能矩阵 100%；签名公证门禁通过 | 保留最后可构建 Tauri commit |
 | 6 全量验收与回退演练 | 未开始 | 见计划完成判定 | 文档化手动回退 |
 
@@ -71,6 +71,16 @@ v1 的 `u64`/`u32` 在 wire 上都使用 JSON number；ts-rs 的 `bigint` 仅是
 main 监督唯一 Rust host，按 64 MiB 上限实现四字节大端长度前缀 JSON framing；启动时用生成的 `HostResponse` JSON Schema（Ajv）校验 handshake，确认 protocol 1 并记录 capabilities。受限 `window.doubleLove` 只暴露冻结的 `hostHealth()` 与 `openSettings()`。退出先发 shutdown，超时再 kill；崩溃后标记 unhealthy，不重放业务请求。开发时 host 从仓库根 `target/debug/double-love-desktop-host` 解析，schema 从仓库根 `bindings/host-protocol/schema` 读取；打包时 host 从 `process.resourcesPath` 解析。正式打包的 host/schema resource 复制、`electron-builder`、updater 与 Electron Fuses 加固均属于 Phase 5，本批只锁定依赖而不接线。
 
 Playwright Electron smoke 从 `out/main` 启动本地文件 renderer，使用临时 userData 且不访问网络，覆盖单主窗口标题、renderer Node 隔离、host health、`Cmd+,` settings 单例、close-to-hide/reopen 与 host 持续健康。CI 在保留 Tauri debug reference build 的同时构建 host、Electron 输出并实际运行该 smoke。
+
+## Phase 4 Slice 1 已交付应用壳、偏好与引导
+
+`double-love-desktop-service` 已无 Tauri 依赖地迁入 schema v1 偏好、v0 合并迁移、损坏备份恢复、最近项目、系统画像与引导状态；`preferences.json` 继续使用唯一顶层键 `app_preferences`，写入权限为 `0600`。默认 ASR 推荐仍按 16 GiB 内存阈值选择，模型目录仍为应用数据目录下的 `models`。
+
+host 现通过统一 `service::register_commands` 注册 Slice 1 命令，偏好变更继续广播 `dl://preferences-changed`。只读模型清单按当前偏好目录惰性初始化 `ModelManager`，内置 `silero-vad` 自动标记为已安装；模型目录变更先复制、校验并切换已安装模型，失败时不持久化新目录。本切片不迁移下载生命周期，也未修改 `src-tauri` 参考实现。
+
+对照证据复用 `src-tauri/tests/fixtures/preferences/{v1,partial-v0,corrupt}.json`：service 测试断言完整 v1 与冻结的 v0→v1 结果逐字段相等，并覆盖磁盘损坏恢复。host 集成测试以临时 `--app-data-dir` 覆盖默认往返、更新与事件、非法 endpoint、模型目录迁移失败保持旧偏好、最近项目 20 条上限/forget 错误、引导 complete/reset、arm64 系统画像及内置模型状态。Electron Playwright 使用同一临时 userData 覆盖偏好事件与落盘、重启持久化、启动损坏恢复、非法 endpoint、引导 reset 和系统画像。
+
+Slice 1 门禁已通过：严格工具模式的 `cargo test --workspace --locked`（含未改动 Tauri 参考实现 18 项测试）、workspace clippy `-D warnings`、bindings contract、Studio lint/test/build、Electron build 与全部 8 项 Playwright、根 Web lint/test/build、`git diff --check`。
 
 ## Phase 3C 已交付 React renderer 目录整理
 

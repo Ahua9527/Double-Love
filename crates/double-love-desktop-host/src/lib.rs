@@ -77,7 +77,9 @@ pub fn run_host<W: Write + Send + 'static>(
     app_data_dir: Option<PathBuf>,
 ) -> Result<(), HostRuntimeError> {
     let output = Arc::new(HostEventSink::new(writer));
-    let service = DesktopService::new(app_data_dir, output.clone())?;
+    let mut registry = double_love_desktop_service::CommandRegistry::new();
+    double_love_desktop_service::register_commands(&mut registry);
+    let service = DesktopService::with_registry(app_data_dir, output.clone(), registry)?;
 
     loop {
         let frame = match read_frame(reader) {
