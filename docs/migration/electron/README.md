@@ -19,7 +19,7 @@
 | --- | --- | --- | --- |
 | 1 审计、基线与蓝图 | 已完成 | 能力矩阵覆盖全部登记命令/事件/资源；失败/skip 唯一分类；ADR 经主会话确认 | 只含审计/脚本/fixture 元数据，直接 revert |
 | 2A 回归护栏 | **已完成** | 合成偏好/模型 fixture；schema 1–10 构造、迁移与幂等测试；manifest camelCase 冻结；ts-rs/CLI contract 脚本；严格工具门禁 | 回退本阶段 fixture、测试、脚本与 CI flag；不触碰用户数据 |
-| 2B Electron 骨架 | **进行中（Batch A host 骨架已交付）** | 窗口/host 握手/settings 单例/边界 smoke 全过；Tauri 仍完整可用 | 删除/回退骨架，不触碰用户数据 |
+| 2B Electron 骨架 | **已完成（Batch A host + Batch B Electron 壳）** | 窗口/host 握手/settings 单例/边界 smoke 全过；Tauri 仍完整可用 | 删除/回退骨架，不触碰用户数据 |
 | 3 安全边界与平台基础设施 | 未开始 | renderer 无 Node 能力；写能力需 path grant；媒体协议只读当前项目资产 | Tauri adapter 保留，revert 当前批次 |
 | 4 纵向业务切片迁移（7 片） | 未开始 | 每片：Electron E2E 正常+失败/取消/恢复路径；Tauri 对照一致 | 每片独立提交，只 revert 当前切片 |
 | 5 默认 Electron、打包发布、清理 | 未开始 | 功能矩阵 100%；签名公证门禁通过 | 保留最后可构建 Tauri commit |
@@ -59,3 +59,11 @@
 Protocol v1 使用版本化、可关联的单层 envelope。request 为 `{"v":1,"id":"<client-id>","method":"handshake","client":"electron-main","client_protocol":1}`（`health`/`shutdown` 同样携带 `v` 与 `id`）；response 回显同一 `id`，为 `{"v":1,"id":"<echoed-id>","status":"ok","result":{"type":"hello|health|shutdown",...}}` 或 `{"v":1,"id":"<echoed-id>","status":"error","error":{"code":"...","message":"..."}}`。无法解析的 frame 使用 `id:"unknown"`；缺失/错误版本和缺失/空白 id 会被拒绝。hello data 固定返回 `protocol`、`host_version`、`engine_version`、`capabilities`。Rust tagged union 同时生成 `bindings/host-protocol/*.ts` 与 `bindings/host-protocol/schema/*.schema.json`，contract 脚本检查 tracked diff 和 untracked 产物。
 
 v1 的 `u64`/`u32` 在 wire 上都使用 JSON number；ts-rs 的 `bigint` 仅是既有生成绑定的类型层注解，不改变 JSON runtime。Node/renderer runtime boundary 继续按既有规则转换并校验安全整数范围，禁止直接把 JS `BigInt` 交给 JSON 序列化。
+
+## Phase 2B Batch B 已交付 Electron 壳骨架
+
+`studio/electron.vite.config.ts` 在不移动现有 React renderer、不修改原 `vite.config.ts`/`dist/` Tauri 构建路径的前提下，新增 `out/main`、CJS sandbox preload 与 `out/renderer` 构建。main 创建 1440×900 主窗口和 close-to-hide 的 760×580 settings 单例；原生 `Cmd+,` 菜单与受限 preload IPC 共用同一 settings helper。窗口启用 context isolation、sandbox、禁 Node、禁外部导航/新窗口/权限请求，并持有 second-instance 单例锁。
+
+main 监督唯一 Rust host，按 64 MiB 上限实现四字节大端长度前缀 JSON framing；启动时用生成的 `HostResponse` JSON Schema（Ajv）校验 handshake，确认 protocol 1 并记录 capabilities。受限 `window.doubleLove` 只暴露冻结的 `hostHealth()` 与 `openSettings()`。退出先发 shutdown，超时再 kill；崩溃后标记 unhealthy，不重放业务请求。开发时 host 从仓库根 `target/debug/double-love-desktop-host` 解析，schema 从仓库根 `bindings/host-protocol/schema` 读取；打包时 host 从 `process.resourcesPath` 解析。正式打包的 host/schema resource 复制、`electron-builder`、updater 与 Electron Fuses 加固均属于 Phase 5，本批只锁定依赖而不接线。
+
+Playwright Electron smoke 从 `out/main` 启动本地文件 renderer，使用临时 userData 且不访问网络，覆盖单主窗口标题、renderer Node 隔离、host health、`Cmd+,` settings 单例、close-to-hide/reopen 与 host 持续健康。CI 在保留 Tauri debug reference build 的同时构建 host、Electron 输出并实际运行该 smoke。

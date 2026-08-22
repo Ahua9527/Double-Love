@@ -5,13 +5,27 @@ import reactHooks from 'eslint-plugin-react-hooks'
 import reactRefresh from 'eslint-plugin-react-refresh'
 import tseslint from 'typescript-eslint'
 
+const electronFiles = [
+  'src/main/**/*.ts',
+  'src/preload/**/*.ts',
+  'electron.vite.config.ts',
+  'playwright.config.ts',
+  'e2e/**/*.ts',
+]
+
 export default tseslint.config(
-  { ignores: ['dist'] },
+  { ignores: ['dist', 'out'] },
   {
     extends: [js.configs.recommended, ...tseslint.configs.recommended],
     files: ['**/*.{ts,tsx}'],
     languageOptions: {
       ecmaVersion: 2020,
+    },
+  },
+  {
+    files: ['src/**/*.{ts,tsx}'],
+    ignores: ['src/main/**', 'src/preload/**'],
+    languageOptions: {
       globals: globals.browser,
     },
     plugins: {
@@ -24,6 +38,12 @@ export default tseslint.config(
         'warn',
         { allowConstantExport: true },
       ],
+    },
+  },
+  {
+    files: electronFiles,
+    languageOptions: {
+      globals: globals.node,
     },
   },
 )
