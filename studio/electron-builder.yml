@@ -1,0 +1,6 @@
+appId: space.ahua.doublelove.studio
+productName: Double Love Studio
+asar: true
+afterPack: scripts/after-pack.cjs
+files:
+  - out/**

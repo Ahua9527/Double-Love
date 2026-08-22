@@ -4,15 +4,10 @@ import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createRequire } from 'node:module'
 import { test, expect, _electron as electron, type ElectronApplication, type Page } from '@playwright/test'
-
-interface DoubleLoveApi {
-  hostHealth(): Promise<unknown>
-  openSettings(): Promise<void>
-}
+import './api-types'
 
 declare global {
   interface Window {
-    readonly doubleLove: DoubleLoveApi
     readonly require?: unknown
     readonly process?: unknown
     readonly global?: unknown
@@ -86,6 +81,7 @@ test('runs the sandboxed window, host bridge, and settings singleton', async () 
     processType: typeof window.process,
     globalType: typeof window.global,
     apiFrozen: Object.isFrozen(window.doubleLove),
+    dialogsFrozen: Object.isFrozen(window.doubleLove.dialogs),
     apiKeys: Object.keys(window.doubleLove).sort(),
     networkResources: performance.getEntriesByType('resource')
       .map((entry) => entry.name)
@@ -96,7 +92,8 @@ test('runs the sandboxed window, host bridge, and settings singleton', async () 
     processType: 'undefined',
     globalType: 'undefined',
     apiFrozen: true,
-    apiKeys: ['hostHealth', 'openSettings'],
+    dialogsFrozen: true,
+    apiKeys: ['dialogs', 'hostHealth', 'invoke', 'onEvent', 'openSettings'],
     networkResources: [],
   })
 

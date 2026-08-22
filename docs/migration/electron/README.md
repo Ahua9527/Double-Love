@@ -21,7 +21,7 @@
 | 2A 回归护栏 | **已完成** | 合成偏好/模型 fixture；schema 1–10 构造、迁移与幂等测试；manifest camelCase 冻结；ts-rs/CLI contract 脚本；严格工具门禁 | 回退本阶段 fixture、测试、脚本与 CI flag；不触碰用户数据 |
 | 2B Electron 骨架 | **已完成（Batch A host + Batch B Electron 壳）** | 窗口/host 握手/settings 单例/边界 smoke 全过；Tauri 仍完整可用 | 删除/回退骨架，不触碰用户数据 |
 | 3A desktop service 与 host 分派基础设施 | **已完成** | service 持有桌面状态容器且不依赖 Tauri/Electron；host 支持无业务命令的通用 invoke 与独立事件 envelope | Tauri adapter 保留，revert service/host 基础设施批次 |
-| 3B 安全边界与平台基础设施 | 未开始 | renderer 无 Node 能力；写能力需 path grant；媒体协议只读当前项目资产 | Tauri adapter 保留，revert 当前批次 |
+| 3B 安全边界与平台基础设施 | **已完成** | renderer 无 Node 能力；写能力需 path grant；媒体协议只读当前项目资产 | Tauri adapter 保留，revert 当前批次 |
 | 4 纵向业务切片迁移（7 片） | 未开始 | 每片：Electron E2E 正常+失败/取消/恢复路径；Tauri 对照一致 | 每片独立提交，只 revert 当前切片 |
 | 5 默认 Electron、打包发布、清理 | 未开始 | 功能矩阵 100%；签名公证门禁通过 | 保留最后可构建 Tauri commit |
 | 6 全量验收与回退演练 | 未开始 | 见计划完成判定 | 文档化手动回退 |
@@ -68,6 +68,14 @@ v1 的 `u64`/`u32` 在 wire 上都使用 JSON number；ts-rs 的 `bigint` 仅是
 main 监督唯一 Rust host，按 64 MiB 上限实现四字节大端长度前缀 JSON framing；启动时用生成的 `HostResponse` JSON Schema（Ajv）校验 handshake，确认 protocol 1 并记录 capabilities。受限 `window.doubleLove` 只暴露冻结的 `hostHealth()` 与 `openSettings()`。退出先发 shutdown，超时再 kill；崩溃后标记 unhealthy，不重放业务请求。开发时 host 从仓库根 `target/debug/double-love-desktop-host` 解析，schema 从仓库根 `bindings/host-protocol/schema` 读取；打包时 host 从 `process.resourcesPath` 解析。正式打包的 host/schema resource 复制、`electron-builder`、updater 与 Electron Fuses 加固均属于 Phase 5，本批只锁定依赖而不接线。
 
 Playwright Electron smoke 从 `out/main` 启动本地文件 renderer，使用临时 userData 且不访问网络，覆盖单主窗口标题、renderer Node 隔离、host health、`Cmd+,` settings 单例、close-to-hide/reopen 与 host 持续健康。CI 在保留 Tauri debug reference build 的同时构建 host、Electron 输出并实际运行该 smoke。
+
+## Phase 3B 已交付 Electron main 平台基础设施
+
+Electron main/preload 现已提供 60 秒惰性过期、UUID、不透明且按 kind 绑定的一次性 path grant；原生目录、媒体与导出对话框只把 token 返回 renderer，测试路径覆盖仅在未打包且显式 `--double-love-e2e` 时生效。单一 `dl:invoke` 经命令 grant policy 消费 token 后才向 host 注入 `path` / `target_path` / `patch.model_root`；只读未知 policy 保持透传，Phase 4 尚未迁入的命令由 host 返回 `UNKNOWN_COMMAND`。
+
+所有 `ipcMain.handle` 注册统一经过 sender frame URL、应用窗口归属、逐 channel 窗口 allowlist 与 8 MiB payload 上限校验；host response/event 已解复用，允许的六类事件经 preload 剥离 Electron event 后广播并返回 unsubscribe。`dl-media://asset/<asset-id>` 在 app-ready 前注册安全 scheme，并通过 host `resolve_media_asset` 解析；Node 可测纯函数保持 GET/HEAD、单 Range 的 200/206/404/416/501 语义，当前 host 的 `UNKNOWN_COMMAND` 安全映射为 404。
+
+main 本地日志仅写 `userData/logs` 的字段白名单 JSONL，1 MiB 轮转保留五份；意外 host 退出写无路径的 crash marker，握手成功清除。`electron-builder.yml` 与 afterPack Fuse V1 hook 已锁定 bundle identity、ASAR 与六项加固开关；完整打包/签名验证仍留 Phase 5。Node 单测覆盖 grant、媒体响应、日志与 builder/grant policy，Playwright 覆盖 token 全链、协议、事件和未知命令，既有 sandbox/settings smoke 继续保留。
 
 ## Phase 3A 已交付 desktop service 与 host 分派基础设施
 
