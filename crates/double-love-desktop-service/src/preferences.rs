@@ -4,7 +4,7 @@ use std::{
     collections::HashMap,
     ffi::CString,
     fs::{self, OpenOptions},
-    io::Write,
+    io::{self, Write},
     path::{Path, PathBuf},
     process::Command,
     sync::Mutex,
@@ -21,6 +21,7 @@ use url::Url;
 use crate::{DesktopEventSink, DesktopServiceError};
 
 const STORE_FILE: &str = "preferences.json";
+const PRE_ELECTRON_BACKUP_FILE: &str = "preferences.json.pre-electron-backup";
 const STORE_KEY: &str = "app_preferences";
 pub const CURRENT_PREFERENCES_SCHEMA: u32 = 1;
 pub const CURRENT_ONBOARDING_VERSION: u32 = 1;
@@ -341,6 +342,42 @@ fn save_preferences_unlocked(
     Ok(())
 }
 
+fn backup_existing_preferences_unlocked(path: &Path) -> Result<(), PreferencesError> {
+    let backup = path.with_file_name(PRE_ELECTRON_BACKUP_FILE);
+    match fs::symlink_metadata(&backup) {
+        Ok(_) => return Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => return Err(PreferencesError::Io(error.to_string())),
+    }
+
+    let mut input =
+        fs::File::open(path).map_err(|error| PreferencesError::Io(error.to_string()))?;
+    let mut options = OpenOptions::new();
+    options.create_new(true).write(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut output = match options.open(&backup) {
+        Ok(output) => output,
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => return Ok(()),
+        Err(error) => return Err(PreferencesError::Io(error.to_string())),
+    };
+    let copy_result = (|| -> io::Result<()> {
+        io::copy(&mut input, &mut output)?;
+        #[cfg(unix)]
+        fs::set_permissions(&backup, std::os::unix::fs::PermissionsExt::from_mode(0o600))?;
+        output.sync_all()
+    })();
+    if let Err(error) = copy_result {
+        drop(output);
+        let _ = fs::remove_file(&backup);
+        return Err(PreferencesError::Io(error.to_string()));
+    }
+    Ok(())
+}
+
 fn with_preferences<T>(
     app_data_dir: &Path,
     state: &PreferencesState,
@@ -352,7 +389,11 @@ fn with_preferences<T>(
         .map_err(|_| PreferencesError::Store("preferences lock is unavailable".to_string()))?;
     let defaults = default_preferences(app_data_dir);
     let path = store_path(app_data_dir);
-    let (preferences, recovered, has_preferences) = if path.exists() {
+    let store_exists = path
+        .try_exists()
+        .map_err(|error| PreferencesError::Io(error.to_string()))?;
+    let (preferences, recovered, has_preferences) = if store_exists {
+        backup_existing_preferences_unlocked(&path)?;
         let bytes = fs::read(&path).map_err(|error| PreferencesError::Io(error.to_string()))?;
         match decode_store_bytes(&bytes, &defaults) {
             Ok(Some(preferences)) => (preferences, false, true),
@@ -1023,14 +1064,52 @@ mod tests {
     }
 
     #[test]
+    fn preexisting_store_gets_one_unchanging_pre_electron_backup() {
+        let app_data = temp_directory("pre-electron-backup");
+        fs::create_dir_all(&app_data).expect("app data");
+        let fixture = include_bytes!("../tests/fixtures/preferences/v1.json");
+        fs::write(app_data.join(STORE_FILE), fixture).expect("preferences fixture");
+        let state = PreferencesState::default();
+
+        let first = preferences_get(&app_data, &state);
+        assert_eq!(
+            first.data.as_ref().expect("preferences").theme,
+            ThemeMode::Dark
+        );
+        let backup = app_data.join(PRE_ELECTRON_BACKUP_FILE);
+        assert_eq!(fs::read(&backup).expect("preferences backup"), fixture);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                fs::metadata(&backup)
+                    .expect("backup metadata")
+                    .permissions()
+                    .mode()
+                    & 0o777,
+                0o600
+            );
+        }
+
+        let mut changed = first.data.expect("preferences data");
+        changed.theme = ThemeMode::Light;
+        save_preferences_unlocked(&app_data, &changed).expect("store changes after backup");
+        let second = preferences_get(&app_data, &state);
+        assert_eq!(
+            second.data.expect("changed preferences").theme,
+            ThemeMode::Light
+        );
+        assert_eq!(fs::read(&backup).expect("unchanged backup"), fixture);
+
+        fs::remove_dir_all(app_data).expect("remove test directory");
+    }
+
+    #[test]
     fn corrupt_store_is_backed_up_and_recovered_on_disk() {
         let app_data = temp_directory("corrupt-recovery");
         fs::create_dir_all(&app_data).expect("app data");
-        fs::write(
-            app_data.join(STORE_FILE),
-            include_bytes!("../tests/fixtures/preferences/corrupt.json"),
-        )
-        .expect("corrupt fixture");
+        let corrupt = include_bytes!("../tests/fixtures/preferences/corrupt.json");
+        fs::write(app_data.join(STORE_FILE), corrupt).expect("corrupt fixture");
 
         let result = preferences_get(&app_data, &PreferencesState::default());
         assert!(result.data.is_some());
@@ -1045,6 +1124,10 @@ mod tests {
                     .file_name()
                     .to_string_lossy()
                     .starts_with("preferences.corrupt."))
+        );
+        assert_eq!(
+            fs::read(app_data.join(PRE_ELECTRON_BACKUP_FILE)).expect("pre-Electron corrupt backup"),
+            corrupt
         );
 
         fs::remove_dir_all(app_data).expect("remove test directory");

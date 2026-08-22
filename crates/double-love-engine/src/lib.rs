@@ -1,3 +1,4 @@
+mod backup;
 mod compile;
 mod contracts;
 mod diarize;
@@ -19,6 +20,7 @@ mod transcribe;
 
 pub const ENGINE_VERSION: &str = env!("CARGO_PKG_VERSION");
 
+pub use backup::{DatabaseBackupError, backup_sqlite_database};
 pub use compile::{CompileOptions, compile_rough_cut, output_to_source, source_to_output};
 pub use contracts::{
     AssetStatus, CanvasFit, CanvasSpec, CompatibilityReport, EditBehavior, EditOperation, EditType,

@@ -11,8 +11,8 @@ use double_love_engine::{
     ProgressSink, ProjectExportPreview, ProjectStore, ProjectSummary, SharedSink, SpeakerIdentity,
     SpeakerNameAgentPayload, SubtitleStyle, TaskRegistry, TaskState, TranscribeConfig,
     agent_name_payload_preview, append_full_main_track_asset, append_main_track_clip,
-    compile_project_timeline, create_project, export_project_ass_to, export_project_xmeml_to,
-    export_rough_cut, export_rough_cut_to, ffmpeg_supports_ass_filter,
+    backup_sqlite_database, compile_project_timeline, create_project, export_project_ass_to,
+    export_project_xmeml_to, export_rough_cut, export_rough_cut_to, ffmpeg_supports_ass_filter,
     import_media as engine_import_media, list_media_assets, local_name_proposals,
     move_main_track_clip, omit_words, open_project, preview_project_export, remove_main_track_clip,
     render_project_mp4_to, restore_words, speaker_diarization_result, split_main_track_clip,
@@ -818,6 +818,22 @@ fn warning(
     });
 }
 
+fn backup_existing_project_database(root: &Path) -> Result<(), String> {
+    let project_data = root.join(".doublelove");
+    let source = project_data.join("project.sqlite");
+    if source
+        .try_exists()
+        .map_err(|error| format!("pre-Electron project backup check failed: {error}"))?
+    {
+        backup_sqlite_database(
+            &source,
+            &project_data.join("project.pre-electron-backup.sqlite"),
+        )
+        .map_err(|error| format!("pre-Electron project backup failed: {error}"))?;
+    }
+    Ok(())
+}
+
 fn install_open_project(
     state: &DesktopState,
     summary: &ProjectSummary,
@@ -869,7 +885,10 @@ fn reset_history_navigation(
 pub fn register_commands(registry: &mut CommandRegistry) {
     registry.register("project_create", |state, events, payload| {
         let params: ProjectPathParams = params(payload)?;
-        let result = match create_project(Path::new(&params.path)) {
+        let project_root = Path::new(&params.path);
+        let result = match backup_existing_project_database(project_root)
+            .and_then(|()| create_project(project_root).map_err(|error| error.to_string()))
+        {
             Ok(mut summary) => {
                 let style_warning = match preferences::current_preferences(
                     state.app_data_dir(),
@@ -917,7 +936,10 @@ pub fn register_commands(registry: &mut CommandRegistry) {
     });
     registry.register("project_open", |state, events, payload| {
         let params: ProjectPathParams = params(payload)?;
-        let result = match open_project(Path::new(&params.path)) {
+        let project_root = Path::new(&params.path);
+        let result = match backup_existing_project_database(project_root)
+            .and_then(|()| open_project(project_root).map_err(|error| error.to_string()))
+        {
             Ok(summary) => match install_open_project(state, &summary) {
                 Ok(()) => {
                     let mut result = OperationResult::success(summary.clone());

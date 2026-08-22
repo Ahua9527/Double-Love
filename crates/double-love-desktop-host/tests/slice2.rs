@@ -10,7 +10,8 @@ use double_love_desktop_host::{
     framing::{read_frame, write_frame},
     protocol::{HostRequest, HostRequestMethod, HostResponse, HostResponseStatus},
 };
-use double_love_engine::{CanvasFit, CanvasSpec};
+use double_love_engine::{CanvasFit, CanvasSpec, ProjectStore, create_project};
+use rusqlite::{Connection, OpenFlags};
 use serde_json::{Value, json};
 
 struct HostProcess {
@@ -145,6 +146,108 @@ fn changed_canvas() -> CanvasSpec {
         rotation_degrees: 2.0,
         opacity: 0.8,
     }
+}
+
+#[test]
+fn existing_project_is_backed_up_before_service_open_and_create() {
+    let root = temp_directory("pre-electron-backup");
+    let project = root.join("open-project");
+    let app_data = root.join("app-data");
+    fs::create_dir_all(&root).expect("temporary root");
+    let seeded = create_project(&project).expect("engine creates pre-existing project");
+    let database = PathBuf::from(&seeded.database);
+    let backup = project
+        .join(".doublelove")
+        .join("project.pre-electron-backup.sqlite");
+    let mut host = HostProcess::spawn(&app_data);
+
+    let opened = host.invoke("open-seeded", "project_open", json!({"path": project}));
+    assert_eq!(opened["status"], "success");
+    assert_eq!(opened["data"]["project_id"], seeded.project_id);
+    assert_eq!(opened["data"]["revision"], 0);
+    assert!(backup.is_file());
+
+    let source_read_only = Connection::open_with_flags(&database, OpenFlags::SQLITE_OPEN_READ_ONLY)
+        .expect("source opens read-only after service open");
+    let source_schema: u32 = source_read_only
+        .query_row("SELECT MAX(version) FROM schema_migrations", [], |row| {
+            row.get(0)
+        })
+        .expect("source schema version");
+    assert_eq!(source_schema, 10);
+    drop(source_read_only);
+
+    let backup_read_only = Connection::open_with_flags(&backup, OpenFlags::SQLITE_OPEN_READ_ONLY)
+        .expect("backup opens read-only");
+    let migration_table_count: u32 = backup_read_only
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'schema_migrations'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("schema migration table lookup");
+    assert_eq!(migration_table_count, 1);
+    let backup_schema: u32 = backup_read_only
+        .query_row("SELECT MAX(version) FROM schema_migrations", [], |row| {
+            row.get(0)
+        })
+        .expect("backup schema version");
+    assert_eq!(backup_schema, 10);
+    let backup_revision: u64 = backup_read_only
+        .query_row(
+            "SELECT COALESCE(MAX(revision), 0) FROM revisions",
+            [],
+            |row| row.get(0),
+        )
+        .expect("backup revision");
+    assert_eq!(backup_revision, 0);
+    drop(backup_read_only);
+    let first_backup_bytes = fs::read(&backup).expect("first backup bytes");
+
+    let changed = host.invoke(
+        "change-source",
+        "canvas_set",
+        json!({"canvas": changed_canvas()}),
+    );
+    assert_eq!(changed["revision"], 1);
+    let reopened = host.invoke("reopen-seeded", "project_open", json!({"path": project}));
+    assert_eq!(reopened["data"]["revision"], 1);
+    assert_eq!(
+        fs::read(&backup).expect("backup after reopen"),
+        first_backup_bytes
+    );
+
+    let fallback = ProjectStore::open(&backup).expect("Tauri-equivalent ProjectStore open");
+    assert_eq!(
+        fallback.project_id().expect("backup project id").as_deref(),
+        Some(seeded.project_id.as_str())
+    );
+    assert_eq!(fallback.revision().expect("backup revision"), 0);
+    drop(fallback);
+
+    let create_root = root.join("create-project");
+    let create_seeded = create_project(&create_root).expect("engine creates second project");
+    let created = host.invoke(
+        "create-over-existing",
+        "project_create",
+        json!({"path": create_root}),
+    );
+    assert_eq!(created["status"], "success");
+    assert_eq!(created["data"]["project_id"], create_seeded.project_id);
+    assert_eq!(
+        ProjectStore::open(
+            &create_root
+                .join(".doublelove")
+                .join("project.pre-electron-backup.sqlite")
+        )
+        .expect("create handler backup opens")
+        .revision()
+        .expect("create handler backup revision"),
+        0
+    );
+
+    host.stop();
+    fs::remove_dir_all(root).expect("remove temporary root");
 }
 
 #[test]

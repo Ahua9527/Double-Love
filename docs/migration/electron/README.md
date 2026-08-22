@@ -26,7 +26,7 @@
 | 3D renderer 平台接缝 | **已完成** | renderer 运行时选择 Electron/Tauri/preview；Electron host 错误归一为既有 `OperationResult.failed`；本地文件无 bridge 时 fail closed | Tauri adapter 保留，revert renderer 平台接缝批次 |
 | 3 平台基础阶段（3A–3D） | **已完成** | service/host、安全边界、renderer 目录与平台 adapter 均已就位；Phase 4 可按纵向切片迁移业务命令 | 保留 Tauri adapter，按 3D→3A 逆序回退 |
 | 4 纵向业务切片迁移（7 片） | **已完成（Slice 1–7）** | 每片：Electron E2E 正常+失败/取消/恢复路径；Tauri 对照一致 | 每片独立提交，只 revert 当前切片 |
-| 5 默认 Electron、打包发布、清理 | **进行中（5A 打包基础设施与资源归属）** | 功能矩阵 100%；签名公证门禁通过 | 保留最后可构建 Tauri commit |
+| 5 默认 Electron、打包发布、清理 | **进行中（5A 打包基础设施与资源归属；5C 一次性数据备份）** | 功能矩阵 100%；签名公证门禁通过 | 保留最后可构建 Tauri commit |
 | 6 全量验收与回退演练 | 未开始 | 见计划完成判定 | 文档化手动回退 |
 
 ## 当前基线证据（2026-08-22，本机 macOS 15.7.7 arm64，Node 24.14.1 / pnpm 10.33.0 / Rust 1.97.1）
@@ -134,7 +134,18 @@ Slice 7 未修改 `src-tauri`、Web/PWA、SQLite schema/migration、TimelineIR�
 
 Electron main 在打包模式只从 `process.resourcesPath` 解析 host、协议 schema 与注入给 host 的资源根。desktop service 的导入与 MP4 渲染按 `runtime/{ffmpeg,ffprobe}` → 既有 `resources/runtime` 兼容位置 → 开发期 `FfmpegTools::discover()` 的顺序解析；新增单测冻结 bundled runtime 优先级。打包 smoke 检查 host、schema、ASAR、图标、runtime 树和九项 Fuse，再经 CDP Playwright 启动 unpacked `.app`，验证 `hostHealth` 与偏好调用均成功且隔离 userData 生效。
 
-5A 门禁证据（2026-08-22，macOS arm64）：release host、Studio/Vite/TypeScript/Electron build、无证书目录包、Fuse 工具所需的本地 ad-hoc 完整性校验和 unpacked boot smoke 通过；ffmpeg-full/libass 严格模式 workspace fmt/clippy/test 全过（engine 148 过、1 ignored；desktop service 20 过；Tauri 18 过）；bindings contract、两组 Python sidecar 测试与 py_compile 通过；Studio 89 项 Vitest、全部 16 项 Playwright、根 Web 99 项 Vitest 及 lint/build 通过；Tauri debug `.app` 与新共享资源布局通过；`git diff --check` 通过。真实 runtime 二进制、Developer ID 签名及公证按计划留给后续 5B/5C，Phase 5D 才删除 Tauri。
+5A 门禁证据（2026-08-22，macOS arm64）：release host、Studio/Vite/TypeScript/Electron build、无证书目录包、Fuse 工具所需的本地 ad-hoc 完整性校验和 unpacked boot smoke 通过；ffmpeg-full/libass 严格模式 workspace fmt/clippy/test 全过（engine 148 过、1 ignored；desktop service 20 过；Tauri 18 过）；bindings contract、两组 Python sidecar 测试与 py_compile 通过；Studio 89 项 Vitest、全部 16 项 Playwright、根 Web 99 项 Vitest 及 lint/build 通过；Tauri debug `.app` 与新共享资源布局通过；`git diff --check` 通过。真实 runtime 二进制、Developer ID 签名及公证按计划留给后续发布批次，Phase 5D 才删除 Tauri。
+
+## Phase 5C 已交付首次 Electron 写入前的一次性数据备份
+
+Electron host 通过 desktop service 首次接触既有 Tauri 数据时，必须先完成以下备份；备份失败会阻止对应命令继续写入：
+
+- 偏好：首次读取既有 `preferences.json` 前，在同目录创建 `preferences.json.pre-electron-backup`。源文件不存在时不创建；备份使用原始字节、不迁移内容，权限固定为 `0600`。
+- 项目：`project_open` 或 `project_create` 发现既有 `.doublelove/project.sqlite` 时，必须在任何 engine `open_project` / `create_project`、WAL 切换、migration 或 snapshot backfill 前创建 `.doublelove/project.pre-electron-backup.sqlite`。engine 以只读连接打开源库，并使用 SQLite online backup API，因此已提交到 WAL 的内容也进入一致快照，而不会先运行 `ProjectStore::open`。
+- 两类目标都采用“只创建、不替换”规则：目标名一旦存在，后续命令和后续 Electron 启动都直接保留它，不校验、更新或覆盖。它们记录的是第一次 Electron 可能写入之前的状态，不是持续备份。
+- 备份不改变偏好 JSON、项目 manifest、SQLite schema/migration 或任何 CLI/Tauri 调用方行为；未显式调用新增 engine 备份 helper 的 CLI/Tauri 路径保持原样。项目备份仍可由 `ProjectStore::open` 打开，供 Tauri 等价路径恢复。
+
+回退时先完全退出 Electron 与 Tauri，另行保留当前文件，再恢复副本；不要移动或改写上述一次性备份本身。偏好回退是把 `preferences.json.pre-electron-backup` 的副本放回 `preferences.json` 并保持 `0600`。项目回退是把 `project.pre-electron-backup.sqlite` 的副本放回同目录的 `project.sqlite`；替换前须把当前 `project.sqlite` 及其 `project.sqlite-wal` / `project.sqlite-shm` 一起移出该目录，避免旧 WAL 套到恢复库。随后可用最后可构建的 Tauri 版本打开原项目目录验证。
 
 ## Phase 4 Slice 4 已交付主轨与项目视觉设置
 

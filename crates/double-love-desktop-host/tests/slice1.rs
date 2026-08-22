@@ -136,6 +136,12 @@ fn preferences_onboarding_profile_catalog_and_events_round_trip() {
         &fs::read(app_data.join("preferences.json")).expect("persisted preferences"),
     )
     .expect("preferences JSON");
+    assert!(
+        !app_data
+            .join("preferences.json.pre-electron-backup")
+            .exists(),
+        "an absent preferences store must not produce a backup"
+    );
     assert_eq!(persisted.as_object().expect("store object").len(), 1);
     assert_eq!(persisted["app_preferences"], defaults["data"]);
     #[cfg(unix)]
@@ -278,14 +284,56 @@ fn preferences_onboarding_profile_catalog_and_events_round_trip() {
 }
 
 #[test]
+fn preexisting_preferences_get_one_unchanging_pre_electron_backup() {
+    let app_data = temp_directory("pre-electron-backup");
+    fs::create_dir_all(&app_data).expect("app data");
+    let fixture =
+        include_bytes!("../../double-love-desktop-service/tests/fixtures/preferences/v1.json");
+    fs::write(app_data.join("preferences.json"), fixture).expect("preferences fixture");
+    let backup = app_data.join("preferences.json.pre-electron-backup");
+    let mut host = HostProcess::spawn(&app_data);
+
+    let first = operation(host.invoke("first-get", "preferences_get", json!({})).0);
+    assert_eq!(first["status"], "success");
+    assert_eq!(first["data"]["theme"], "dark");
+    assert_eq!(fs::read(&backup).expect("first backup"), fixture);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(
+            fs::metadata(&backup)
+                .expect("backup metadata")
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600
+        );
+    }
+
+    let updated = operation(
+        host.invoke(
+            "change-after-backup",
+            "preferences_update",
+            json!({"patch": {"theme": "light"}}),
+        )
+        .0,
+    );
+    assert_eq!(updated["data"]["theme"], "light");
+    let second = operation(host.invoke("second-get", "preferences_get", json!({})).0);
+    assert_eq!(second["data"]["theme"], "light");
+    assert_eq!(fs::read(&backup).expect("unchanged backup"), fixture);
+
+    host.stop();
+    fs::remove_dir_all(app_data).expect("remove app data");
+}
+
+#[test]
 fn corrupt_preferences_recover_with_warning_and_backup() {
     let app_data = temp_directory("corrupt");
     fs::create_dir_all(&app_data).expect("app data");
-    fs::write(
-        app_data.join("preferences.json"),
-        include_bytes!("../../double-love-desktop-service/tests/fixtures/preferences/corrupt.json"),
-    )
-    .expect("corrupt fixture");
+    let corrupt =
+        include_bytes!("../../double-love-desktop-service/tests/fixtures/preferences/corrupt.json");
+    fs::write(app_data.join("preferences.json"), corrupt).expect("corrupt fixture");
     let mut host = HostProcess::spawn(&app_data);
 
     let recovered = operation(host.invoke("recover", "preferences_get", json!({})).0);
@@ -299,6 +347,11 @@ fn corrupt_preferences_recover_with_warning_and_backup() {
                 .file_name()
                 .to_string_lossy()
                 .starts_with("preferences.corrupt."))
+    );
+    assert_eq!(
+        fs::read(app_data.join("preferences.json.pre-electron-backup"))
+            .expect("pre-Electron backup survives recovery"),
+        corrupt
     );
 
     host.stop();
