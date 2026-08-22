@@ -12,6 +12,7 @@ import {
   Menu,
   protocol,
   session,
+  shell,
   type IpcMainInvokeEvent,
   type MenuItemConstructorOptions,
 } from 'electron'
@@ -41,6 +42,7 @@ const SHUTDOWN_TIMEOUT_MS = 1_500
 const SETTINGS_QUERY = 'window=settings'
 const E2E_SWITCH = 'double-love-e2e'
 const E2E_USER_DATA_SWITCH = 'double-love-e2e-user-data'
+const E2E_TRANSCRIBE_MOCK_SWITCH = 'double-love-e2e-transcribe-mock'
 const BOTH_WINDOWS: readonly WindowRole[] = ['main', 'settings']
 
 // Renderer-reachable host commands. Excludes main-only resolution helpers and the
@@ -178,7 +180,16 @@ class HostSupervisor {
     this.log.write({ level: 'info', process: 'host', method: 'lifecycle.start', status: 'start' })
     const startedAt = performance.now()
     this.stopping = false
-    const child = spawn(hostPath, ['--app-data-dir', app.getPath('userData')], {
+    const hostArguments = [
+      '--app-data-dir',
+      app.getPath('userData'),
+      '--resource-dir',
+      app.isPackaged ? process.resourcesPath : repositoryRoot,
+    ]
+    if (!app.isPackaged && app.commandLine.hasSwitch(E2E_TRANSCRIBE_MOCK_SWITCH)) {
+      hostArguments.push('--test-transcribe-mock')
+    }
+    const child = spawn(hostPath, hostArguments, {
       shell: false,
       stdio: ['pipe', 'pipe', 'pipe'],
     })
@@ -660,6 +671,20 @@ function installIpcHandlers(): void {
     try {
       const response = await host?.invoke(name, granted.payload)
       if (!response) return invalidHostResponse('HOST_UNAVAILABLE', 'Desktop host is unavailable')
+      let rendererResponse = response
+      if (name === 'model_reveal' || name === 'diagnostics_reveal_logs') {
+        const path = extractResolvedPath(response)
+        if (path) {
+          const openError = await shell.openPath(path)
+          if (openError) {
+            return invalidHostResponse(
+              name === 'model_reveal' ? 'MODEL_REVEAL_FAILED' : 'LOG_REVEAL_FAILED',
+              'The requested application directory could not be opened',
+            )
+          }
+        }
+        rendererResponse = sanitizeRevealResponse(response)
+      }
       log.write({
         level: response.status === 'ok' ? 'info' : 'warn',
         process: 'main',
@@ -669,7 +694,7 @@ function installIpcHandlers(): void {
         status: response.status,
         ...(response.status === 'error' ? { errorCode: response.error.code } : {}),
       })
-      return response
+      return rendererResponse
     } catch {
       log.write({
         level: 'error',
@@ -703,6 +728,30 @@ function extractResolvedPath(response: HostResponse): string | null {
     if (typeof nested.path === 'string') return nested.path
   }
   return null
+}
+
+function sanitizeRevealResponse(response: HostResponse): HostResponse {
+  if (
+    response.status !== 'ok'
+    || response.result.type !== 'invoke'
+    || typeof response.result.data !== 'object'
+    || response.result.data === null
+    || Array.isArray(response.result.data)
+  ) {
+    return response
+  }
+  const operation: Record<string, unknown> = {
+    ...(response.result.data as Record<string, unknown>),
+    data: null,
+  }
+  delete operation.path
+  return {
+    ...response,
+    result: {
+      ...response.result,
+      data: operation,
+    },
+  }
 }
 
 function installMediaProtocol(): void {

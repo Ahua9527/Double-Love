@@ -3,30 +3,52 @@ use std::io;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-fn app_data_dir_argument(
-    mut arguments: impl Iterator<Item = OsString>,
-) -> Result<Option<PathBuf>, String> {
-    let Some(flag) = arguments.next() else {
-        return Ok(None);
-    };
-    if flag != "--app-data-dir" {
-        return Err(format!(
-            "unknown desktop host argument: {}",
-            flag.to_string_lossy()
-        ));
+use double_love_desktop_host::HostRuntimeConfig;
+
+#[derive(Debug, Default, PartialEq, Eq)]
+struct HostArguments {
+    app_data_dir: Option<PathBuf>,
+    resource_dir: Option<PathBuf>,
+    test_transcribe_mock: bool,
+}
+
+fn host_arguments(mut arguments: impl Iterator<Item = OsString>) -> Result<HostArguments, String> {
+    let mut parsed = HostArguments::default();
+    while let Some(flag) = arguments.next() {
+        if flag == "--app-data-dir" {
+            if parsed.app_data_dir.is_some() {
+                return Err("--app-data-dir may only be supplied once".to_string());
+            }
+            parsed.app_data_dir =
+                Some(PathBuf::from(arguments.next().ok_or_else(|| {
+                    "--app-data-dir requires a path".to_string()
+                })?));
+        } else if flag == "--resource-dir" {
+            if parsed.resource_dir.is_some() {
+                return Err("--resource-dir may only be supplied once".to_string());
+            }
+            parsed.resource_dir =
+                Some(PathBuf::from(arguments.next().ok_or_else(|| {
+                    "--resource-dir requires a path".to_string()
+                })?));
+        } else if flag == "--test-transcribe-mock" {
+            if !cfg!(debug_assertions) {
+                return Err("--test-transcribe-mock is unavailable in release builds".to_string());
+            }
+            parsed.test_transcribe_mock = true;
+        } else {
+            return Err(format!(
+                "unknown desktop host argument: {}",
+                flag.to_string_lossy()
+            ));
+        }
     }
-    let directory = arguments
-        .next()
-        .ok_or_else(|| "--app-data-dir requires a path".to_string())?;
-    if arguments.next().is_some() {
-        return Err("desktop host accepts only --app-data-dir <path>".to_string());
-    }
-    Ok(Some(PathBuf::from(directory)))
+    Ok(parsed)
 }
 
 fn main() -> ExitCode {
-    let app_data_dir = match app_data_dir_argument(std::env::args_os().skip(1)) {
-        Ok(directory) => directory,
+    let arguments = match host_arguments(std::env::args_os().skip(1)) {
+        Ok(arguments) => arguments,
         Err(error) => {
             eprintln!("double-love desktop host failed: {error}");
             return ExitCode::FAILURE;
@@ -35,7 +57,15 @@ fn main() -> ExitCode {
     let stdin = io::stdin();
     let stdout = io::stdout();
 
-    match double_love_desktop_host::run_host(&mut stdin.lock(), stdout, app_data_dir) {
+    match double_love_desktop_host::run_host_with_config(
+        &mut stdin.lock(),
+        stdout,
+        arguments.app_data_dir,
+        HostRuntimeConfig {
+            resource_dir: arguments.resource_dir,
+            test_transcribe_mock: arguments.test_transcribe_mock,
+        },
+    ) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
             eprintln!("double-love desktop host failed: {error}");
@@ -49,19 +79,39 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parses_explicit_app_data_directory() {
-        let directory = app_data_dir_argument(
-            [OsString::from("--app-data-dir"), OsString::from("/tmp/dl")].into_iter(),
+    fn parses_explicit_runtime_directories() {
+        let arguments = host_arguments(
+            [
+                OsString::from("--app-data-dir"),
+                OsString::from("/tmp/dl"),
+                OsString::from("--resource-dir"),
+                OsString::from("/tmp/resources"),
+            ]
+            .into_iter(),
         )
         .expect("parse host arguments");
-        assert_eq!(directory, Some(PathBuf::from("/tmp/dl")));
+        assert_eq!(
+            arguments,
+            HostArguments {
+                app_data_dir: Some(PathBuf::from("/tmp/dl")),
+                resource_dir: Some(PathBuf::from("/tmp/resources")),
+                test_transcribe_mock: false,
+            }
+        );
+    }
+
+    #[test]
+    fn debug_host_accepts_explicit_test_mock_mode() {
+        let arguments = host_arguments([OsString::from("--test-transcribe-mock")].into_iter())
+            .expect("parse test mode");
+        assert!(arguments.test_transcribe_mock);
     }
 
     #[test]
     fn absent_app_data_directory_is_left_for_service_validation() {
         assert_eq!(
-            app_data_dir_argument(std::iter::empty()).expect("parse empty host arguments"),
-            None
+            host_arguments(std::iter::empty()).expect("parse empty host arguments"),
+            HostArguments::default()
         );
     }
 }

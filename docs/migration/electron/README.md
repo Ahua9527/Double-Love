@@ -25,7 +25,7 @@
 | 3C React renderer 目录整理 | **已完成** | 纯移动至 `studio/src/renderer/`；Tauri/Electron 构建与测试行为不变 | 直接 revert 目录移动与配置路径更新 |
 | 3D renderer 平台接缝 | **已完成** | renderer 运行时选择 Electron/Tauri/preview；Electron host 错误归一为既有 `OperationResult.failed`；本地文件无 bridge 时 fail closed | Tauri adapter 保留，revert renderer 平台接缝批次 |
 | 3 平台基础阶段（3A–3D） | **已完成** | service/host、安全边界、renderer 目录与平台 adapter 均已就位；Phase 4 可按纵向切片迁移业务命令 | 保留 Tauri adapter，按 3D→3A 逆序回退 |
-| 4 纵向业务切片迁移（7 片） | **进行中（Slice 1–4 已完成）** | 每片：Electron E2E 正常+失败/取消/恢复路径；Tauri 对照一致 | 每片独立提交，只 revert 当前切片 |
+| 4 纵向业务切片迁移（7 片） | **进行中（Slice 1–5 已完成）** | 每片：Electron E2E 正常+失败/取消/恢复路径；Tauri 对照一致 | 每片独立提交，只 revert 当前切片 |
 | 5 默认 Electron、打包发布、清理 | 未开始 | 功能矩阵 100%；签名公证门禁通过 | 保留最后可构建 Tauri commit |
 | 6 全量验收与回退演练 | 未开始 | 见计划完成判定 | 文档化手动回退 |
 
@@ -91,6 +91,16 @@ host-neutral service 已按 Tauri 参考实现注册 `project_create`、`project
 Rust host 集成覆盖创建、打开、同 id 重开与进程重启、revision/history、canvas mutation、undo/redo、restore 新 revision、未打开、非法创建/打开路径与最近项目；service 并发回归测试覆盖进行中的项目操作会阻塞项目替换，且替换完成后的项目与历史一致。Electron Playwright 通过一次性目录 grant 创建临时项目，验证持久化默认字幕样式及样式写入 revision/history，再覆盖 canvas undo/redo；随后使用现有 `double-love` CLI 导入合成媒体并追加主轨，只验证 host 可观察到外部 revision/history，不定义外部写入后的 undo 冲突策略，最后覆盖 restore、失败打开保留旧状态与重启同 id 打开。
 
 Slice 2 未修改 `src-tauri`、Web/PWA、SQLite schema/migration、manifest 或导出格式；Tauri 继续作为行为参考。门禁证据：workspace fmt 与 clippy `-D warnings` 通过；严格工具模式 workspace Rust 测试全过（engine 148 过、1 个既有 golden regeneration ignored；host Slice 2 集成 1 过；Tauri 参考测试 18 过）；bindings contract 通过；Studio lint、88 项 Vitest、Studio Vite build、独立 `tsc -b` 与 Electron build 通过；全部 9 项 Playwright 通过；根 Web lint、99 项 Vitest 与 build 通过；`git diff --check` 通过。
+
+## Phase 4 Slice 5 已交付模型生命周期、转录编辑与单素材粗剪
+
+host-neutral service 已按 Tauri 参考实现注册 `model_install/pause/resume/cancel/verify/remove/reveal`、`doctor_run`、`diagnostics_reveal_logs`、`transcribe_start`、`task_cancel`、`transcript_get`、`edit_omit/restore`、`roughcut_preview` 与 `export_roughcut_apply`。模型下载继续使用 reqwest blocking 客户端、依赖优先单队列、同一下载锁、安全相对路径、`.part`/staging、Range 恢复及 206 `Content-Range` 校验、清单字节上限、SHA-256、原子安装和原状态机；进度与状态分别广播 `dl://model-progress` / `dl://model-state`，事件不含绝对路径。共享依赖仍被已安装模型使用时删除返回 `MODEL_DEPENDENCY_IN_USE`。
+
+Electron 的 reveal 命令只让 service 返回其自身解析的模型目录或日志目录；main 从 host 响应提取路径后调用 `shell.openPath`，从不接受 renderer 路径，并只向 renderer 返回保留 status/diagnostics、`data:null` 且不含路径的操作结果。main 启动 host 时显式注入 bundled resource 根；service 仍优先遵循 `DOUBLELOVE_ASR_DIR`，开发期回落到仓库 `sidecars/asr`。正式 `transcribe_start` 保持 `mock=false`、30 秒切块、模型状态门禁和项目内日志；service 事件边界把进度自由文本中的项目目录替换为 `<PROJECT>`、模型/对齐器及 sidecar 目录替换为 `<MODEL>`，不改 task id、计数或 `dl://task-state`；只有 debug host 的显式 `--test-transcribe-mock` 集成配置可在自动化测试启用 mock sidecar。
+
+Rust service 的本机 HTTP fixture 使用临时合成清单数据（不下载真实权重、无外网），覆盖依赖顺序安装、进度/状态事件、暂停保留 staging、零字节取消、Range 续传、恢复安装、哈希损坏转 corrupt、verify、依赖删除保护和 doctor。host Slice 5 集成测试另覆盖模型/日志路径返回、合成媒体导入、mock 转录进度与终态、路径型 sidecar 错误脱敏、默认 120ms omit、restore、preview 不写、apply 写 XMEML/SHA-256/outputs/export history、`ROUGH_CUT_EMPTY` 阻断，以及取消候选不切换 active transcript。Electron Playwright 使用预置的合成 installed 状态（不含权重）和 test-only mock host 配置，覆盖 reveal 返回值不含路径，以及同一转录、脱敏事件、编辑、export grant、文件/SHA-256、空剪阻断与取消路径；因生产 host 的偏好 endpoint 校验按设计不允许非测试编译的 HTTP，Electron E2E 不伪造本地下载，完整下载生命周期由 Rust fixture 覆盖。
+
+Slice 5 未修改 `src-tauri`、Web/PWA、模型清单 JSON、偏好 endpoint 校验、SQLite schema/migration、sidecar 协议或导出格式；Tauri 继续作为行为参考。门禁证据：workspace fmt 与 clippy `-D warnings` 通过；严格工具模式 workspace Rust 测试全过（engine 148 过、1 个既有 golden regeneration ignored；desktop service 17 过；host Slice 5 集成 2 过；Tauri 参考测试 18 过）；bindings contract 通过；Studio lint、89 项 Vitest、Studio Vite build、独立 `tsc -b`、Electron build 与 host build 通过；Slices 1–5 全部 13 项 Playwright 通过；根 Web lint、99 项 Vitest 与 build 通过；`git diff --check` 通过。
 
 ## Phase 4 Slice 4 已交付主轨与项目视觉设置
 

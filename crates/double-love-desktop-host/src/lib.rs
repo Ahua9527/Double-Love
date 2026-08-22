@@ -6,8 +6,8 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use double_love_desktop_service::{
-    DesktopEventSink, DesktopService, DesktopServiceError, HOST_UNAVAILABLE, INTERNAL,
-    INVALID_PARAMS,
+    DesktopEventSink, DesktopRuntimeConfig, DesktopService, DesktopServiceError, HOST_UNAVAILABLE,
+    INTERNAL, INVALID_PARAMS,
 };
 use serde::Serialize;
 use serde_json::Value;
@@ -71,15 +71,38 @@ impl<W: Write + Send> DesktopEventSink for HostEventSink<W> {
     }
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct HostRuntimeConfig {
+    pub resource_dir: Option<PathBuf>,
+    pub test_transcribe_mock: bool,
+}
+
 pub fn run_host<W: Write + Send + 'static>(
     reader: &mut impl Read,
     writer: W,
     app_data_dir: Option<PathBuf>,
 ) -> Result<(), HostRuntimeError> {
+    run_host_with_config(reader, writer, app_data_dir, HostRuntimeConfig::default())
+}
+
+pub fn run_host_with_config<W: Write + Send + 'static>(
+    reader: &mut impl Read,
+    writer: W,
+    app_data_dir: Option<PathBuf>,
+    runtime: HostRuntimeConfig,
+) -> Result<(), HostRuntimeError> {
     let output = Arc::new(HostEventSink::new(writer));
     let mut registry = double_love_desktop_service::CommandRegistry::new();
     double_love_desktop_service::register_commands(&mut registry);
-    let service = DesktopService::with_registry(app_data_dir, output.clone(), registry)?;
+    let service = DesktopService::with_registry_and_runtime(
+        app_data_dir,
+        output.clone(),
+        registry,
+        DesktopRuntimeConfig {
+            resource_dir: runtime.resource_dir,
+            test_transcribe_mock: runtime.test_transcribe_mock,
+        },
+    )?;
 
     loop {
         let frame = match read_frame(reader) {

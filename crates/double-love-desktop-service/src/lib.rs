@@ -6,11 +6,14 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use double_love_engine::{
-    CanvasSpec, Diagnostic, DiagnosticLevel, FfmpegTools, FrameRate, MediaAssetSummary,
-    OperationResult, ProjectStore, ProjectSummary, SubtitleStyle, TaskRegistry,
-    append_full_main_track_asset, append_main_track_clip, compile_project_timeline, create_project,
-    import_media as engine_import_media, list_media_assets, move_main_track_clip, open_project,
-    remove_main_track_clip, split_main_track_clip, trim_main_track_clip,
+    CanvasSpec, DEFAULT_HANDLES_MS, Diagnostic, DiagnosticLevel, DoctorEnvironment, FfmpegTools,
+    FrameRate, MediaAssetSummary, ModelError, OperationResult, ProgressEvent, ProgressSink,
+    ProjectStore, ProjectSummary, SharedSink, SubtitleStyle, TaskRegistry, TaskState,
+    TranscribeConfig, append_full_main_track_asset, append_main_track_clip,
+    compile_project_timeline, create_project, export_rough_cut, export_rough_cut_to,
+    ffmpeg_supports_ass_filter, import_media as engine_import_media, list_media_assets,
+    move_main_track_clip, omit_words, open_project, remove_main_track_clip, restore_words,
+    split_main_track_clip, start_transcription, transcript_view, trim_main_track_clip,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -111,8 +114,16 @@ pub struct HistoryNavigation {
     pub redo: Vec<u64>,
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct DesktopRuntimeConfig {
+    pub resource_dir: Option<PathBuf>,
+    /// Enabled only by explicit host integration tests; production commands keep mock=false.
+    pub test_transcribe_mock: bool,
+}
+
 pub struct DesktopState {
     app_data_dir: PathBuf,
+    runtime: DesktopRuntimeConfig,
     open_project: OpenProjectSlot,
     task_registry: TaskRegistry,
     preferences: preferences::PreferencesState,
@@ -121,9 +132,10 @@ pub struct DesktopState {
 }
 
 impl DesktopState {
-    fn new(app_data_dir: PathBuf) -> Self {
+    fn new(app_data_dir: PathBuf, runtime: DesktopRuntimeConfig) -> Self {
         Self {
             app_data_dir,
+            runtime,
             open_project: OpenProjectSlot::default(),
             task_registry: TaskRegistry::new(),
             preferences: preferences::PreferencesState::default(),
@@ -204,7 +216,7 @@ fn history_navigation_for_store(
     })
 }
 
-type CommandHandler = dyn Fn(&DesktopState, &dyn DesktopEventSink, Value) -> Result<Value, DesktopServiceError>
+type CommandHandler = dyn Fn(&DesktopState, Arc<dyn DesktopEventSink>, Value) -> Result<Value, DesktopServiceError>
     + Send
     + Sync;
 
@@ -223,7 +235,7 @@ impl CommandRegistry {
         name: impl Into<String>,
         handler: impl Fn(
             &DesktopState,
-            &dyn DesktopEventSink,
+            Arc<dyn DesktopEventSink>,
             Value,
         ) -> Result<Value, DesktopServiceError>
         + Send
@@ -236,7 +248,7 @@ impl CommandRegistry {
     fn invoke(
         &self,
         state: &DesktopState,
-        event_sink: &dyn DesktopEventSink,
+        event_sink: Arc<dyn DesktopEventSink>,
         name: &str,
         payload: Value,
     ) -> Result<Value, DesktopServiceError> {
@@ -403,6 +415,163 @@ struct OnboardingCompleteParams {
     step: Option<u8>,
 }
 
+#[derive(Deserialize)]
+struct ModelIdParams {
+    #[serde(alias = "modelId")]
+    model_id: String,
+}
+
+#[derive(Default, Deserialize)]
+struct ModelRevealParams {
+    #[serde(default, alias = "modelId")]
+    model_id: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct TranscribeStartParams {
+    #[serde(alias = "assetId")]
+    asset_id: String,
+    model: String,
+    language: String,
+}
+
+#[derive(Deserialize)]
+struct TaskCancelParams {
+    #[serde(alias = "taskId")]
+    task_id: String,
+}
+
+#[derive(Deserialize)]
+struct AssetIdParams {
+    #[serde(alias = "assetId")]
+    asset_id: String,
+}
+
+#[derive(Deserialize)]
+struct EditOmitParams {
+    #[serde(alias = "assetId")]
+    asset_id: String,
+    #[serde(alias = "startOrdinal")]
+    start_ordinal: i64,
+    #[serde(alias = "endOrdinal")]
+    end_ordinal: i64,
+    #[serde(default, alias = "handlesBeforeMs")]
+    handles_before_ms: Option<i64>,
+    #[serde(default, alias = "handlesAfterMs")]
+    handles_after_ms: Option<i64>,
+}
+
+#[derive(Deserialize)]
+struct EditRestoreParams {
+    #[serde(alias = "operationId")]
+    operation_id: String,
+    #[serde(alias = "startOrdinal")]
+    start_ordinal: i64,
+    #[serde(alias = "endOrdinal")]
+    end_ordinal: i64,
+}
+
+#[derive(Deserialize)]
+struct RoughcutApplyParams {
+    #[serde(alias = "assetId")]
+    asset_id: String,
+    #[serde(alias = "targetPath")]
+    target_path: String,
+}
+
+#[derive(Serialize)]
+struct ResolvedPath {
+    path: String,
+}
+
+#[derive(Clone)]
+struct ServiceProgressSink {
+    events: Arc<dyn DesktopEventSink>,
+    renderer_path_replacements: Vec<(String, &'static str)>,
+}
+
+impl ServiceProgressSink {
+    fn new(
+        events: Arc<dyn DesktopEventSink>,
+        renderer_path_replacements: Vec<(String, &'static str)>,
+    ) -> Self {
+        Self {
+            events,
+            renderer_path_replacements,
+        }
+    }
+}
+
+#[derive(Serialize)]
+struct TaskStateEvent {
+    task_id: String,
+    state: TaskState,
+}
+
+impl ProgressSink for ServiceProgressSink {
+    fn progress(&self, mut event: ProgressEvent) {
+        sanitize_renderer_text(&mut event.phase, &self.renderer_path_replacements);
+        sanitize_renderer_text(&mut event.message, &self.renderer_path_replacements);
+        if let Ok(payload) = serde_json::to_value(event) {
+            let _ = self.events.emit("dl://progress", payload);
+        }
+    }
+
+    fn task_state(&self, task_id: &str, state: TaskState) {
+        if let Ok(payload) = serde_json::to_value(TaskStateEvent {
+            task_id: task_id.to_string(),
+            state,
+        }) {
+            let _ = self.events.emit("dl://task-state", payload);
+        }
+    }
+}
+
+fn resolve_asr_sidecar_dir(state: &DesktopState) -> PathBuf {
+    if let Some(dir) = std::env::var_os("DOUBLELOVE_ASR_DIR") {
+        return PathBuf::from(dir);
+    }
+    if let Some(resource_dir) = state.runtime.resource_dir.as_deref() {
+        for candidate in [
+            resource_dir.join("model-runtime/asr"),
+            resource_dir.join("resources/model-runtime/asr"),
+        ] {
+            if candidate.is_dir() {
+                return candidate;
+            }
+        }
+    }
+    let manifest_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    for candidate in [
+        manifest_root.join("sidecars/asr"),
+        PathBuf::from("sidecars/asr"),
+        PathBuf::from("../sidecars/asr"),
+    ] {
+        if candidate.is_dir() {
+            return candidate;
+        }
+    }
+    manifest_root.join("sidecars/asr")
+}
+
+fn resolve_speaker_sidecar_dir(state: &DesktopState) -> PathBuf {
+    if let Some(dir) = std::env::var_os("DOUBLELOVE_SPEAKER_DIR") {
+        return PathBuf::from(dir);
+    }
+    if let Some(resource_dir) = state.runtime.resource_dir.as_deref() {
+        for candidate in [
+            resource_dir.join("model-runtime/speaker"),
+            resource_dir.join("resources/model-runtime/speaker"),
+        ] {
+            if candidate.is_dir() {
+                return candidate;
+            }
+        }
+    }
+    let manifest_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    manifest_root.join("sidecars/speaker")
+}
+
 fn with_store<T>(
     state: &DesktopState,
     operation: impl FnOnce(&ProjectStore, &ProjectSummary) -> OperationResult<T>,
@@ -547,7 +716,13 @@ pub fn register_commands(registry: &mut CommandRegistry) {
                                 "可在编辑器中重新设置字幕样式。",
                             );
                         }
-                        record_recent_project_warning(state, events, &summary, &mut result, true);
+                        record_recent_project_warning(
+                            state,
+                            events.as_ref(),
+                            &summary,
+                            &mut result,
+                            true,
+                        );
                         result
                     }
                     Err(error) => OperationResult::failed("STORAGE_ERROR", error.message),
@@ -563,7 +738,13 @@ pub fn register_commands(registry: &mut CommandRegistry) {
             Ok(summary) => match install_open_project(state, &summary) {
                 Ok(()) => {
                     let mut result = OperationResult::success(summary.clone());
-                    record_recent_project_warning(state, events, &summary, &mut result, false);
+                    record_recent_project_warning(
+                        state,
+                        events.as_ref(),
+                        &summary,
+                        &mut result,
+                        false,
+                    );
                     result
                 }
                 Err(error) => OperationResult::failed("STORAGE_ERROR", error.message),
@@ -923,7 +1104,7 @@ pub fn register_commands(registry: &mut CommandRegistry) {
         result_value(preferences::preferences_update(
             state.app_data_dir(),
             state.preferences(),
-            events,
+            events.as_ref(),
             params.patch,
         ))
     });
@@ -938,7 +1119,7 @@ pub fn register_commands(registry: &mut CommandRegistry) {
         result_value(preferences::recent_project_forget(
             state.app_data_dir(),
             state.preferences(),
-            events,
+            events.as_ref(),
             params.root,
         ))
     });
@@ -963,7 +1144,7 @@ pub fn register_commands(registry: &mut CommandRegistry) {
         result_value(preferences::onboarding_complete(
             state.app_data_dir(),
             state.preferences(),
-            events,
+            events.as_ref(),
             params.default_asr_model,
             params.step,
         ))
@@ -972,7 +1153,7 @@ pub fn register_commands(registry: &mut CommandRegistry) {
         result_value(preferences::onboarding_reset(
             state.app_data_dir(),
             state.preferences(),
-            events,
+            events.as_ref(),
         ))
     });
     registry.register("model_catalog", |state, _events, _payload| {
@@ -990,6 +1171,336 @@ pub fn register_commands(registry: &mut CommandRegistry) {
             Err(error) => OperationResult::failed("MODEL_CATALOG_FAILED", error),
         };
         result_value(result)
+    });
+    registry.register("model_install", |state, events, payload| {
+        let params: ModelIdParams = params(payload)?;
+        let preferences =
+            match preferences::current_preferences(state.app_data_dir(), state.preferences()) {
+                Ok(preferences) => preferences,
+                Err(error) => {
+                    return result_value(preferences::command_error::<
+                        double_love_engine::ModelInstallation,
+                    >(error, true));
+                }
+            };
+        let result = match state.models().begin_install(
+            PathBuf::from(preferences.model_root),
+            preferences.model_endpoint,
+            &params.model_id,
+            events,
+        ) {
+            Ok(installation) => OperationResult::success(installation),
+            Err(error) => OperationResult::failed("MODEL_INSTALL_FAILED", error),
+        };
+        result_value(result)
+    });
+    for (name, cancel, error_code) in [
+        ("model_pause", false, "MODEL_PAUSE_FAILED"),
+        ("model_cancel", true, "MODEL_CANCEL_FAILED"),
+    ] {
+        registry.register(name, move |state, _events, payload| {
+            let params: ModelIdParams = params(payload)?;
+            let preferences =
+                match preferences::current_preferences(state.app_data_dir(), state.preferences()) {
+                    Ok(preferences) => preferences,
+                    Err(error) => {
+                        return result_value(preferences::command_error::<
+                            double_love_engine::ModelInstallation,
+                        >(error, true));
+                    }
+                };
+            let result = match state.models().set_cancel(
+                Path::new(&preferences.model_root),
+                &params.model_id,
+                cancel,
+            ) {
+                Ok(installation) => OperationResult::success(installation),
+                Err(error) => OperationResult::failed(error_code, error),
+            };
+            result_value(result)
+        });
+    }
+    registry.register("model_resume", |state, events, payload| {
+        let params: ModelIdParams = params(payload)?;
+        let preferences =
+            match preferences::current_preferences(state.app_data_dir(), state.preferences()) {
+                Ok(preferences) => preferences,
+                Err(error) => {
+                    return result_value(preferences::command_error::<
+                        double_love_engine::ModelInstallation,
+                    >(error, true));
+                }
+            };
+        let result = match state.models().begin_install(
+            PathBuf::from(preferences.model_root),
+            preferences.model_endpoint,
+            &params.model_id,
+            events,
+        ) {
+            Ok(installation) => OperationResult::success(installation),
+            Err(error) => OperationResult::failed("MODEL_INSTALL_FAILED", error),
+        };
+        result_value(result)
+    });
+    registry.register("model_verify", |state, _events, payload| {
+        let params: ModelIdParams = params(payload)?;
+        let preferences =
+            match preferences::current_preferences(state.app_data_dir(), state.preferences()) {
+                Ok(preferences) => preferences,
+                Err(error) => {
+                    return result_value(preferences::command_error::<
+                        double_love_engine::ModelInstallation,
+                    >(error, true));
+                }
+            };
+        let result = match state
+            .models()
+            .verify(Path::new(&preferences.model_root), &params.model_id)
+        {
+            Ok(installation) => OperationResult::success(installation),
+            Err(error) => OperationResult::failed("MODEL_VERIFY_FAILED", error),
+        };
+        result_value(result)
+    });
+    registry.register("model_remove", |state, events, payload| {
+        let params: ModelIdParams = params(payload)?;
+        let preferences =
+            match preferences::current_preferences(state.app_data_dir(), state.preferences()) {
+                Ok(preferences) => preferences,
+                Err(error) => {
+                    return result_value(preferences::command_error::<
+                        double_love_engine::ModelInstallation,
+                    >(error, true));
+                }
+            };
+        let result = match state
+            .models()
+            .remove(Path::new(&preferences.model_root), &params.model_id)
+        {
+            Ok(installation) => {
+                if let Ok(payload) = serde_json::to_value(&installation) {
+                    let _ = events.emit("dl://model-state", payload);
+                }
+                OperationResult::success(installation)
+            }
+            Err(error @ ModelError::DependencyInUse { .. }) => {
+                OperationResult::failed("MODEL_DEPENDENCY_IN_USE", error.to_string())
+            }
+            Err(error) => OperationResult::failed("MODEL_REMOVE_FAILED", error.to_string()),
+        };
+        result_value(result)
+    });
+    registry.register("model_reveal", |state, _events, payload| {
+        let params: ModelRevealParams = if payload.is_null() {
+            ModelRevealParams::default()
+        } else {
+            params(payload)?
+        };
+        let preferences =
+            match preferences::current_preferences(state.app_data_dir(), state.preferences()) {
+                Ok(preferences) => preferences,
+                Err(error) => {
+                    return result_value(preferences::command_error::<ResolvedPath>(error, true));
+                }
+            };
+        let path = if let Some(model_id) = params.model_id {
+            match state
+                .models()
+                .installation_dir(Path::new(&preferences.model_root), &model_id)
+            {
+                Ok(path) => path,
+                Err(error) => {
+                    return result_value(OperationResult::<ResolvedPath>::failed(
+                        "MODEL_REVEAL_FAILED",
+                        error,
+                    ));
+                }
+            }
+        } else {
+            PathBuf::from(preferences.model_root)
+        };
+        let _ = std::fs::create_dir_all(&path);
+        result_value(OperationResult::success(ResolvedPath {
+            path: path.to_string_lossy().into_owned(),
+        }))
+    });
+    registry.register("doctor_run", |state, events, _payload| {
+        let preferences =
+            match preferences::current_preferences(state.app_data_dir(), state.preferences()) {
+                Ok(preferences) => preferences,
+                Err(error) => {
+                    return result_value(preferences::command_error::<
+                        double_love_engine::DoctorReport,
+                    >(error, true));
+                }
+            };
+        let profile =
+            match preferences::system_profile_for(state.app_data_dir(), state.preferences()) {
+                Ok(profile) => profile,
+                Err(error) => {
+                    return result_value(
+                        OperationResult::<double_love_engine::DoctorReport>::failed(
+                            "SYSTEM_PROFILE_FAILED",
+                            error.to_string(),
+                        ),
+                    );
+                }
+            };
+        let tools = FfmpegTools::discover().ok();
+        let environment = DoctorEnvironment {
+            architecture: profile.architecture,
+            os_version: profile.os_version,
+            memory_bytes: profile.memory_bytes,
+            free_model_bytes: profile.free_model_bytes,
+            ffmpeg_available: tools.is_some(),
+            libass_available: tools.as_ref().is_some_and(ffmpeg_supports_ass_filter),
+            asr_runtime_ready: resolve_asr_sidecar_dir(state)
+                .join(".venv/bin/python")
+                .is_file(),
+            speaker_runtime_ready: resolve_speaker_sidecar_dir(state)
+                .join(".venv/bin/python")
+                .is_file(),
+        };
+        let result = match state
+            .models()
+            .doctor_report(Path::new(&preferences.model_root), environment)
+        {
+            Ok(report) => {
+                models::emit_doctor(events.as_ref(), &report);
+                OperationResult::success(report)
+            }
+            Err(error) => OperationResult::failed("DOCTOR_FAILED", error),
+        };
+        result_value(result)
+    });
+    registry.register("diagnostics_reveal_logs", |state, _events, _payload| {
+        let path = state.app_data_dir().join("logs");
+        let _ = std::fs::create_dir_all(&path);
+        result_value(OperationResult::success(ResolvedPath {
+            path: path.to_string_lossy().into_owned(),
+        }))
+    });
+    registry.register("transcribe_start", |state, events, payload| {
+        let params: TranscribeStartParams = params(payload)?;
+        let preferences =
+            match preferences::current_preferences(state.app_data_dir(), state.preferences()) {
+                Ok(preferences) => preferences,
+                Err(error) => {
+                    return result_value(preferences::command_error::<Value>(error, true));
+                }
+            };
+        let model_root = Path::new(&preferences.model_root);
+        let model_dir = match state.models().installed_dir(model_root, &params.model) {
+            Ok(path) => path,
+            Err(error) => {
+                return result_value(OperationResult::<Value>::failed("MODEL_NOT_READY", error));
+            }
+        };
+        let aligner_dir = match state
+            .models()
+            .installed_dir(model_root, "qwen3-forced-aligner-0.6b")
+        {
+            Ok(path) => path,
+            Err(error) => {
+                return result_value(OperationResult::<Value>::failed("MODEL_NOT_READY", error));
+            }
+        };
+        let result = match state.open_project().with_current(|open| {
+            let package_dir = resolve_asr_sidecar_dir(state);
+            let model_root_path = model_root.to_string_lossy().into_owned();
+            let model_dir_path = model_dir.to_string_lossy().into_owned();
+            let aligner_dir_path = aligner_dir.to_string_lossy().into_owned();
+            let package_dir_path = package_dir.to_string_lossy().into_owned();
+            let replacements = renderer_path_replacements(&[
+                (&open.summary.root, "<PROJECT>"),
+                (&model_dir_path, "<MODEL>"),
+                (&aligner_dir_path, "<MODEL>"),
+                (&package_dir_path, "<MODEL>"),
+                (&model_root_path, "<MODEL>"),
+            ]);
+            let config = TranscribeConfig {
+                asset_id: params.asset_id,
+                model: params.model,
+                model_dir,
+                aligner_dir,
+                language: params.language,
+                mock: state.runtime.test_transcribe_mock,
+                python: None,
+                package_dir,
+                log_dir: Path::new(&open.summary.root).join(".doublelove/logs"),
+                chunk_seconds: 30,
+            };
+            let sink: SharedSink = Arc::new(ServiceProgressSink::new(events, replacements));
+            start_transcription(Arc::clone(&open.store), state.task_registry(), sink, config)
+        }) {
+            Ok(Ok(task_id)) => OperationResult::success(serde_json::json!({"task_id": task_id})),
+            Ok(Err(error)) => OperationResult::failed("TRANSCRIBE_START_FAILED", error),
+            Err(error) if error.code == PROJECT_NOT_OPEN => {
+                OperationResult::failed(PROJECT_NOT_OPEN, "请先打开或创建一个项目。")
+            }
+            Err(error) => OperationResult::failed(error.code, error.message),
+        };
+        result_value(result)
+    });
+    registry.register("task_cancel", |state, _events, payload| {
+        let params: TaskCancelParams = params(payload)?;
+        let result = if state.task_registry().cancel(&params.task_id) {
+            OperationResult::success(serde_json::json!({"task_id": params.task_id}))
+        } else {
+            OperationResult::failed(
+                "TASK_NOT_RUNNING",
+                format!("任务 {} 当前没有可取消的运行实例。", params.task_id),
+            )
+        };
+        result_value(result)
+    });
+    registry.register("transcript_get", |state, _events, payload| {
+        let params: AssetIdParams = params(payload)?;
+        result_value(with_store(state, |store, _| {
+            transcript_view(store, &params.asset_id)
+        }))
+    });
+    registry.register("edit_omit", |state, _events, payload| {
+        let params: EditOmitParams = params(payload)?;
+        result_value(with_store(state, |store, _| {
+            omit_words(
+                store,
+                &params.asset_id,
+                params.start_ordinal,
+                params.end_ordinal,
+                params.handles_before_ms.unwrap_or(DEFAULT_HANDLES_MS),
+                params.handles_after_ms.unwrap_or(DEFAULT_HANDLES_MS),
+            )
+        }))
+    });
+    registry.register("edit_restore", |state, _events, payload| {
+        let params: EditRestoreParams = params(payload)?;
+        result_value(with_store(state, |store, _| {
+            restore_words(
+                store,
+                &params.operation_id,
+                params.start_ordinal,
+                params.end_ordinal,
+            )
+        }))
+    });
+    registry.register("roughcut_preview", |state, _events, payload| {
+        let params: AssetIdParams = params(payload)?;
+        result_value(with_store(state, |store, summary| {
+            let exports_dir = Path::new(&summary.root).join(".doublelove/exports");
+            export_rough_cut(store, &params.asset_id, &exports_dir, false)
+        }))
+    });
+    registry.register("export_roughcut_apply", |state, _events, payload| {
+        let params: RoughcutApplyParams = params(payload)?;
+        result_value(with_store(state, |store, _| {
+            export_rough_cut_to(
+                store,
+                &params.asset_id,
+                Path::new(&params.target_path),
+                true,
+            )
+        }))
     });
 }
 
@@ -1012,6 +1523,20 @@ impl DesktopService {
         event_sink: Arc<dyn DesktopEventSink>,
         commands: CommandRegistry,
     ) -> Result<Self, DesktopServiceError> {
+        Self::with_registry_and_runtime(
+            app_data_dir,
+            event_sink,
+            commands,
+            DesktopRuntimeConfig::default(),
+        )
+    }
+
+    pub fn with_registry_and_runtime(
+        app_data_dir: Option<PathBuf>,
+        event_sink: Arc<dyn DesktopEventSink>,
+        commands: CommandRegistry,
+        runtime: DesktopRuntimeConfig,
+    ) -> Result<Self, DesktopServiceError> {
         let app_data_dir = app_data_dir
             .filter(|path| !path.as_os_str().is_empty())
             .ok_or_else(|| {
@@ -1021,7 +1546,7 @@ impl DesktopService {
                 )
             })?;
         Ok(Self {
-            state: DesktopState::new(app_data_dir),
+            state: DesktopState::new(app_data_dir, runtime),
             commands,
             event_sink,
         })
@@ -1037,7 +1562,7 @@ impl DesktopService {
 
     pub fn invoke(&self, name: &str, payload: Value) -> Result<Value, DesktopServiceError> {
         self.commands
-            .invoke(&self.state, self.event_sink.as_ref(), name, payload)
+            .invoke(&self.state, Arc::clone(&self.event_sink), name, payload)
     }
 }
 
@@ -1059,6 +1584,21 @@ mod tests {
 
     impl DesktopEventSink for TestEventSink {
         fn emit(&self, _channel: &str, _payload: Value) -> Result<(), DesktopServiceError> {
+            Ok(())
+        }
+    }
+
+    #[derive(Default)]
+    struct RecordingEventSink {
+        events: Mutex<Vec<(String, Value)>>,
+    }
+
+    impl DesktopEventSink for RecordingEventSink {
+        fn emit(&self, channel: &str, payload: Value) -> Result<(), DesktopServiceError> {
+            self.events
+                .lock()
+                .map_err(|_| DesktopServiceError::internal("recording event sink lock"))?
+                .push((channel.to_string(), payload));
             Ok(())
         }
     }
@@ -1148,7 +1688,10 @@ mod tests {
     #[test]
     fn project_replacement_waits_for_in_flight_operation_and_resets_history_atomically()
     -> Result<(), Box<dyn Error>> {
-        let state = Arc::new(DesktopState::new(temp_directory("atomic-app-data")));
+        let state = Arc::new(DesktopState::new(
+            temp_directory("atomic-app-data"),
+            DesktopRuntimeConfig::default(),
+        ));
         let (first_root, first_summary, first_store) = open_project("atomic-first")?;
         state.install_project(first_summary.clone(), Arc::new(Mutex::new(first_store)))?;
 
@@ -1284,6 +1827,54 @@ mod tests {
             sanitized.diagnostics[0].suggested_action.as_deref(),
             Some("retry <SELECTED_MEDIA> from <PROJECT>")
         );
+    }
+
+    #[test]
+    fn service_progress_sink_sanitizes_free_text_without_changing_task_or_counts() {
+        let project = temp_directory("progress-project");
+        let model = temp_directory("progress-model");
+        let aligner = temp_directory("progress-aligner");
+        let project_text = project.to_string_lossy().into_owned();
+        let model_text = model.to_string_lossy().into_owned();
+        let aligner_text = aligner.to_string_lossy().into_owned();
+        let recorded = Arc::new(RecordingEventSink::default());
+        let events: Arc<dyn DesktopEventSink> = recorded.clone();
+        let sink = ServiceProgressSink::new(
+            events,
+            renderer_path_replacements(&[
+                (&project_text, "<PROJECT>"),
+                (&model_text, "<MODEL>"),
+                (&aligner_text, "<MODEL>"),
+            ]),
+        );
+
+        sink.progress(ProgressEvent {
+            task: "task-123".to_string(),
+            phase: format!("load {model_text}"),
+            completed: Some(4),
+            total: Some(9),
+            message: format!("read {project_text}/prepared.wav with {aligner_text}"),
+        });
+        sink.task_state("task-123", TaskState::Failed);
+
+        let events = recorded.events.lock().expect("recorded events");
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].0, "dl://progress");
+        assert_eq!(events[0].1["task"], "task-123");
+        assert_eq!(events[0].1["phase"], "load <MODEL>");
+        assert_eq!(events[0].1["completed"], 4);
+        assert_eq!(events[0].1["total"], 9);
+        assert_eq!(
+            events[0].1["message"],
+            "read <PROJECT>/prepared.wav with <MODEL>"
+        );
+        assert_eq!(events[1].0, "dl://task-state");
+        assert_eq!(events[1].1["task_id"], "task-123");
+        assert_eq!(events[1].1["state"], "failed");
+        let serialized = serde_json::to_string(&*events).expect("events JSON");
+        assert!(!serialized.contains(&project_text));
+        assert!(!serialized.contains(&model_text));
+        assert!(!serialized.contains(&aligner_text));
     }
 
     #[test]
