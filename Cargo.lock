@@ -799,6 +799,7 @@ name = "double-love-desktop-host"
 version = "0.1.0"
 dependencies = [
  "double-love-desktop-service",
+ "double-love-engine",
  "schemars 1.2.2",
  "serde",
  "serde_json",

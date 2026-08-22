@@ -5,7 +5,10 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use double_love_engine::{OperationResult, ProjectStore, ProjectSummary, TaskRegistry};
+use double_love_engine::{
+    CanvasSpec, Diagnostic, DiagnosticLevel, OperationResult, ProjectStore, ProjectSummary,
+    SubtitleStyle, TaskRegistry, create_project, open_project,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use thiserror::Error;
@@ -51,10 +54,15 @@ pub trait DesktopEventSink: Send + Sync {
     fn emit(&self, channel: &str, payload: Value) -> Result<(), DesktopServiceError>;
 }
 
-#[derive(Clone)]
 pub struct OpenProject {
-    pub summary: ProjectSummary,
-    pub store: Arc<Mutex<ProjectStore>>,
+    summary: ProjectSummary,
+    store: Arc<Mutex<ProjectStore>>,
+}
+
+impl OpenProject {
+    pub fn summary(&self) -> &ProjectSummary {
+        &self.summary
+    }
 }
 
 #[derive(Default)]
@@ -63,25 +71,31 @@ pub struct OpenProjectSlot {
 }
 
 impl OpenProjectSlot {
-    pub fn install(
+    pub fn with_current<T>(
         &self,
-        project: OpenProject,
-    ) -> Result<Option<OpenProject>, DesktopServiceError> {
-        let mut current = self
+        operation: impl FnOnce(&OpenProject) -> T,
+    ) -> Result<T, DesktopServiceError> {
+        let current = self
             .project
             .lock()
             .map_err(|_| DesktopServiceError::internal("open-project state lock is unavailable"))?;
-        Ok(current.replace(project))
+        let open = current.as_ref().ok_or_else(|| {
+            DesktopServiceError::new(PROJECT_NOT_OPEN, "no desktop project is currently open")
+        })?;
+        Ok(operation(open))
     }
 
-    pub fn current(&self) -> Result<OpenProject, DesktopServiceError> {
-        self.project
-            .lock()
-            .map_err(|_| DesktopServiceError::internal("open-project state lock is unavailable"))?
-            .clone()
-            .ok_or_else(|| {
-                DesktopServiceError::new(PROJECT_NOT_OPEN, "no desktop project is currently open")
-            })
+    pub fn with_store<T>(
+        &self,
+        operation: impl FnOnce(&ProjectStore, &ProjectSummary) -> T,
+    ) -> Result<T, DesktopServiceError> {
+        self.with_current(|open| {
+            let store = open
+                .store
+                .lock()
+                .map_err(|_| DesktopServiceError::internal("project store lock is unavailable"))?;
+            Ok(operation(&store, &open.summary))
+        })?
     }
 }
 
@@ -143,20 +157,48 @@ impl DesktopState {
         &self,
         summary: ProjectSummary,
         store: Arc<Mutex<ProjectStore>>,
-    ) -> Result<Option<OpenProject>, DesktopServiceError> {
-        let navigation = HistoryNavigation {
-            project_id: Some(summary.project_id.clone()),
-            last_actual_revision: summary.revision,
-            current_snapshot_revision: summary.revision,
-            undo: Vec::new(),
-            redo: Vec::new(),
-        };
-        let replaced = self.open_project.install(OpenProject { summary, store })?;
-        *self.history_navigation.lock().map_err(|_| {
+    ) -> Result<Option<ProjectSummary>, DesktopServiceError> {
+        let mut project =
+            self.open_project.project.lock().map_err(|_| {
+                DesktopServiceError::internal("open-project state lock is unavailable")
+            })?;
+        let store_guard = store
+            .lock()
+            .map_err(|_| DesktopServiceError::internal("project store lock is unavailable"))?;
+        let navigation = history_navigation_for_store(&store_guard, &summary.project_id)
+            .map_err(|error| DesktopServiceError::new("STORAGE_ERROR", error))?;
+        let mut history = self.history_navigation.lock().map_err(|_| {
             DesktopServiceError::internal("history navigation state lock is unavailable")
-        })? = navigation;
+        })?;
+        drop(store_guard);
+        let replaced = project
+            .replace(OpenProject { summary, store })
+            .map(|open| open.summary);
+        *history = navigation;
         Ok(replaced)
     }
+}
+
+fn history_navigation_for_store(
+    store: &ProjectStore,
+    project_id: &str,
+) -> Result<HistoryNavigation, String> {
+    let revision = store.revision().map_err(|error| error.to_string())?;
+    let undo = store
+        .revision_history(10_000)
+        .map_err(|error| error.to_string())?
+        .into_iter()
+        .filter(|entry| entry.restorable && entry.revision < revision)
+        .map(|entry| entry.revision)
+        .rev()
+        .collect();
+    Ok(HistoryNavigation {
+        project_id: Some(project_id.to_string()),
+        last_actual_revision: revision,
+        current_snapshot_revision: revision,
+        undo,
+        redo: Vec::new(),
+    })
 }
 
 type CommandHandler = dyn Fn(&DesktopState, &dyn DesktopEventSink, Value) -> Result<Value, DesktopServiceError>
@@ -217,6 +259,31 @@ fn params<T: for<'de> Deserialize<'de>>(payload: Value) -> Result<T, DesktopServ
 }
 
 #[derive(Deserialize)]
+struct ProjectPathParams {
+    path: String,
+}
+
+#[derive(Default, Deserialize)]
+struct ProjectHistoryParams {
+    limit: Option<usize>,
+}
+
+#[derive(Deserialize)]
+struct ProjectRevisionParams {
+    revision: u64,
+}
+
+#[derive(Deserialize)]
+struct CanvasSetParams {
+    canvas: CanvasSpec,
+}
+
+#[derive(Deserialize)]
+struct SubtitleStyleSetParams {
+    style: SubtitleStyle,
+}
+
+#[derive(Deserialize)]
 struct PreferencesUpdateParams {
     patch: preferences::PreferencesPatch,
 }
@@ -234,8 +301,296 @@ struct OnboardingCompleteParams {
     step: Option<u8>,
 }
 
-/// Registers the Phase 4 Slice 1 commands on the host-neutral service registry.
+fn with_store<T>(
+    state: &DesktopState,
+    operation: impl FnOnce(&ProjectStore, &ProjectSummary) -> OperationResult<T>,
+) -> OperationResult<T> {
+    match state.open_project().with_store(operation) {
+        Ok(result) => result,
+        Err(error) if error.code == PROJECT_NOT_OPEN => {
+            OperationResult::failed(PROJECT_NOT_OPEN, "请先打开或创建一个项目。")
+        }
+        Err(error) => OperationResult::failed(error.code, error.message),
+    }
+}
+
+fn warning(
+    result: &mut OperationResult<ProjectSummary>,
+    code: &str,
+    cause: impl Into<String>,
+    impact: &str,
+    suggested_action: &str,
+) {
+    result.diagnostics.push(Diagnostic {
+        level: DiagnosticLevel::Warning,
+        code: code.to_string(),
+        cause: cause.into(),
+        object_id: None,
+        impact: impact.to_string(),
+        blocks_export: false,
+        suggested_action: Some(suggested_action.to_string()),
+    });
+}
+
+fn install_open_project(
+    state: &DesktopState,
+    summary: &ProjectSummary,
+) -> Result<(), DesktopServiceError> {
+    let store = ProjectStore::open(Path::new(&summary.database))
+        .map_err(|error| DesktopServiceError::new("STORAGE_ERROR", error.to_string()))?;
+    state
+        .install_project(summary.clone(), Arc::new(Mutex::new(store)))
+        .map(|_| ())
+}
+
+fn record_recent_project_warning(
+    state: &DesktopState,
+    events: &dyn DesktopEventSink,
+    summary: &ProjectSummary,
+    result: &mut OperationResult<ProjectSummary>,
+    created: bool,
+) {
+    if let Err(error) = preferences::record_recent_project(
+        state.app_data_dir(),
+        state.preferences(),
+        events,
+        summary,
+    ) {
+        warning(
+            result,
+            "RECENT_PROJECT_WRITE_FAILED",
+            error.to_string(),
+            if created {
+                "项目已创建，但最近项目列表未更新。"
+            } else {
+                "项目已打开，但最近项目列表未更新。"
+            },
+            "稍后在设置中重新打开项目列表。",
+        );
+    }
+}
+
+fn reset_history_navigation(
+    navigation: &mut HistoryNavigation,
+    store: &ProjectStore,
+    project_id: &str,
+) -> Result<(), String> {
+    *navigation = history_navigation_for_store(store, project_id)?;
+    Ok(())
+}
+
+/// Registers the migrated host-neutral desktop commands.
 pub fn register_commands(registry: &mut CommandRegistry) {
+    registry.register("project_create", |state, events, payload| {
+        let params: ProjectPathParams = params(payload)?;
+        let result = match create_project(Path::new(&params.path)) {
+            Ok(mut summary) => {
+                let style_warning = match preferences::current_preferences(
+                    state.app_data_dir(),
+                    state.preferences(),
+                ) {
+                    Ok(preferences) => match ProjectStore::open(Path::new(&summary.database))
+                        .and_then(|store| {
+                            store.set_subtitle_style(&preferences.default_subtitle_style)
+                        }) {
+                        Ok(revision) => {
+                            summary.revision = revision;
+                            None
+                        }
+                        Err(error) => Some(error.to_string()),
+                    },
+                    Err(error) => Some(error.to_string()),
+                };
+                match install_open_project(state, &summary) {
+                    Ok(()) => {
+                        let mut result = OperationResult::success(summary.clone());
+                        if let Some(error) = style_warning {
+                            warning(
+                                &mut result,
+                                "DEFAULT_SUBTITLE_STYLE_FAILED",
+                                error,
+                                "项目已创建，但使用了内置字幕默认值。",
+                                "可在编辑器中重新设置字幕样式。",
+                            );
+                        }
+                        record_recent_project_warning(state, events, &summary, &mut result, true);
+                        result
+                    }
+                    Err(error) => OperationResult::failed("STORAGE_ERROR", error.message),
+                }
+            }
+            Err(error) => OperationResult::failed("PROJECT_CREATE_FAILED", error.to_string()),
+        };
+        result_value(result)
+    });
+    registry.register("project_open", |state, events, payload| {
+        let params: ProjectPathParams = params(payload)?;
+        let result = match open_project(Path::new(&params.path)) {
+            Ok(summary) => match install_open_project(state, &summary) {
+                Ok(()) => {
+                    let mut result = OperationResult::success(summary.clone());
+                    record_recent_project_warning(state, events, &summary, &mut result, false);
+                    result
+                }
+                Err(error) => OperationResult::failed("STORAGE_ERROR", error.message),
+            },
+            Err(error) => OperationResult::failed("PROJECT_OPEN_FAILED", error.to_string()),
+        };
+        result_value(result)
+    });
+    registry.register("project_revision", |state, _events, _payload| {
+        result_value(with_store(state, |store, _| match store.revision() {
+            Ok(revision) => OperationResult::success(revision),
+            Err(error) => OperationResult::failed("STORAGE_ERROR", error.to_string()),
+        }))
+    });
+    registry.register("project_history", |state, _events, payload| {
+        let params: ProjectHistoryParams = params(payload)?;
+        result_value(with_store(state, |store, _| {
+            match store.revision_history(params.limit.unwrap_or(80)) {
+                Ok(history) => OperationResult::success(history),
+                Err(error) => OperationResult::failed("STORAGE_ERROR", error.to_string()),
+            }
+        }))
+    });
+    registry.register("project_restore_revision", |state, _events, payload| {
+        let params: ProjectRevisionParams = params(payload)?;
+        result_value(with_store(state, |store, _| {
+            match store.restore_revision(params.revision) {
+                Ok(new_revision) => {
+                    let mut result = OperationResult::success(serde_json::json!({
+                        "restored_revision": params.revision,
+                        "revision": new_revision,
+                    }));
+                    result.revision = Some(new_revision);
+                    result
+                }
+                Err(error) => OperationResult::failed("HISTORY_RESTORE_FAILED", error.to_string()),
+            }
+        }))
+    });
+    registry.register("edit_undo", |state, _events, _payload| {
+        let result = with_store(state, |store, summary| {
+            let actual_revision = match store.revision() {
+                Ok(revision) => revision,
+                Err(error) => {
+                    return OperationResult::failed("STORAGE_ERROR", error.to_string());
+                }
+            };
+            let mut navigation = match state.history_navigation().lock() {
+                Ok(navigation) => navigation,
+                Err(_) => {
+                    return OperationResult::failed(
+                        INTERNAL,
+                        "history navigation state lock is unavailable",
+                    );
+                }
+            };
+            let navigation_is_stale = navigation.project_id.as_deref()
+                != Some(summary.project_id.as_str())
+                || navigation.last_actual_revision != actual_revision;
+            if navigation_is_stale
+                && let Err(error) =
+                    reset_history_navigation(&mut navigation, store, &summary.project_id)
+            {
+                return OperationResult::failed("HISTORY_READ_FAILED", error);
+            }
+            let Some(target) = navigation.undo.pop() else {
+                return OperationResult::failed("HISTORY_UNDO_EMPTY", "没有更早的编辑版本。");
+            };
+            let previous = navigation.current_snapshot_revision;
+            match store.restore_revision(target) {
+                Ok(revision) => {
+                    navigation.redo.push(previous);
+                    navigation.current_snapshot_revision = target;
+                    navigation.last_actual_revision = revision;
+                    let mut result = OperationResult::success(());
+                    result.revision = Some(revision);
+                    result
+                }
+                Err(error) => OperationResult::failed("HISTORY_UNDO_FAILED", error.to_string()),
+            }
+        });
+        result_value(result)
+    });
+    registry.register("edit_redo", |state, _events, _payload| {
+        let result = with_store(state, |store, summary| {
+            let actual_revision = match store.revision() {
+                Ok(revision) => revision,
+                Err(error) => {
+                    return OperationResult::failed("STORAGE_ERROR", error.to_string());
+                }
+            };
+            let mut navigation = match state.history_navigation().lock() {
+                Ok(navigation) => navigation,
+                Err(_) => {
+                    return OperationResult::failed(
+                        INTERNAL,
+                        "history navigation state lock is unavailable",
+                    );
+                }
+            };
+            if navigation.project_id.as_deref() != Some(summary.project_id.as_str())
+                || navigation.last_actual_revision != actual_revision
+            {
+                return OperationResult::failed("HISTORY_REDO_EMPTY", "没有可以重做的编辑版本。");
+            }
+            let Some(target) = navigation.redo.pop() else {
+                return OperationResult::failed("HISTORY_REDO_EMPTY", "没有可以重做的编辑版本。");
+            };
+            let previous = navigation.current_snapshot_revision;
+            match store.restore_revision(target) {
+                Ok(revision) => {
+                    navigation.undo.push(previous);
+                    navigation.current_snapshot_revision = target;
+                    navigation.last_actual_revision = revision;
+                    let mut result = OperationResult::success(());
+                    result.revision = Some(revision);
+                    result
+                }
+                Err(error) => OperationResult::failed("HISTORY_REDO_FAILED", error.to_string()),
+            }
+        });
+        result_value(result)
+    });
+    registry.register("canvas_get", |state, _events, _payload| {
+        result_value(with_store(state, |store, _| match store.canvas_spec() {
+            Ok(canvas) => OperationResult::success(canvas),
+            Err(error) => OperationResult::failed("STORAGE_ERROR", error.to_string()),
+        }))
+    });
+    registry.register("canvas_set", |state, _events, payload| {
+        let params: CanvasSetParams = params(payload)?;
+        result_value(with_store(state, |store, _| {
+            match store.set_canvas_spec(&params.canvas) {
+                Ok(revision) => {
+                    let mut result = OperationResult::success(params.canvas);
+                    result.revision = Some(revision);
+                    result
+                }
+                Err(error) => OperationResult::failed("STORAGE_ERROR", error.to_string()),
+            }
+        }))
+    });
+    registry.register("subtitle_style_get", |state, _events, _payload| {
+        result_value(with_store(state, |store, _| match store.subtitle_style() {
+            Ok(style) => OperationResult::success(style),
+            Err(error) => OperationResult::failed("STORAGE_ERROR", error.to_string()),
+        }))
+    });
+    registry.register("subtitle_style_set", |state, _events, payload| {
+        let params: SubtitleStyleSetParams = params(payload)?;
+        result_value(with_store(state, |store, _| {
+            match store.set_subtitle_style(&params.style) {
+                Ok(revision) => {
+                    let mut result = OperationResult::success(params.style);
+                    result.revision = Some(revision);
+                    result
+                }
+                Err(error) => OperationResult::failed("STORAGE_ERROR", error.to_string()),
+            }
+        }))
+    });
     registry.register("preferences_get", |state, _events, _payload| {
         result_value(preferences::preferences_get(
             state.app_data_dir(),
@@ -390,6 +745,9 @@ mod tests {
     use std::error::Error;
     use std::fs;
     use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::mpsc;
+    use std::thread;
+    use std::time::Duration;
 
     use double_love_engine::{ProjectStore, create_project};
 
@@ -428,8 +786,8 @@ mod tests {
         let service = DesktopService::new(Some(app_data_dir.clone()), Arc::new(TestEventSink))?;
         assert_eq!(service.state().app_data_dir(), app_data_dir);
 
-        let error = match service.state().open_project().current() {
-            Ok(_) => panic!("project should start closed"),
+        let error = match service.state().open_project().with_current(|_| ()) {
+            Ok(()) => panic!("project should start closed"),
             Err(error) => error,
         };
         assert_eq!(error.code, PROJECT_NOT_OPEN);
@@ -442,33 +800,143 @@ mod tests {
                 .is_none()
         );
         assert_eq!(
-            service.state().open_project().current()?.summary.project_id,
+            service
+                .state()
+                .open_project()
+                .with_current(|open| open.summary().project_id.clone())?,
             first_summary.project_id
         );
 
         let (second_root, second_summary, second_store) = open_project("second-project")?;
+        second_store.set_canvas_spec(&CanvasSpec::default())?;
+        second_store.set_subtitle_style(&SubtitleStyle::default())?;
         let replaced = service
             .state()
             .install_project(second_summary.clone(), Arc::new(Mutex::new(second_store)))?
             .expect("second install should replace the first project");
-        assert_eq!(replaced.summary.project_id, first_summary.project_id);
-        assert_eq!(
-            service.state().open_project().current()?.summary.project_id,
-            second_summary.project_id
-        );
+        assert_eq!(replaced.project_id, first_summary.project_id);
         assert_eq!(
             service
                 .state()
-                .history_navigation()
-                .lock()
-                .expect("history navigation")
-                .project_id
-                .as_deref(),
+                .open_project()
+                .with_current(|open| open.summary().project_id.clone())?,
+            second_summary.project_id
+        );
+        let navigation = service
+            .state()
+            .history_navigation()
+            .lock()
+            .expect("history navigation");
+        assert_eq!(
+            navigation.project_id.as_deref(),
             Some(second_summary.project_id.as_str())
         );
+        assert_eq!(navigation.last_actual_revision, 2);
+        assert_eq!(navigation.current_snapshot_revision, 2);
+        assert_eq!(navigation.undo, vec![1]);
+        assert!(navigation.redo.is_empty());
+        drop(navigation);
 
         drop(replaced);
         drop(service);
+        fs::remove_dir_all(first_root)?;
+        fs::remove_dir_all(second_root)?;
+        Ok(())
+    }
+
+    #[test]
+    fn project_replacement_waits_for_in_flight_operation_and_resets_history_atomically()
+    -> Result<(), Box<dyn Error>> {
+        let state = Arc::new(DesktopState::new(temp_directory("atomic-app-data")));
+        let (first_root, first_summary, first_store) = open_project("atomic-first")?;
+        state.install_project(first_summary.clone(), Arc::new(Mutex::new(first_store)))?;
+
+        let (second_root, second_summary, second_store) = open_project("atomic-second")?;
+        second_store.set_canvas_spec(&CanvasSpec::default())?;
+        second_store.set_subtitle_style(&SubtitleStyle::default())?;
+        let second_store = Arc::new(Mutex::new(second_store));
+
+        let (operation_entered_tx, operation_entered_rx) = mpsc::channel();
+        let (release_operation_tx, release_operation_rx) = mpsc::channel();
+        let operation_state = Arc::clone(&state);
+        let first_project_id = first_summary.project_id.clone();
+        let operation = thread::spawn(move || {
+            operation_state
+                .open_project()
+                .with_store(|store, summary| {
+                    assert_eq!(summary.project_id, first_project_id);
+                    operation_entered_tx
+                        .send(())
+                        .expect("signal operation entry");
+                    release_operation_rx.recv().expect("release operation");
+                    store
+                        .set_canvas_spec(&CanvasSpec::default())
+                        .expect("mutate first project");
+                    let mut navigation = operation_state
+                        .history_navigation()
+                        .lock()
+                        .expect("history navigation");
+                    reset_history_navigation(&mut navigation, store, &summary.project_id)
+                        .expect("reset first-project history");
+                })
+                .expect("in-flight project operation");
+        });
+        operation_entered_rx.recv().expect("operation entered");
+
+        let (replacement_started_tx, replacement_started_rx) = mpsc::channel();
+        let (replacement_done_tx, replacement_done_rx) = mpsc::channel();
+        let replacement_state = Arc::clone(&state);
+        let replacement_summary = second_summary.clone();
+        let replacement = thread::spawn(move || {
+            replacement_started_tx
+                .send(())
+                .expect("signal replacement start");
+            let replaced = replacement_state
+                .install_project(replacement_summary, second_store)
+                .expect("install replacement project");
+            replacement_done_tx
+                .send(replaced)
+                .expect("signal replacement completion");
+        });
+        replacement_started_rx
+            .recv()
+            .expect("replacement thread started");
+        assert!(
+            replacement_done_rx
+                .recv_timeout(Duration::from_millis(100))
+                .is_err(),
+            "replacement must wait while a project operation holds the slot lock"
+        );
+
+        release_operation_tx.send(()).expect("release operation");
+        operation.join().expect("join operation thread");
+        let replaced = replacement_done_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("replacement completed after operation")
+            .expect("first project was replaced");
+        replacement.join().expect("join replacement thread");
+        assert_eq!(replaced.project_id, first_summary.project_id);
+
+        let final_revision = state.open_project().with_store(|store, summary| {
+            assert_eq!(summary.project_id, second_summary.project_id);
+            store.revision().expect("second-project revision")
+        })?;
+        assert_eq!(final_revision, 2);
+        let navigation = state
+            .history_navigation()
+            .lock()
+            .expect("history navigation");
+        assert_eq!(
+            navigation.project_id.as_deref(),
+            Some(second_summary.project_id.as_str())
+        );
+        assert_eq!(navigation.last_actual_revision, 2);
+        assert_eq!(navigation.current_snapshot_revision, 2);
+        assert_eq!(navigation.undo, vec![1]);
+        assert!(navigation.redo.is_empty());
+        drop(navigation);
+
+        drop(state);
         fs::remove_dir_all(first_root)?;
         fs::remove_dir_all(second_root)?;
         Ok(())

@@ -12,3 +12,6 @@ serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 ts-rs.workspace = true
+
+[dev-dependencies]
+double-love-engine = { path = "../double-love-engine" }

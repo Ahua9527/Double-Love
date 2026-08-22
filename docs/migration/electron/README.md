@@ -25,7 +25,7 @@
 | 3C React renderer 目录整理 | **已完成** | 纯移动至 `studio/src/renderer/`；Tauri/Electron 构建与测试行为不变 | 直接 revert 目录移动与配置路径更新 |
 | 3D renderer 平台接缝 | **已完成** | renderer 运行时选择 Electron/Tauri/preview；Electron host 错误归一为既有 `OperationResult.failed`；本地文件无 bridge 时 fail closed | Tauri adapter 保留，revert renderer 平台接缝批次 |
 | 3 平台基础阶段（3A–3D） | **已完成** | service/host、安全边界、renderer 目录与平台 adapter 均已就位；Phase 4 可按纵向切片迁移业务命令 | 保留 Tauri adapter，按 3D→3A 逆序回退 |
-| 4 纵向业务切片迁移（7 片） | **进行中（Slice 1 已完成）** | 每片：Electron E2E 正常+失败/取消/恢复路径；Tauri 对照一致 | 每片独立提交，只 revert 当前切片 |
+| 4 纵向业务切片迁移（7 片） | **进行中（Slice 1–2 已完成）** | 每片：Electron E2E 正常+失败/取消/恢复路径；Tauri 对照一致 | 每片独立提交，只 revert 当前切片 |
 | 5 默认 Electron、打包发布、清理 | 未开始 | 功能矩阵 100%；签名公证门禁通过 | 保留最后可构建 Tauri commit |
 | 6 全量验收与回退演练 | 未开始 | 见计划完成判定 | 文档化手动回退 |
 
@@ -81,6 +81,16 @@ host 现通过统一 `service::register_commands` 注册 Slice 1 命令，偏好
 对照证据复用 `src-tauri/tests/fixtures/preferences/{v1,partial-v0,corrupt}.json`：service 测试断言完整 v1 与冻结的 v0→v1 结果逐字段相等，并覆盖磁盘损坏恢复。host 集成测试以临时 `--app-data-dir` 覆盖默认往返、更新与事件、非法 endpoint、模型目录迁移失败保持旧偏好、最近项目 20 条上限/forget 错误、引导 complete/reset、arm64 系统画像及内置模型状态。Electron Playwright 使用同一临时 userData 覆盖偏好事件与落盘、重启持久化、启动损坏恢复、非法 endpoint、引导 reset 和系统画像。
 
 Slice 1 门禁已通过：严格工具模式的 `cargo test --workspace --locked`（含未改动 Tauri 参考实现 18 项测试）、workspace clippy `-D warnings`、bindings contract、Studio lint/test/build、Electron build 与全部 8 项 Playwright、根 Web lint/test/build、`git diff --check`。
+
+## Phase 4 Slice 2 已交付项目生命周期与历史导航
+
+host-neutral service 已按 Tauri 参考实现注册 `project_create`、`project_open`、`project_revision`、`project_history`、`project_restore_revision`、`edit_undo`、`edit_redo`，并仅为本切片历史测试与当前 UI 写路径同时接入等价的 `canvas_get/set`、`subtitle_style_get/set`。项目打开失败不会替换当前项目；成功安装前会从实际 store revision 与最多 10,000 条可恢复历史初始化 undo 导航。打开/创建继续记录最多 20 条最近项目，写偏好或创建时写默认字幕样式失败只追加 Tauri 同码 warning，不把已打开项目降级为失败。
+
+新建项目仍严格遵循 Tauri 的无条件默认字幕样式写入：即使偏好样式等于 engine 默认值，也会生成 revision 1，首条可恢复历史为 `subtitle_style_set`，没有做“相同则跳过”的 Electron 特化。`project_history` 默认 limit 80；restore/undo/redo 都由 engine `restore_revision` 新建 revision，不改写旧历史。项目替换与当前项目操作由 project-slot 锁串行化，并统一遵循 project slot → store → history navigation 的加锁顺序，避免旧项目操作在新项目安装后继续执行或覆盖新项目的历史导航。
+
+Rust host 集成覆盖创建、打开、同 id 重开与进程重启、revision/history、canvas mutation、undo/redo、restore 新 revision、未打开、非法创建/打开路径与最近项目；service 并发回归测试覆盖进行中的项目操作会阻塞项目替换，且替换完成后的项目与历史一致。Electron Playwright 通过一次性目录 grant 创建临时项目，验证持久化默认字幕样式及样式写入 revision/history，再覆盖 canvas undo/redo；随后使用现有 `double-love` CLI 导入合成媒体并追加主轨，只验证 host 可观察到外部 revision/history，不定义外部写入后的 undo 冲突策略，最后覆盖 restore、失败打开保留旧状态与重启同 id 打开。
+
+Slice 2 未修改 `src-tauri`、Web/PWA、SQLite schema/migration、manifest 或导出格式；Tauri 继续作为行为参考。门禁证据：workspace fmt 与 clippy `-D warnings` 通过；严格工具模式 workspace Rust 测试全过（engine 148 过、1 个既有 golden regeneration ignored；host Slice 2 集成 1 过；Tauri 参考测试 18 过）；bindings contract 通过；Studio lint、88 项 Vitest、Studio Vite build、独立 `tsc -b` 与 Electron build 通过；全部 9 项 Playwright 通过；根 Web lint、99 项 Vitest 与 build 通过；`git diff --check` 通过。
 
 ## Phase 3C 已交付 React renderer 目录整理
 
