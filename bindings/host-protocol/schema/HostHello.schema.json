@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "HostHello",
+  "type": "object",
+  "properties": {
+    "capabilities": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "engine_version": {
+      "type": "string"
+    },
+    "host_version": {
+      "type": "string"
+    },
+    "protocol": {
+      "type": "integer",
+      "format": "uint32",
+      "minimum": 0
+    }
+  },
+  "required": [
+    "protocol",
+    "host_version",
+    "engine_version",
+    "capabilities"
+  ]
+}

@@ -1,0 +1,14 @@
+[package]
+name = "double-love-desktop-host"
+version = "0.1.0"
+edition = "2024"
+description = "Long-running desktop protocol host for Double Love Studio"
+license = "MIT"
+
+[dependencies]
+double-love-engine = { path = "../double-love-engine" }
+schemars = "~1.2"
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+ts-rs.workspace = true

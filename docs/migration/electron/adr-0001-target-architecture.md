@@ -1,6 +1,6 @@
 # ADR-0001：Tauri → Electron 目标架构
 
-状态：待主会话确认（阶段 1 放行条件）。日期：2026-08-22。
+状态：已确认。日期：2026-08-22。
 
 ## 决定
 
@@ -35,7 +35,7 @@ React renderer
 
 - main 以 `shell:false` 启动唯一 host；开发期 `target/debug`，生产 `process.resourcesPath`。
 - main↔host：4 字节长度前缀 + JSON envelope；协议版本固定 1；单帧上限 64 MiB；握手校验 protocol/host/engine 版本与能力列表。
-- Rust 带 tag 的 `HostRequest`/`HostEvent` 枚举为事实源，派生 serde + ts-rs + JSON Schema；main 用生成 schema 运行时校验，host 再 serde 校验。
+- Rust 带 tag 的 method/result union 为事实源，外层统一使用版本化、可关联 envelope 并派生 serde + ts-rs + JSON Schema：request 为 `{"v":1,"id":"<client-id>","method":"...",...}`，response 为 `{"v":1,"id":"<echoed-id>","status":"ok","result":...}` 或 `status=error` + `error`；main 用生成 schema 运行时校验，host 再 serde 校验。v1 的 `u64`/`u32` 在线上均为 JSON number；ts-rs `bigint` 仅是类型层注解，runtime boundary 按既有规则转换并校验安全整数范围。
 - 已用 invoke 命令在 host protocol v1 保持同名语义；`speaker_save` 与 4 个 `METADATA_MVP_PENDING` 占位不进入（死接口清理）。
 - renderer 不发送任意文件路径：打开/导入/导出/模型目录迁移必须经 main 原生对话框产生的一次性 path grant，main 消费后注入真实路径。
 - `dl-media://asset/<asset-id>` 只解析当前项目登记资产；保留 GET/HEAD/单 Range 的 200/206/404/416/501 语义（现状语义见 media_protocol.rs:1-4）。

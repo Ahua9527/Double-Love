@@ -2,6 +2,7 @@
 members = [
   "crates/double-love-engine",
   "crates/double-love-cli",
+  "crates/double-love-desktop-host",
   "src-tauri",
 ]
 resolver = "2"
