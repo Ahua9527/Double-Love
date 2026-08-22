@@ -10,6 +10,8 @@ const studioRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
 
 describe('electron-builder hardening configuration', () => {
   it('loads the afterPack hook and declares the approved packaging policy', () => {
+    const packageMetadata = JSON.parse(readFileSync(resolve(studioRoot, 'package.json'), 'utf8')) as { version: string }
+    expect(packageMetadata.version).toBe('0.2.0')
     const config = readFileSync(resolve(studioRoot, 'electron-builder.yml'), 'utf8')
     for (const expected of [
       'appId: space.ahua.doublelove.studio',

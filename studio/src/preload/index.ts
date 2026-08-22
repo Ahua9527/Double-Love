@@ -7,6 +7,7 @@ const ALLOWED_HOST_EVENTS = new Set([
   'dl://model-state',
   'dl://preferences-changed',
   'dl://doctor-result',
+  'dl://update-status',
 ])
 
 export type DirectoryGrantKind = 'project-open' | 'model-root'
@@ -29,9 +30,17 @@ const dialogs = Object.freeze({
     ipcRenderer.invoke('dl:dialog-pick-export-path', options),
 })
 
+const updates = Object.freeze({
+  check: (): Promise<unknown> => ipcRenderer.invoke('update:check'),
+  download: (): Promise<unknown> => ipcRenderer.invoke('update:download'),
+  install: (): Promise<unknown> => ipcRenderer.invoke('update:install'),
+})
+
 const doubleLove = Object.freeze({
   hostHealth: (): Promise<unknown> => ipcRenderer.invoke('dl:host-health'),
   openSettings: (): Promise<void> => ipcRenderer.invoke('app:open-settings'),
+  getAppInfo: (): Promise<unknown> => ipcRenderer.invoke('app:get-info'),
+  updates,
   dialogs,
   invoke: (name: string, payload?: unknown): Promise<unknown> => ipcRenderer.invoke('dl:invoke', name, payload),
   onEvent: (channel: string, callback: (payload: unknown) => void): (() => void) => {

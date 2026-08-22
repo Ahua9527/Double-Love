@@ -5,6 +5,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { once } from 'node:events'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import Ajv2020, { type ValidateFunction } from 'ajv/dist/2020.js'
+import electronUpdater from 'electron-updater'
 import {
   app,
   BrowserWindow,
@@ -20,10 +21,15 @@ import {
 import type { HostRequest } from '../../../bindings/host-protocol/HostRequest'
 import type { HostResponse } from '../../../bindings/host-protocol/HostResponse'
 import { applyGrantPolicy } from './grant-policy'
+import { assertCompatibleHostHello } from './host-handshake'
 import { registerGuardedHandler, type GuardedIpcOptions, type WindowRole } from './ipc-guard'
 import { LocalLog } from './local-log'
 import { mediaNotFound, mediaResponse } from './media-response'
 import { PathGrants, type GrantKind } from './path-grants'
+import { createQuitFlowState, handleBeforeQuit } from './quit-flow'
+import { UpdaterController } from './updater'
+
+const { autoUpdater } = electronUpdater
 
 protocol.registerSchemesAsPrivileged([
   {
@@ -242,14 +248,8 @@ class HostSupervisor {
       client: 'electron-main',
       client_protocol: PROTOCOL_VERSION,
     })
-    if (
-      response.status !== 'ok'
-      || response.result.type !== 'hello'
-      || response.result.data.protocol !== PROTOCOL_VERSION
-    ) {
-      throw new Error('Desktop host handshake returned an incompatible response')
-    }
-    this.capabilities = Object.freeze([...response.result.data.capabilities])
+    const hello = assertCompatibleHostHello(response, PROTOCOL_VERSION)
+    this.capabilities = hello.capabilities
     this.healthy = true
     this.log.clearCrashMarker()
     this.log.write({
@@ -258,6 +258,8 @@ class HostSupervisor {
       method: 'handshake',
       durationMs: performance.now() - startedAt,
       status: 'ok',
+      hostVersion: hello.hostVersion,
+      engineVersion: hello.engineVersion,
     })
   }
 
@@ -312,6 +314,14 @@ class HostSupervisor {
 
     if (child.exitCode === null && child.signalCode === null) child.kill()
     this.healthy = false
+    this.log.write({ level: 'info', process: 'host', method: 'lifecycle.stop', status: 'stop' })
+  }
+
+  stopImmediately(): void {
+    const child = this.child
+    this.stopping = true
+    this.healthy = false
+    if (child && child.exitCode === null && child.signalCode === null) child.kill()
     this.log.write({ level: 'info', process: 'host', method: 'lifecycle.stop', status: 'stop' })
   }
 
@@ -411,11 +421,22 @@ class HostSupervisor {
 let mainWindow: BrowserWindow | null = null
 let settingsWindow: BrowserWindow | null = null
 let host: HostSupervisor | null = null
-let allowQuit = false
-let quitInProgress = false
+const quitFlow = createQuitFlowState()
 
 const grants = new PathGrants()
 const log = new LocalLog(app.getPath('userData'))
+const updater = new UpdaterController({
+  updater: autoUpdater,
+  log,
+  broadcast: broadcastRendererEvent,
+  isPackaged: app.isPackaged,
+  e2eEnabled: app.commandLine.hasSwitch(E2E_SWITCH),
+  feedUrl: process.env.DOUBLELOVE_UPDATE_FEED_URL,
+  feedConfigPath: join(app.getPath('userData'), 'e2e-app-update.yml'),
+  setInstalling: (installing) => {
+    quitFlow.installingUpdate = installing
+  },
+})
 const usePackagedRenderer = app.isPackaged || app.commandLine.hasSwitch(E2E_SWITCH)
 const allowE2eDialogOverride = !app.isPackaged && app.commandLine.hasSwitch(E2E_SWITCH)
 const developmentRendererUrl = 'http://localhost:5174'
@@ -503,7 +524,7 @@ function createMainWindow(): BrowserWindow {
   window.once('closed', () => {
     mainWindow = null
   })
-  void loadRenderer(window)
+  void loadRenderer(window).then(() => updater.checkOnStartup())
   return window
 }
 
@@ -524,7 +545,7 @@ function openSettings(): void {
   settingsWindow = window
   secureWindow(window)
   window.on('close', (event) => {
-    if (allowQuit) return
+    if (quitFlow.allowQuit || quitFlow.installingUpdate) return
     event.preventDefault()
     window.hide()
   })
@@ -619,6 +640,13 @@ function invalidHostResponse(code: string, message: string): HostResponse {
 function installIpcHandlers(): void {
   registerGuardedHandler('dl:host-health', guardOptions(), () => host?.health())
   registerGuardedHandler('app:open-settings', guardOptions(), () => openSettings())
+  registerGuardedHandler('app:get-info', guardOptions(), () => ({
+    name: app.getName(),
+    version: app.getVersion(),
+  }))
+  registerGuardedHandler('update:check', guardOptions(), () => updater.checkManually())
+  registerGuardedHandler('update:download', guardOptions(), () => updater.download())
+  registerGuardedHandler('update:install', guardOptions(), () => updater.install())
 
   registerGuardedHandler('dl:dialog-pick-directory', guardOptions(), async (event, value) => {
     if (typeof value !== 'object' || value === null || Array.isArray(value)) {
@@ -715,7 +743,10 @@ function installIpcHandlers(): void {
     }
 
     try {
-      const response = await host?.invoke(name, granted.payload)
+      const hostPayload = name === 'doctor_run'
+        ? { app_version: app.getVersion() }
+        : granted.payload
+      const response = await host?.invoke(name, hostPayload)
       if (!response) return invalidHostResponse('HOST_UNAVAILABLE', 'Desktop host is unavailable')
       let rendererResponse = response
       if (name === 'model_reveal' || name === 'diagnostics_reveal_logs') {
@@ -755,7 +786,7 @@ function installIpcHandlers(): void {
   })
 }
 
-function broadcastHostEvent(event: string, payload: unknown): void {
+function broadcastRendererEvent(event: string, payload: unknown): void {
   for (const window of [mainWindow, settingsWindow]) {
     if (window && !window.isDestroyed()) window.webContents.send('dl:host-event', event, payload)
   }
@@ -869,7 +900,7 @@ if (!hasSingleInstanceLock) {
       })
     })
 
-    host = new HostSupervisor(log, broadcastHostEvent)
+    host = new HostSupervisor(log, broadcastRendererEvent)
     await host.start()
     installMenu()
     installIpcHandlers()
@@ -901,13 +932,5 @@ app.on('window-all-closed', () => {
 })
 
 app.on('before-quit', (event) => {
-  if (allowQuit) return
-  event.preventDefault()
-  if (quitInProgress) return
-  quitInProgress = true
-  const shutdown = host ? host.stop() : Promise.resolve()
-  void shutdown.finally(() => {
-    allowQuit = true
-    app.quit()
-  })
+  handleBeforeQuit(event, quitFlow, host, () => app.quit())
 })

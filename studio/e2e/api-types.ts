@@ -8,9 +8,22 @@ export interface HostResponse {
   error?: { code: string; message: string }
 }
 
+export interface UpdateStatus {
+  stage: 'idle' | 'checking-update' | 'update-available' | 'update-not-available' | 'download-progress' | 'update-downloaded' | 'error'
+  version?: string
+  percent?: number
+  error?: string
+}
+
 export interface DoubleLoveApi {
   hostHealth(): Promise<unknown>
   openSettings(): Promise<void>
+  getAppInfo(): Promise<{ name: string; version: string }>
+  readonly updates: {
+    check(): Promise<UpdateStatus>
+    download(): Promise<UpdateStatus>
+    install(): Promise<UpdateStatus>
+  }
   readonly dialogs: {
     pickDirectory(options: { title: string; kind: 'project-open' | 'model-root'; e2ePath?: string }): Promise<GrantToken | null>
     pickMediaFile(options?: { e2ePath?: string }): Promise<GrantToken | null>

@@ -141,11 +141,16 @@ function stateLabel(state: api.ModelInstallState): string {
   }[state]
 }
 
+function wireInteger(value: number): bigint {
+  // SAFETY: ts-rs declares JSON integer fields as bigint although the desktop wire format uses numbers.
+  return value as unknown as bigint
+}
+
 function defaultStyle(): SubtitleStyle {
   return {
     font_family: 'PingFang SC',
     font_size: 46,
-    font_weight: 500 as unknown as bigint,
+    font_weight: wireInteger(500),
     text_color: '#ffffff',
     outline_color: '#111318',
     outline_width: 3,
@@ -160,8 +165,8 @@ function defaultStyle(): SubtitleStyle {
     position_x: 0.5,
     position_y: 0.84,
     max_width_ratio: 0.86,
-    max_lines: 2 as unknown as bigint,
-    target_characters_per_line: 18 as unknown as bigint,
+    max_lines: wireInteger(2),
+    target_characters_per_line: wireInteger(18),
     show_speaker: false,
     cjk_spacing: true,
   }
@@ -436,7 +441,7 @@ function ShortcutsPage() {
 
 function SubtitlePage({ style, onUpdate, onApply }: { style: SubtitleStyle; onUpdate: (style: SubtitleStyle) => void; onApply: () => void }) {
   const update = (patch: Partial<SubtitleStyle>) => onUpdate({ ...style, ...patch })
-  return <section className="settings-page" aria-labelledby="subtitle-title"><PageHeader title="默认字幕样式" description="只影响新建项目；已有项目不会被自动改写。" /><div className="settings-callout"><Wand2 size={15} /><span>当前项目的字幕样式仍在编辑器右侧单独调整。</span></div><div className="settings-group-title">文字</div><SettingRow title="字体" description="使用系统字体，确保中文输入法和导出一致。"><select aria-label="默认字幕字体" value={style.font_family} onChange={(event) => update({ font_family: event.target.value })}><option>PingFang SC</option><option>Hiragino Sans GB</option><option>Helvetica Neue</option></select></SettingRow><SettingRow title="字号" description="以像素为单位。"><input aria-label="默认字幕字号" type="number" min="12" max="160" value={style.font_size} onChange={(event) => update({ font_size: Math.max(12, Number(event.target.value) || style.font_size) })} /></SettingRow><SettingRow title="每行目标字数" description="用于生成新项目的默认换行。"><input aria-label="默认字幕每行目标字数" type="number" min="4" max="80" value={num(style.target_characters_per_line)} onChange={(event) => update({ target_characters_per_line: Math.max(4, Math.round(Number(event.target.value) || num(style.target_characters_per_line))) as unknown as bigint })} /></SettingRow><SettingRow title="显示说话人名称"><Toggle checked={style.show_speaker} label="默认显示说话人名称" onChange={(value) => update({ show_speaker: value })} /></SettingRow><div className="settings-group-title">预览与应用</div><div className="settings-subtitle-preview" style={{ color: style.text_color, fontSize: `${Math.min(32, Math.max(16, style.font_size / 2))}px`, textShadow: `0 1px ${style.outline_color}` }}>这是新项目的字幕预览</div><button type="button" className="settings-secondary-button" onClick={onApply}>在当前项目中应用</button></section>
+  return <section className="settings-page" aria-labelledby="subtitle-title"><PageHeader title="默认字幕样式" description="只影响新建项目；已有项目不会被自动改写。" /><div className="settings-callout"><Wand2 size={15} /><span>当前项目的字幕样式仍在编辑器右侧单独调整。</span></div><div className="settings-group-title">文字</div><SettingRow title="字体" description="使用系统字体，确保中文输入法和导出一致。"><select aria-label="默认字幕字体" value={style.font_family} onChange={(event) => update({ font_family: event.target.value })}><option>PingFang SC</option><option>Hiragino Sans GB</option><option>Helvetica Neue</option></select></SettingRow><SettingRow title="字号" description="以像素为单位。"><input aria-label="默认字幕字号" type="number" min="12" max="160" value={style.font_size} onChange={(event) => update({ font_size: Math.max(12, Number(event.target.value) || style.font_size) })} /></SettingRow><SettingRow title="每行目标字数" description="用于生成新项目的默认换行。"><input aria-label="默认字幕每行目标字数" type="number" min="4" max="80" value={num(style.target_characters_per_line)} onChange={(event) => update({ target_characters_per_line: wireInteger(Math.max(4, Math.round(Number(event.target.value) || num(style.target_characters_per_line)))) })} /></SettingRow><SettingRow title="显示说话人名称"><Toggle checked={style.show_speaker} label="默认显示说话人名称" onChange={(value) => update({ show_speaker: value })} /></SettingRow><div className="settings-group-title">预览与应用</div><div className="settings-subtitle-preview" style={{ color: style.text_color, fontSize: `${Math.min(32, Math.max(16, style.font_size / 2))}px`, textShadow: `0 1px ${style.outline_color}` }}>这是新项目的字幕预览</div><button type="button" className="settings-secondary-button" onClick={onApply}>在当前项目中应用</button></section>
 }
 
 interface ModelsPageProps {
@@ -476,8 +481,66 @@ function DiagnosticsPage({ doctor, loading, onRun, onReveal }: { doctor: api.Doc
   return <section className="settings-page" aria-labelledby="diagnostics-title"><PageHeader title="诊断" description="检查离线运行环境、模型完整性和可用空间。" /><div className="settings-diagnostics-actions"><button type="button" className="settings-primary-button" disabled={loading} onClick={onRun}><RefreshCw size={14} />{loading ? '检查中…' : '运行诊断'}</button><button type="button" className="settings-secondary-button" onClick={onReveal}><FolderOpen size={14} />打开日志目录</button></div>{doctor ? <div className="settings-doctor-report"><SettingRow title="应用与系统" description={`${doctor.app_version} · ${doctor.architecture} · ${doctor.os_version}`}><Check size={15} className="settings-ok" /></SettingRow><SettingRow title="ffmpeg / libass" description={`${doctor.ffmpeg} / ${doctor.libass}`}>{mediaReady ? <Check size={15} className="settings-ok" /> : <AlertTriangle size={15} className="settings-warning" />}</SettingRow><SettingRow title="离线运行时" description={doctor.offline_runtime}>{runtimeReady ? <Check size={15} className="settings-ok" /> : <AlertTriangle size={15} className="settings-warning" />}</SettingRow><SettingRow title="可用磁盘" description={readableBytes(doctor.free_disk_bytes)}><span className="settings-mono-value">{readableBytes(doctor.free_disk_bytes)}</span></SettingRow><div className="settings-model-integrity">{doctor.model_integrity.map((model) => <div key={model.model_id}><span>{model.model_id}</span><strong>{stateLabel(model.state as api.ModelInstallState) ?? model.state}</strong></div>)}</div></div> : <div className="settings-empty-state"><ClipboardCheck size={18} /><strong>还没有诊断报告</strong><p>运行一次检查，结果只保存在本地。</p></div>}</section>
 }
 
+function updateStatusText(status: api.UpdateStatus): string {
+  if (status.stage === 'checking-update') return '正在检查更新…'
+  if (status.stage === 'update-available') return status.version ? `发现新版本 ${status.version}` : '发现新版本'
+  if (status.stage === 'update-not-available') return '当前已是最新版本。'
+  if (status.stage === 'download-progress') return `正在下载更新${status.percent === undefined ? '…' : ` ${status.percent.toFixed(1)}%`}`
+  if (status.stage === 'update-downloaded') return '更新已下载，可以重启安装。'
+  if (status.stage === 'error') return status.error ?? '暂时无法完成更新操作，请稍后重试。'
+  return '可手动检查新版本。'
+}
+
 function AboutPage() {
-  return <section className="settings-page" aria-labelledby="about-title"><PageHeader title="关于" description="Double Love Studio · 本地粗剪工作台。" /><div className="settings-about-mark"><span>⌃</span><div><strong>Double Love Studio</strong><small>版本 0.1.0 · Apple Silicon</small></div></div><div className="settings-about-list"><SettingRow title="本地处理" description="原始媒体不会被复制，模型运行时不主动联网。"><Check className="settings-ok" size={15} /></SettingRow><SettingRow title="模型许可" description="Qwen3 ASR、Forced Aligner、Silero VAD 和 WeSpeaker 的许可随安装清单提供。"><ChevronRight size={15} /></SettingRow><SettingRow title="第三方许可" description="查看构建中使用的开源组件和版本。"><ChevronRight size={15} /></SettingRow></div><p className="settings-footnote">感谢你用本地工具整理声音和故事。问题反馈请附上诊断页中经过脱敏的报告。</p></section>
+  const [appInfo, setAppInfo] = useState<api.AppInfo>({ name: 'Double Love Studio', version: '0.2.0' })
+  const [updateStatus, setUpdateStatus] = useState<api.UpdateStatus>({ stage: 'idle' })
+
+  useEffect(() => {
+    let disposed = false
+    void api.getAppInfo().then((info) => {
+      if (!disposed) setAppInfo(info)
+    }).catch(() => undefined)
+    if (!api.isDesktop) return () => { disposed = true }
+
+    let remove: (() => void) | undefined
+    void api.listen<api.UpdateStatus>('dl://update-status', (event) => {
+      if (!disposed) setUpdateStatus(event.payload)
+    }).then((unlisten) => { remove = unlisten }).catch(() => undefined)
+    return () => {
+      disposed = true
+      remove?.()
+    }
+  }, [])
+
+  const checkForUpdates = async () => {
+    setUpdateStatus({ stage: 'checking-update' })
+    try {
+      setUpdateStatus(await api.updateCheck())
+    } catch {
+      setUpdateStatus({ stage: 'error', error: '暂时无法检查更新，请稍后重试。' })
+    }
+  }
+
+  const downloadUpdate = async () => {
+    if (!window.confirm('确认下载这个更新吗？下载完成后仍需再次确认才会重启安装。')) return
+    try {
+      setUpdateStatus(await api.updateDownload())
+    } catch {
+      setUpdateStatus({ stage: 'error', error: '暂时无法下载更新，请稍后重试。' })
+    }
+  }
+
+  const installUpdate = async () => {
+    if (!window.confirm('确认退出 Double Love Studio 并安装更新吗？')) return
+    try {
+      setUpdateStatus(await api.updateInstall())
+    } catch {
+      setUpdateStatus({ stage: 'error', error: '暂时无法安装更新，请稍后重试。' })
+    }
+  }
+
+  const busy = updateStatus.stage === 'checking-update' || updateStatus.stage === 'download-progress'
+  return <section className="settings-page" aria-labelledby="about-title"><PageHeader title="关于" description="Double Love Studio · 本地粗剪工作台。" /><div className="settings-about-mark"><span>⌃</span><div><strong>{appInfo.name}</strong><small>版本 {appInfo.version}</small></div></div><div className="settings-group-title">应用更新</div><div className="settings-diagnostics-actions"><button type="button" className="settings-secondary-button" disabled={busy} onClick={() => void checkForUpdates()}><RefreshCw size={14} />检查更新</button><button type="button" className="settings-primary-button" disabled={updateStatus.stage !== 'update-available'} onClick={() => void downloadUpdate()}>下载更新</button><button type="button" className="settings-primary-button" disabled={updateStatus.stage !== 'update-downloaded'} onClick={() => void installUpdate()}>重启安装</button></div><p className="settings-footnote" role="status" aria-live="polite">{updateStatusText(updateStatus)}</p><div className="settings-about-list"><SettingRow title="本地处理" description="原始媒体不会被复制，模型运行时不主动联网。"><Check className="settings-ok" size={15} /></SettingRow><SettingRow title="模型许可" description="Qwen3 ASR、Forced Aligner、Silero VAD 和 WeSpeaker 的许可随安装清单提供。"><ChevronRight size={15} /></SettingRow><SettingRow title="第三方许可" description="查看构建中使用的开源组件和版本。"><ChevronRight size={15} /></SettingRow></div><p className="settings-footnote">感谢你用本地工具整理声音和故事。问题反馈请附上诊断页中经过脱敏的报告。</p></section>
 }
 
 export { PAGE_ITEMS }

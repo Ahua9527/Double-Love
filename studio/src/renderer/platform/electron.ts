@@ -20,6 +20,7 @@ import {
   normalizeDoctorReport,
   normalizeModelDescriptor,
   normalizeModelInstallation,
+  type AppInfo,
   type AppPreferencesV1,
   type DoctorReport,
   type OnboardingState,
@@ -29,6 +30,7 @@ import {
   type RawModelSnapshot,
   type RecentProject,
   type SystemProfile,
+  type UpdateStatus,
 } from './normalize'
 
 export * from './normalize'
@@ -52,6 +54,12 @@ interface GrantToken {
 interface DoubleLoveBridge {
   hostHealth(): Promise<unknown>
   openSettings(): Promise<void>
+  getAppInfo(): Promise<AppInfo>
+  updates: {
+    check(): Promise<UpdateStatus>
+    download(): Promise<UpdateStatus>
+    install(): Promise<UpdateStatus>
+  }
   dialogs: {
     pickDirectory(options: { title: string; kind: 'project-open' | 'model-root' }): Promise<GrantToken | null>
     pickMediaFile(): Promise<GrantToken | null>
@@ -88,6 +96,7 @@ function failedOperation<T>(code: string, message: string): OperationResult<T> {
 }
 
 function successOperation<T>(data: T): OperationResult<T> {
+  // SAFETY: OperationResult's ts-rs integer types are bigint, but its JSON wire format uses numbers.
   const integer = (value: number) => value as unknown as bigint
   return {
     status: 'success',
@@ -173,6 +182,10 @@ export async function settingsOpen(): Promise<OperationResult<null>> {
   await bridge().openSettings()
   return successOperation(null)
 }
+export function getAppInfo() { return bridge().getAppInfo() }
+export function updateCheck() { return bridge().updates.check() }
+export function updateDownload() { return bridge().updates.download() }
+export function updateInstall() { return bridge().updates.install() }
 export function preferencesGet() { return invokeOperation<AppPreferencesV1>('preferences_get') }
 export function preferencesUpdate(patch: PreferencesPatch) { return invokeOperation<AppPreferencesV1>('preferences_update', { patch }) }
 export function recentProjectsList() { return invokeOperation<RecentProject[]>('recent_projects_list') }

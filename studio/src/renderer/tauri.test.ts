@@ -36,6 +36,7 @@ describe('应用级 Tauri DTO normalize', () => {
 
   it('把 Rust 诊断布尔状态映射为可读报告', () => {
     const report = normalizeDoctorReport({ architecture: 'arm64', ffmpeg_available: true, libass_available: false, model_checks: [{ model_id: 'qwen3-asr-0.6b', state: 'corrupt', error_code: 'SHA256_MISMATCH' }] })
+    expect(report.app_version).toBe('0.2.0')
     expect(report.ffmpeg).toBe('可用')
     expect(report.libass).toBe('不可用')
     expect(report.model_integrity[0]?.state).toBe('corrupt')

@@ -19,4 +19,12 @@ describe('SettingsApp', () => {
     fireEvent.click(screen.getAllByRole('button', { name: '安装' })[0])
     expect(screen.getByText('浏览器预览：模型操作需要在桌面应用中执行。')).toBeTruthy()
   })
+
+  it('关于页显示 0.2.0，并在满足状态前禁用下载与安装', async () => {
+    render(<SettingsApp initialPage="about" />)
+    expect(await screen.findByText('版本 0.2.0')).toBeTruthy()
+    expect(screen.getByRole('button', { name: '检查更新' }).hasAttribute('disabled')).toBe(false)
+    expect(screen.getByRole('button', { name: '下载更新' }).hasAttribute('disabled')).toBe(true)
+    expect(screen.getByRole('button', { name: '重启安装' }).hasAttribute('disabled')).toBe(true)
+  })
 })

@@ -26,7 +26,7 @@
 | 3D renderer 平台接缝 | **已完成** | renderer 运行时选择 Electron/Tauri/preview；Electron host 错误归一为既有 `OperationResult.failed`；本地文件无 bridge 时 fail closed | Tauri adapter 保留，revert renderer 平台接缝批次 |
 | 3 平台基础阶段（3A–3D） | **已完成** | service/host、安全边界、renderer 目录与平台 adapter 均已就位；Phase 4 可按纵向切片迁移业务命令 | 保留 Tauri adapter，按 3D→3A 逆序回退 |
 | 4 纵向业务切片迁移（7 片） | **已完成（Slice 1–7）** | 每片：Electron E2E 正常+失败/取消/恢复路径；Tauri 对照一致 | 每片独立提交，只 revert 当前切片 |
-| 5 默认 Electron、打包发布、清理 | **进行中（5A 打包基础设施与资源归属；5C 一次性数据备份）** | 功能矩阵 100%；签名公证门禁通过 | 保留最后可构建 Tauri commit |
+| 5 默认 Electron、打包发布、清理 | **进行中（5A 打包基础设施；5B 更新链；5C 一次性数据备份）** | 功能矩阵 100%；签名公证门禁通过 | 保留最后可构建 Tauri commit |
 | 6 全量验收与回退演练 | 未开始 | 见计划完成判定 | 文档化手动回退 |
 
 ## 当前基线证据（2026-08-22，本机 macOS 15.7.7 arm64，Node 24.14.1 / pnpm 10.33.0 / Rust 1.97.1）
@@ -135,6 +135,20 @@ Slice 7 未修改 `src-tauri`、Web/PWA、SQLite schema/migration、TimelineIR�
 Electron main 在打包模式只从 `process.resourcesPath` 解析 host、协议 schema 与注入给 host 的资源根。desktop service 的导入与 MP4 渲染按 `runtime/{ffmpeg,ffprobe}` → 既有 `resources/runtime` 兼容位置 → 开发期 `FfmpegTools::discover()` 的顺序解析；新增单测冻结 bundled runtime 优先级。打包 smoke 检查 host、schema、ASAR、图标、runtime 树和九项 Fuse，再经 CDP Playwright 启动 unpacked `.app`，验证 `hostHealth` 与偏好调用均成功且隔离 userData 生效。
 
 5A 门禁证据（2026-08-22，macOS arm64）：release host、Studio/Vite/TypeScript/Electron build、无证书目录包、Fuse 工具所需的本地 ad-hoc 完整性校验和 unpacked boot smoke 通过；ffmpeg-full/libass 严格模式 workspace fmt/clippy/test 全过（engine 148 过、1 ignored；desktop service 20 过；Tauri 18 过）；bindings contract、两组 Python sidecar 测试与 py_compile 通过；Studio 89 项 Vitest、全部 16 项 Playwright、根 Web 99 项 Vitest 及 lint/build 通过；Tauri debug `.app` 与新共享资源布局通过；`git diff --check` 通过。真实 runtime 二进制、Developer ID 签名及公证按计划留给后续发布批次，Phase 5D 才删除 Tauri。
+
+## Phase 5B 已交付更新器与本地发布链证明
+
+Studio 首个 Electron 用户版本以 `studio/package.json` 的 `0.2.0` 为唯一 app 版本源，`electron-builder`、`app.getVersion()`、关于页和 Electron `doctor_run` 的 renderer-facing 报告均使用该值。main 通过受保护的 `app:get-info` 只返回应用名与版本；诊断调用由 main 注入版本，desktop service 仅在 renderer 边界用扁平 wrapper 增加 `app_version`，没有修改 engine `DoctorReport` schema。main 启动握手现在同时要求 protocol 1、`invoke` capability 以及非空 host/engine 版本，并把两个版本写入字段白名单本地日志；任一不满足仍走既有启动失败路径。
+
+`electron-updater` 的正式包 provider 继续来自完整 DMG/ZIP 构建生成的 `app-update.yml`。运行策略固定为 `autoDownload:false`、`autoInstallOnAppQuit:false`、`allowPrerelease:false`：打包启动且主窗口加载完成后只静默检查一次，失败只写本地日志；手动检查才把错误作为可读状态返回。只有未打包运行，或带显式 `--double-love-e2e` 的打包进程，才会接受无凭据、无 query/fragment 的 `DOUBLELOVE_UPDATE_FEED_URL` generic override；`electron-builder --dir` 不生成 update config，因此该测试门内会在隔离 userData 写权限 `0600` 的临时 update config，正式运行不走此路径。
+
+更新状态统一经受限 preload 的 `dl://update-status` 发给应用窗口，只允许 `stage`、安全版本和 0–100 进度，不携带 feed URL、下载路径或 token。受保护的 `update:download` 只在 `update-available` 后执行，`update:install` 只在 `update-downloaded` 后执行。关于页先显示真实当前版本；用户点击“下载更新”必须确认，下载完成后点击“重启安装”还必须再次确认，不存在自动下载、静默退出或普通退出时自动安装。
+
+`quitAndInstall` 前由 main 先设置 installing flag。settings 的 close-to-hide 和全局 `before-quit` 都识别此状态：不再 `preventDefault`，同步停止 host 而不等待原 1.5 秒 shutdown timeout，然后让 Squirrel 原生退出安装路径继续；普通退出仍保留原先的 graceful shutdown gate。`quit-flow.test.ts` 冻结这条回归路径。
+
+本地发布链证明（2026-08-23，macOS arm64）由 `scripts/migration/local-update-feed.sh` 全程使用本机 Electron distribution、`--publish never` 和 `127.0.0.1`：在临时目录构建 ad-hoc 的 `0.2.1-feed` `.app`/ZIP，自行计算 size/SHA-512 并合成 `latest-mac.yml`，退出后删除临时 feed。`update-feed.spec.ts` 从当前 `0.2.0` 目录包启动，证明 check 返回 `update-available 0.2.1-feed`；确认前服务端没有 ZIP 请求且没有 progress/downloaded 事件；确认后观察到 ZIP 请求、100% progress 与 `update-downloaded`。捕获的状态均无 localhost URL、feed 目录或 artifact 路径。第二次安装确认被测试明确取消，应用与设置窗口继续存活，因此测试没有调用 `quitAndInstall`。本机未执行真实安装、Developer ID 签名或公证；签名一致性、原生替换和重启后的版本验证仍留给发布机门禁。
+
+5B 门禁证据：Studio lint、102 项 Vitest、Vite/TypeScript/Electron build 通过；本机 Electron distribution 的无证书 `electron-builder --dir` 产物版本为 0.2.0，Fuse/package smoke 通过；设置 ffmpeg-full/libass 后全部 18 项 Playwright（含本地 feed）通过；workspace fmt、clippy `-D warnings`、严格工具模式 Rust 测试及 bindings contract 通过；根 Web lint、99 项 Vitest 与 build 通过；`git diff --check` 通过。
 
 ## Phase 5C 已交付首次 Electron 写入前的一次性数据备份
 

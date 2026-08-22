@@ -568,7 +568,7 @@ fn download_file_with_resume(
     Ok(Some(written))
 }
 
-pub fn emit_doctor(events: &dyn DesktopEventSink, report: &DoctorReport) {
+pub fn emit_doctor<T: serde::Serialize>(events: &dyn DesktopEventSink, report: &T) {
     emit(events, "dl://doctor-result", report);
 }
 

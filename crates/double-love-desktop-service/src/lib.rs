@@ -29,6 +29,7 @@ pub const HOST_UNAVAILABLE: &str = "HOST_UNAVAILABLE";
 pub const INTERNAL: &str = "INTERNAL";
 pub const PROJECT_NOT_OPEN: &str = "PROJECT_NOT_OPEN";
 pub const APP_DATA_DIR_REQUIRED: &str = "APP_DATA_DIR_REQUIRED";
+const ELECTRON_APP_VERSION_FALLBACK: &str = "0.2.0";
 
 #[derive(Debug, Clone, Error, PartialEq, Eq)]
 #[error("{code}: {message}")]
@@ -541,6 +542,32 @@ struct ModelIdParams {
 struct ModelRevealParams {
     #[serde(default, alias = "modelId")]
     model_id: Option<String>,
+}
+
+#[derive(Default, Deserialize)]
+struct DoctorRunParams {
+    #[serde(default, alias = "appVersion")]
+    app_version: Option<String>,
+}
+
+#[derive(Serialize)]
+struct RendererDoctorReport {
+    #[serde(flatten)]
+    report: double_love_engine::DoctorReport,
+    app_version: String,
+}
+
+fn normalize_app_version(value: Option<String>) -> String {
+    value
+        .map(|version| version.trim().to_string())
+        .filter(|version| {
+            !version.is_empty()
+                && version.len() <= 64
+                && version
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || b".-+_".contains(&byte))
+        })
+        .unwrap_or_else(|| ELECTRON_APP_VERSION_FALLBACK.to_string())
 }
 
 #[derive(Deserialize)]
@@ -1529,26 +1556,25 @@ pub fn register_commands(registry: &mut CommandRegistry) {
             path: path.to_string_lossy().into_owned(),
         }))
     });
-    registry.register("doctor_run", |state, events, _payload| {
+    registry.register("doctor_run", |state, events, payload| {
+        let app_version = normalize_app_version(params::<DoctorRunParams>(payload)?.app_version);
         let preferences =
             match preferences::current_preferences(state.app_data_dir(), state.preferences()) {
                 Ok(preferences) => preferences,
                 Err(error) => {
-                    return result_value(preferences::command_error::<
-                        double_love_engine::DoctorReport,
-                    >(error, true));
+                    return result_value(preferences::command_error::<RendererDoctorReport>(
+                        error, true,
+                    ));
                 }
             };
         let profile =
             match preferences::system_profile_for(state.app_data_dir(), state.preferences()) {
                 Ok(profile) => profile,
                 Err(error) => {
-                    return result_value(
-                        OperationResult::<double_love_engine::DoctorReport>::failed(
-                            "SYSTEM_PROFILE_FAILED",
-                            error.to_string(),
-                        ),
-                    );
+                    return result_value(OperationResult::<RendererDoctorReport>::failed(
+                        "SYSTEM_PROFILE_FAILED",
+                        error.to_string(),
+                    ));
                 }
             };
         let tools = FfmpegTools::discover().ok();
@@ -1571,8 +1597,12 @@ pub fn register_commands(registry: &mut CommandRegistry) {
             .doctor_report(Path::new(&preferences.model_root), environment)
         {
             Ok(report) => {
-                models::emit_doctor(events.as_ref(), &report);
-                OperationResult::success(report)
+                let renderer_report = RendererDoctorReport {
+                    report,
+                    app_version,
+                };
+                models::emit_doctor(events.as_ref(), &renderer_report);
+                OperationResult::success(renderer_report)
             }
             Err(error) => OperationResult::failed("DOCTOR_FAILED", error),
         };
@@ -2019,6 +2049,19 @@ mod tests {
         let summary = create_project(&root)?;
         let store = ProjectStore::open(Path::new(&summary.database))?;
         Ok((root, summary, store))
+    }
+
+    #[test]
+    fn doctor_app_version_uses_main_value_with_a_020_fallback() {
+        assert_eq!(
+            normalize_app_version(Some(" 0.2.1-feed ".to_string())),
+            "0.2.1-feed"
+        );
+        assert_eq!(normalize_app_version(None), "0.2.0");
+        assert_eq!(
+            normalize_app_version(Some("../private".to_string())),
+            "0.2.0"
+        );
     }
 
     #[test]

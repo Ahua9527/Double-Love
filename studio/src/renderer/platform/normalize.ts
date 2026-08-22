@@ -5,6 +5,27 @@ export type ThemeMode = 'light' | 'dark' | 'system'
 export type TimecodePrecision = 'frame' | 'millisecond'
 export type ModelInstallState = 'not_installed' | 'queued' | 'downloading' | 'paused' | 'verifying' | 'installed' | 'corrupt' | 'failed'
 
+export interface AppInfo {
+  name: string
+  version: string
+}
+
+export type UpdateStage =
+  | 'idle'
+  | 'checking-update'
+  | 'update-available'
+  | 'update-not-available'
+  | 'download-progress'
+  | 'update-downloaded'
+  | 'error'
+
+export interface UpdateStatus {
+  stage: UpdateStage
+  version?: string
+  percent?: number
+  error?: string
+}
+
 export interface AppPreferencesV1 {
   schema_version: number
   theme: ThemeMode
@@ -206,7 +227,7 @@ export function normalizeDoctorReport(raw: Partial<DoctorReport> & {
 }): DoctorReport {
   return {
     generated_at: raw.generated_at ?? new Date().toISOString(),
-    app_version: raw.app_version ?? '0.1.0',
+    app_version: raw.app_version ?? '0.2.0',
     architecture: raw.architecture ?? 'unknown',
     os_version: raw.os_version ?? 'unknown',
     ffmpeg: raw.ffmpeg ?? (raw.ffmpeg_available ? '可用' : '不可用'),

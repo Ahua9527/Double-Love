@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { assetsList, importMedia, listen, pickDirectory } from './electron'
+import { assetsList, getAppInfo, importMedia, listen, pickDirectory, updateCheck } from './electron'
 
 function installBridge(invoke: (name: string, payload?: unknown) => Promise<unknown>, onEvent = vi.fn()) {
   Object.defineProperty(window, 'doubleLove', {
@@ -7,6 +7,12 @@ function installBridge(invoke: (name: string, payload?: unknown) => Promise<unkn
     value: {
       hostHealth: vi.fn(),
       openSettings: vi.fn(),
+      getAppInfo: vi.fn().mockResolvedValue({ name: 'Double Love Studio', version: '0.2.0' }),
+      updates: {
+        check: vi.fn().mockResolvedValue({ stage: 'update-not-available' }),
+        download: vi.fn(),
+        install: vi.fn(),
+      },
       dialogs: {
         pickDirectory: vi.fn().mockResolvedValue({ token: 'directory-grant' }),
         pickMediaFile: vi.fn().mockResolvedValue(null),
@@ -77,6 +83,12 @@ describe('Electron renderer adapter', () => {
       title: '选择已有项目',
       kind: 'project-open',
     })
+  })
+
+  it('reads app metadata and updater state only through the preload bridge', async () => {
+    installBridge(vi.fn())
+    await expect(getAppInfo()).resolves.toEqual({ name: 'Double Love Studio', version: '0.2.0' })
+    await expect(updateCheck()).resolves.toEqual({ stage: 'update-not-available' })
   })
 
   it('maps event payloads and exposes the preload unsubscribe function', async () => {

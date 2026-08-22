@@ -50,6 +50,8 @@ describe('LocalLog', () => {
       durationMs: 12.3456,
       status: 'error',
       errorCode: 'IMPORT_FAILED',
+      hostVersion: '0.1.0',
+      engineVersion: '0.1.0',
       path: '/Users/example/private.mov',
       token: 'secret-token',
       payload: { transcript: 'private media text' },
@@ -60,7 +62,9 @@ describe('LocalLog', () => {
     const record = JSON.parse(line) as Record<string, unknown>
     expect(Object.keys(record).sort()).toEqual([
       'durationMs',
+      'engineVersion',
       'errorCode',
+      'hostVersion',
       'level',
       'method',
       'process',

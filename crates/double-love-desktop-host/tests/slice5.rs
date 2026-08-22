@@ -365,14 +365,13 @@ fn transcription_edits_roughcut_and_model_diagnostics_match_tauri_semantics() {
     );
     assert!(app_data.join("logs").is_dir());
 
-    let doctor = host.invoke("doctor", "doctor_run", json!({}));
+    let doctor = host.invoke("doctor", "doctor_run", json!({ "app_version": "0.2.0" }));
     assert_success(&doctor);
     assert_eq!(doctor["data"]["schema_version"], 1);
-    assert!(
-        host.events
-            .iter()
-            .any(|event| event["event"] == "dl://doctor-result")
-    );
+    assert_eq!(doctor["data"]["app_version"], "0.2.0");
+    assert!(host.events.iter().any(|event| {
+        event["event"] == "dl://doctor-result" && event["payload"]["app_version"] == "0.2.0"
+    }));
 
     assert_success(&host.invoke("create", "project_create", json!({"path":project})));
     let imported = host.invoke("import", "import_media", json!({"path":media}));

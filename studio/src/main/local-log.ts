@@ -13,6 +13,8 @@ export interface LocalLogEntry {
   durationMs?: number
   status: LogStatus
   errorCode?: string
+  hostVersion?: string
+  engineVersion?: string
 }
 
 export interface PersistedLogEntry extends LocalLogEntry {
@@ -24,6 +26,7 @@ const DEFAULT_FILE_COUNT = 5
 const SAFE_METHOD = /^[a-zA-Z][a-zA-Z0-9:._-]{0,127}$/u
 const SAFE_REQUEST_ID = /^[a-zA-Z0-9-]{1,128}$/u
 const SAFE_ERROR_CODE = /^[A-Z][A-Z0-9_]{0,127}$/u
+const SAFE_VERSION = /^[0-9A-Za-z][0-9A-Za-z.+_-]{0,63}$/u
 
 export class LocalLog {
   readonly logDirectory: string
@@ -55,6 +58,8 @@ export class LocalLog {
       record.durationMs = Math.round(input.durationMs * 1000) / 1000
     }
     if (input.errorCode && SAFE_ERROR_CODE.test(input.errorCode)) record.errorCode = input.errorCode
+    if (input.hostVersion && SAFE_VERSION.test(input.hostVersion)) record.hostVersion = input.hostVersion
+    if (input.engineVersion && SAFE_VERSION.test(input.engineVersion)) record.engineVersion = input.engineVersion
 
     const line = `${JSON.stringify(record)}\n`
     this.rotateIfNeeded(Buffer.byteLength(line))

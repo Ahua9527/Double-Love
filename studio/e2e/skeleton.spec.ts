@@ -82,6 +82,7 @@ test('runs the sandboxed window, host bridge, and settings singleton', async () 
     globalType: typeof window.global,
     apiFrozen: Object.isFrozen(window.doubleLove),
     dialogsFrozen: Object.isFrozen(window.doubleLove.dialogs),
+    updatesFrozen: Object.isFrozen(window.doubleLove.updates),
     apiKeys: Object.keys(window.doubleLove).sort(),
     networkResources: performance.getEntriesByType('resource')
       .map((entry) => entry.name)
@@ -93,8 +94,13 @@ test('runs the sandboxed window, host bridge, and settings singleton', async () 
     globalType: 'undefined',
     apiFrozen: true,
     dialogsFrozen: true,
-    apiKeys: ['dialogs', 'hostHealth', 'invoke', 'onEvent', 'openSettings'],
+    updatesFrozen: true,
+    apiKeys: ['dialogs', 'getAppInfo', 'hostHealth', 'invoke', 'onEvent', 'openSettings', 'updates'],
     networkResources: [],
+  })
+  expect(await mainPage.evaluate(() => window.doubleLove.getAppInfo())).toEqual({
+    name: 'Double Love Studio',
+    version: '0.2.0',
   })
 
   const firstHealth = await mainPage.evaluate(() => window.doubleLove.hostHealth())
