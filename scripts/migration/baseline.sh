@@ -110,11 +110,13 @@ if [ "$FAST" -eq 0 ]; then
   run_gate "electron:build" pnpm --dir studio electron:build || FAILED=1
   run_gate "electron:pack-dir" env CSC_IDENTITY_AUTO_DISCOVERY=false pnpm --dir studio pack:dir || FAILED=1
   run_gate "electron:package-smoke" scripts/migration/package-smoke.sh || FAILED=1
+  run_gate "electron:perf" node scripts/migration/perf-check.mjs || FAILED=1
 else
   record "electron:release-host" "SKIP" "--fast"
   record "electron:build" "SKIP" "--fast"
   record "electron:pack-dir" "SKIP" "--fast"
   record "electron:package-smoke" "SKIP" "--fast"
+  record "electron:perf" "SKIP" "--fast"
 fi
 run_gate "git:diff-check" git diff --check || FAILED=1
 

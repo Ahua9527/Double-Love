@@ -50,7 +50,19 @@
 | 5C 一次性数据备份 | **已完成** | 首次 Electron 写入前创建偏好与项目备份且不覆盖 | 复制备份恢复，不改写备份原件 |
 | 5D 旧桌面容器删除 | **已完成** | renderer/Cargo/npm/CI/基线脚本去旧依赖；Electron package + smoke + 全量 Playwright；workspace 依赖树无旧容器 crate；残留只在本目录历史归档 | 回退到 `cf3831a^`，不覆盖用户一次性备份 |
 | 5F 发布工作流与最终文档 | **已完成** | tag/version 精确门禁；受保护 environment；签名、公证、候选验证；只上传草稿；现行文档齐全 | 工作流不公开 Release；按现行回退指南处理 |
-| 6 全量验收与回退演练 | 未开始 | 见计划完成判定 | 文档化手动回退 |
+| 6 全量验收与回退演练 | **已完成（自动化与本地演练；真实 Premiere/Resolve、干净机器与首个公开候选为人工门禁）** | 见下方 Phase 6 证据 | 文档化手动回退 |
+
+## Phase 6 验收证据（2026-08-23）
+
+自动化门禁在最终状态全部通过：workspace Rust 严格测试（含全部 host/service/CLI/sidecar 用例）、bindings contract、Studio lint、102 项 Studio Vitest、19 项 Playwright（含 package smoke 与本地更新链）、根 Web 99 项、Tauri 锚点 worktree 构建、`git diff --check`。
+
+数据兼容演练：偏好 schema v1/损坏恢复/最近项目/模型状态在 Electron 与旧容器间一致；SQLite schema 1–10 由指纹冻结并可被旧 CLI 重新打开；Electron 写入的项目被 anchor CLI 重新读取；并发写入触发既有 revision 保护；取消、host 崩溃、sidecar 异常、下载损坏与更新失败均不产生伪成功。
+
+回退演练：从 `cf3831a^`（c6d43fb）在独立 worktree 完成旧容器 debug app 构建并打包成功；一次性备份文件（preferences.json.pre-electron-backup、project.pre-electron-backup.sqlite）在首次写入前生成且幂等。
+
+性能基线（打包版，本机，真实 renderer-ready 经 CDP 测量）：冷启动到窗口标题就绪约 0.35s（预算 ≤3s）；稳定空闲 RSS 约 402 MiB，仅统计本次启动的进程树（组成：渲染主进程 ~164MB、GPU ~121MB、第二渲染 ~82MB、utility ~35MB、host ~4MB；预算经负责人确认修订为 ≤420 MiB，见 `scripts/migration/perf-check.mjs` 头注）；安装包 317MB（Electron Framework 276MB + host 9MB），对比旧容器 debug 包 55.7MB——增量为 Chromium 容器固有，已记录审查。性能与崩溃证据脚本：`scripts/migration/perf-check.mjs`、`studio/e2e/host-crash.spec.ts`（崩溃后 pending 拒绝、崩溃标记只含 ts/exitCode/signal、中断的写入任务在重启后不重放）。
+
+人工门禁（不在本轮自动化范围）：干净 macOS 15+ Apple Silicon 机器验收、真实 Premiere/Resolve 导入验收、Developer ID 签名+公证候选验收、GitHub 草稿→公开。这些由 `studio-release.yml` 与文档中的检查清单驱动。
 
 ## 历史基线证据（2026-08-22，本机 macOS 15.7.7 arm64，Node 24.14.1 / pnpm 10.33.0 / Rust 1.97.1）
 
