@@ -49,8 +49,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          command -v gh >/dev/null
-          command -v uv >/dev/null
+          command -v gh >/dev/null || brew install gh
+          command -v uv >/dev/null || brew install uv
           echo "/opt/homebrew/bin" >> "$GITHUB_PATH"
           if ! ffmpeg -hide_banner -filters 2>/dev/null \
             | awk '$2 == "ass" { found=1 } END { exit !found }'; then
