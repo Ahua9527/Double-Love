@@ -214,7 +214,6 @@ jobs:
             export CSC_IDENTITY_AUTO_DISCOVERY=false
             pnpm --dir studio exec electron-builder \
               --mac --arm64 --publish never \
-              -c.mac.identity=- \
               -c.publish.releaseType=draft \
               -c.publish.tagNamePrefix=studio-v
             exit 0
