@@ -1,3 +1,7 @@
 # 本地说话人后端。WeSpeaker 必须固定到经过评估的提交，避免无提示的模型/API 漂移。
 silero-vad==6.2.0
+# WeSpeaker → s3prl 依赖链需要 torchaudio.set_audio_backend（torchaudio 2.9 已移除）；
+# 固定 2.8.x 以恢复说话人运行时构建（Electron 发布门禁要求可重定位运行时）。
+torch==2.8.0
+torchaudio==2.8.0
 git+https://github.com/wenet-e2e/wespeaker.git@dfa741957e5c11f477623b6e583d67d0af25ee88

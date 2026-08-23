@@ -1,3 +1,10 @@
 node_modules/
 dist/
 release/
+
+# Bundled release runtimes are prepared on the release machine only (prepare scripts + verify gate);
+# keep the README contracts tracked but never the binaries/venvs themselves.
+build/runtime/
+!build/runtime/README.md
+build/model-runtime/
+!build/model-runtime/README.md
