@@ -128,6 +128,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          if [[ -n "$DOUBLELOVE_FFMPEG_SOURCE" \
+            && ! -x "$DOUBLELOVE_FFMPEG_SOURCE" ]]; then
+            echo "Configured media source missing on this runner; fallback." >&2
+            DOUBLELOVE_FFMPEG_SOURCE=""
+            DOUBLELOVE_FFPROBE_SOURCE=""
+          fi
           if [[ -z "$DOUBLELOVE_FFMPEG_SOURCE" \
             || -z "$DOUBLELOVE_FFPROBE_SOURCE" ]]; then
             if [[ -x /opt/homebrew/opt/ffmpeg-full/bin/ffmpeg ]]; then
@@ -141,6 +147,12 @@ jobs:
             fi
           fi
           scripts/prepare-media-runtime.sh
+          if [[ -n "$DOUBLELOVE_ASR_RUNTIME_SOURCE" \
+            && ! -x "$DOUBLELOVE_ASR_RUNTIME_SOURCE/.venv/bin/python" ]]; then
+            echo "Configured model sources missing on this runner; rebuild." >&2
+            DOUBLELOVE_ASR_RUNTIME_SOURCE=""
+            DOUBLELOVE_SPEAKER_RUNTIME_SOURCE=""
+          fi
           if [[ -z "$DOUBLELOVE_ASR_RUNTIME_SOURCE" \
             || -z "$DOUBLELOVE_SPEAKER_RUNTIME_SOURCE" ]]; then
             built_root="$RUNNER_TEMP/model-runtime-sources"
