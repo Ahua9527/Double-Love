@@ -208,6 +208,17 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          if [[ "$SIGNING_MODE" == "adhoc" ]]; then
+            echo "Ad-hoc signing: Developer ID and notarization deferred."
+            rm -rf studio/release
+            export CSC_IDENTITY_AUTO_DISCOVERY=false
+            pnpm --dir studio exec electron-builder \
+              --mac --arm64 --publish never \
+              -c.mac.identity=- \
+              -c.publish.releaseType=draft \
+              -c.publish.tagNamePrefix=studio-v
+            exit 0
+          fi
           if [[ -z "$CSC_LINK" && -z "$CSC_NAME" ]]; then
             echo "Configure CSC_LINK or CSC_NAME in studio-release." >&2
             exit 2
@@ -241,17 +252,6 @@ jobs:
             exit 2
           fi
 
-          if [[ "$SIGNING_MODE" == "adhoc" ]]; then
-            echo "Ad-hoc signing: Developer ID and notarization deferred."
-            rm -rf studio/release
-            export CSC_IDENTITY_AUTO_DISCOVERY=false
-            pnpm --dir studio exec electron-builder \
-              --mac --arm64 --publish never \
-              -c.mac.identity=- \
-              -c.publish.releaseType=draft \
-              -c.publish.tagNamePrefix=studio-v
-            exit 0
-          fi
           rm -rf studio/release
           pnpm --dir studio exec electron-builder \
             --mac --arm64 --publish never \
