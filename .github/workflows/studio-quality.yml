@@ -26,6 +26,9 @@ jobs:
           fetch-depth: 0
       - name: Ensure libass-capable ffmpeg on PATH
         run: |
+          if [[ -x /opt/homebrew/bin/brew ]]; then
+            eval "$(/opt/homebrew/bin/brew shellenv)"
+          fi
           if ! ffmpeg -hide_banner -filters 2>/dev/null \
             | awk '$2 == "ass" { found=1 } END { exit !found }'; then
             brew install ffmpeg-full

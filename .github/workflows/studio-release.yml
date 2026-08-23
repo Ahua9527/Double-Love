@@ -49,6 +49,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          if [[ -x /opt/homebrew/bin/brew ]]; then
+            eval "$(/opt/homebrew/bin/brew shellenv)"
+          fi
+          if ! command -v brew >/dev/null; then
+            echo "Homebrew required on the runner; install it, then re-run." >&2
+            exit 2
+          fi
           command -v gh >/dev/null || brew install gh
           command -v uv >/dev/null || brew install uv
           echo "/opt/homebrew/bin" >> "$GITHUB_PATH"
