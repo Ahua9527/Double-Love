@@ -10,6 +10,14 @@ on:
         description: Existing Studio tag to release (for example, studio-v0.2.0)
         required: true
         type: string
+      signing:
+        description: Signing mode (Developer ID signing+notarization is deferred until configured)
+        required: true
+        default: adhoc
+        type: choice
+        options:
+          - adhoc
+          - developer-id
 
 concurrency:
   group: studio-release
@@ -27,6 +35,9 @@ jobs:
     timeout-minutes: 180
     env:
       RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+      # adhoc = 本机 ad-hoc 签名，跳过公证/Gatekeeper 检查；developer-id = 正式 Developer ID + 公证。
+      # 当前阶段默认 adhoc；配置好 studio-release 的签名 secrets 后把 STUDIO_SIGNING_MODE 改为 developer-id。
+      SIGNING_MODE: ${{ inputs.signing || vars.STUDIO_SIGNING_MODE || 'adhoc' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -182,6 +193,16 @@ jobs:
             exit 2
           fi
 
+          if [[ "$SIGNING_MODE" == "adhoc" ]]; then
+            echo "Ad-hoc signing mode: Developer ID signing and notarization are intentionally deferred."
+            rm -rf studio/release
+            CSC_IDENTITY_AUTO_DISCOVERY=false pnpm --dir studio exec electron-builder \
+              --mac --arm64 --publish never \
+              -c.mac.identity=- \
+              -c.publish.releaseType=draft \
+              -c.publish.tagNamePrefix=studio-v
+            exit 0
+          fi
           rm -rf studio/release
           pnpm --dir studio exec electron-builder \
             --mac --arm64 --publish never \
@@ -224,9 +245,13 @@ jobs:
           done
 
           codesign -vvv --deep --strict "$app"
-          spctl --assess --type exec --verbose=4 "$app"
-          xcrun stapler validate "$app"
-          xcrun stapler validate "$dmg"
+          if [[ "$SIGNING_MODE" == "developer-id" ]]; then
+            spctl --assess --type exec --verbose=4 "$app"
+            xcrun stapler validate "$app"
+            xcrun stapler validate "$dmg"
+          else
+            echo "Ad-hoc signing: spctl/stapler checks intentionally skipped until notarization."
+          fi
 
           printf 'app=%s\n' "$app" >> "$GITHUB_OUTPUT"
           printf 'dmg=%s\n' "$dmg" >> "$GITHUB_OUTPUT"
