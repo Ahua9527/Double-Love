@@ -11,7 +11,7 @@ on:
         required: true
         type: string
       signing:
-        description: Signing mode (Developer ID signing+notarization is deferred until configured)
+        description: Signing mode (developer-id signs and notarizes)
         required: true
         default: adhoc
         type: choice
@@ -35,8 +35,9 @@ jobs:
     timeout-minutes: 180
     env:
       RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
-      # adhoc = 本机 ad-hoc 签名，跳过公证/Gatekeeper 检查；developer-id = 正式 Developer ID + 公证。
-      # 当前阶段默认 adhoc；配置好 studio-release 的签名 secrets 后把 STUDIO_SIGNING_MODE 改为 developer-id。
+      # adhoc = 本机 ad-hoc 签名，跳过公证/Gatekeeper 检查。
+      # developer-id = 正式 Developer ID 签名 + 公证。
+      # 默认 adhoc；配好 secrets 后再改为 developer-id。
       SIGNING_MODE: ${{ inputs.signing || vars.STUDIO_SIGNING_MODE || 'adhoc' }}
     steps:
       - uses: actions/checkout@v4
@@ -44,12 +45,18 @@ jobs:
           fetch-depth: 0
           ref: ${{ inputs.tag || github.ref }}
 
-      - name: Add Homebrew tools to PATH
+      - name: Ensure release prerequisites
+        shell: bash
         run: |
+          set -euo pipefail
+          command -v gh >/dev/null
+          command -v uv >/dev/null
           echo "/opt/homebrew/bin" >> "$GITHUB_PATH"
-          if [[ -d /opt/homebrew/opt/ffmpeg-full/bin ]]; then
-            echo "/opt/homebrew/opt/ffmpeg-full/bin" >> "$GITHUB_PATH"
+          if ! ffmpeg -hide_banner -filters 2>/dev/null \
+            | awk '$2 == "ass" { found=1 } END { exit !found }'; then
+            brew install ffmpeg-full
           fi
+          echo "/opt/homebrew/opt/ffmpeg-full/bin" >> "$GITHUB_PATH"
 
       - uses: pnpm/action-setup@v4
         with:
@@ -67,6 +74,7 @@ jobs:
         run: |
           set -euo pipefail
           command -v gh >/dev/null
+          command -v uv >/dev/null
 
       - name: Assert Studio tag and version
         id: release
@@ -110,8 +118,29 @@ jobs:
             ${{ vars.DOUBLELOVE_ASR_RUNTIME_SOURCE }}
           DOUBLELOVE_SPEAKER_RUNTIME_SOURCE: >-
             ${{ vars.DOUBLELOVE_SPEAKER_RUNTIME_SOURCE }}
+        shell: bash
         run: |
+          set -euo pipefail
+          if [[ -z "$DOUBLELOVE_FFMPEG_SOURCE" \
+            || -z "$DOUBLELOVE_FFPROBE_SOURCE" ]]; then
+            if [[ -x /opt/homebrew/opt/ffmpeg-full/bin/ffmpeg ]]; then
+              ffmpeg_bin=/opt/homebrew/opt/ffmpeg-full/bin
+              export DOUBLELOVE_FFMPEG_SOURCE=$ffmpeg_bin/ffmpeg
+              export DOUBLELOVE_FFPROBE_SOURCE=$ffmpeg_bin/ffprobe
+              echo "Using runner-local ffmpeg-full media runtime." >&2
+            else
+              echo "Media runtime sources are not configured." >&2
+              exit 2
+            fi
+          fi
           scripts/prepare-media-runtime.sh
+          if [[ -z "$DOUBLELOVE_ASR_RUNTIME_SOURCE" \
+            || -z "$DOUBLELOVE_SPEAKER_RUNTIME_SOURCE" ]]; then
+            built_root="$RUNNER_TEMP/model-runtime-sources"
+            scripts/migration/build-model-runtime.sh "$built_root"
+            export DOUBLELOVE_ASR_RUNTIME_SOURCE="$built_root/asr"
+            export DOUBLELOVE_SPEAKER_RUNTIME_SOURCE="$built_root/speaker"
+          fi
           scripts/prepare-model-runtime.sh
 
       - name: Verify bundled release runtimes
@@ -194,9 +223,10 @@ jobs:
           fi
 
           if [[ "$SIGNING_MODE" == "adhoc" ]]; then
-            echo "Ad-hoc signing mode: Developer ID signing and notarization are intentionally deferred."
+            echo "Ad-hoc signing: Developer ID and notarization deferred."
             rm -rf studio/release
-            CSC_IDENTITY_AUTO_DISCOVERY=false pnpm --dir studio exec electron-builder \
+            export CSC_IDENTITY_AUTO_DISCOVERY=false
+            pnpm --dir studio exec electron-builder \
               --mac --arm64 --publish never \
               -c.mac.identity=- \
               -c.publish.releaseType=draft \
@@ -250,7 +280,7 @@ jobs:
             xcrun stapler validate "$app"
             xcrun stapler validate "$dmg"
           else
-            echo "Ad-hoc signing: spctl/stapler checks intentionally skipped until notarization."
+            echo "Ad-hoc signing: spctl/stapler skipped until notarization."
           fi
 
           printf 'app=%s\n' "$app" >> "$GITHUB_OUTPUT"

@@ -24,8 +24,12 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Add Homebrew tools to PATH
+      - name: Ensure libass-capable ffmpeg on PATH
         run: |
+          if ! ffmpeg -hide_banner -filters 2>/dev/null \
+            | awk '$2 == "ass" { found=1 } END { exit !found }'; then
+            brew install ffmpeg-full
+          fi
           # Later GITHUB_PATH entries take priority; add the preferred keg last.
           echo "/opt/homebrew/bin" >> "$GITHUB_PATH"
           if [[ -d /opt/homebrew/opt/ffmpeg-full/bin ]]; then
