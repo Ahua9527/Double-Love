@@ -211,6 +211,11 @@ jobs:
           if [[ "$SIGNING_MODE" == "adhoc" ]]; then
             echo "Ad-hoc signing: Developer ID and notarization deferred."
             rm -rf studio/release
+            # Unset empty CSC_* so the builder skips signing entirely.
+            # unset them so the builder skips signing entirely.
+            unset CSC_LINK CSC_KEY_PASSWORD CSC_NAME
+            unset APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID
+            unset APPLE_KEYCHAIN APPLE_KEYCHAIN_PROFILE
             export CSC_IDENTITY_AUTO_DISCOVERY=false
             pnpm --dir studio exec electron-builder \
               --mac --arm64 --publish never \
