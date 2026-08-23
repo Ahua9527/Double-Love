@@ -353,43 +353,28 @@ jobs:
             release/latest-mac.yml
             release/*.blockmap
           )
-          response="$RUNNER_TEMP/studio-release.json"
-          encode_script=
-          encode_script+='process.stdout.write('
-          encode_script+='encodeURIComponent(process.argv[1]))'
-          encoded_tag="$(node -e "$encode_script" "$RELEASE_TAG")"
+          response="$RUNNER_TEMP/studio-releases.json"
           api_base="https://api.github.com/repos/$GITHUB_REPOSITORY"
-          release_url="$api_base/releases/tags/$encoded_tag"
-          found=0
-          for attempt in 1 2 3 4 5; do
-            if curl --fail --silent --show-error \
-              -H "Authorization: Bearer $GH_TOKEN" \
-              -H "Accept: application/vnd.github+json" \
-              -H "X-GitHub-Api-Version: 2022-11-28" \
-              "$release_url" \
-              -o "$response"; then
-              found=1
-              break
-            fi
-            sleep 2
-          done
-          if (( found == 0 )); then
-            echo "Draft release was not found after publishing." >&2
-            exit 2
-          fi
+          releases_url="$api_base/releases?per_page=100"
+          curl --fail --silent --show-error \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "$releases_url" \
+            -o "$response"
           node - "$RELEASE_TAG" "$response" "${artifacts[@]}" <<'NODE'
           const fs = require('node:fs')
           const path = require('node:path')
           const [tag, responsePath, ...artifacts] = process.argv.slice(2)
-          const release = JSON.parse(fs.readFileSync(responsePath, 'utf8'))
-          if (
-            release.tag_name !== tag ||
-            release.draft !== true ||
-            release.prerelease !== false
-          ) {
-            throw new Error(
-              'GitHub release is missing or not a non-prerelease draft',
-            )
+          const releases = JSON.parse(fs.readFileSync(responsePath, 'utf8'))
+          const release = releases.find(
+            (candidate) =>
+              candidate.tag_name === tag &&
+              candidate.draft === true &&
+              candidate.prerelease === false,
+          )
+          if (!release) {
+            throw new Error('Draft release was not found after publishing.')
           }
           const uploaded = new Set(release.assets.map((asset) => asset.name))
           for (const artifact of artifacts) {
