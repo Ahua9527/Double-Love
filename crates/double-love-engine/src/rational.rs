@@ -60,6 +60,10 @@ pub enum FrameRate {
     Fps60,
     #[serde(rename = "fps_60_ntsc")]
     Fps60Ntsc,
+    #[serde(rename = "fps_120")]
+    Fps120,
+    #[serde(rename = "fps_120_ntsc")]
+    Fps120Ntsc,
 }
 
 impl FrameRate {
@@ -74,6 +78,8 @@ impl FrameRate {
             Self::Fps50 => Rational::new(50, 1),
             Self::Fps60 => Rational::new(60, 1),
             Self::Fps60Ntsc => Rational::new(60000, 1001),
+            Self::Fps120 => Rational::new(120, 1),
+            Self::Fps120Ntsc => Rational::new(120000, 1001),
         }
     }
 
@@ -85,17 +91,21 @@ impl FrameRate {
             Self::Fps30 | Self::Fps30Ntsc => 30,
             Self::Fps50 => 50,
             Self::Fps60 | Self::Fps60Ntsc => 60,
+            Self::Fps120 | Self::Fps120Ntsc => 120,
         }
     }
 
     /// XMEML `<ntsc>`：0.1% 变速帧率必须标 TRUE（DL-018）。
     pub fn is_ntsc(self) -> bool {
-        matches!(self, Self::Fps24Ntsc | Self::Fps30Ntsc | Self::Fps60Ntsc)
+        matches!(
+            self,
+            Self::Fps24Ntsc | Self::Fps30Ntsc | Self::Fps60Ntsc | Self::Fps120Ntsc
+        )
     }
 
     /// 从有理帧率反查白名单；未命中返回 None（调用方给出 MEDIA_FPS_UNSUPPORTED）。
     pub fn from_rational(rate: &Rational) -> Option<Self> {
-        const ALL: [FrameRate; 8] = [
+        const ALL: [FrameRate; 10] = [
             FrameRate::Fps24,
             FrameRate::Fps24Ntsc,
             FrameRate::Fps25,
@@ -104,6 +114,8 @@ impl FrameRate {
             FrameRate::Fps50,
             FrameRate::Fps60,
             FrameRate::Fps60Ntsc,
+            FrameRate::Fps120,
+            FrameRate::Fps120Ntsc,
         ];
         ALL.into_iter()
             .find(|candidate| candidate.rational() == *rate)
@@ -196,6 +208,13 @@ mod tests {
         assert!(FrameRate::Fps30Ntsc.is_ntsc());
         assert_eq!(FrameRate::Fps60Ntsc.timebase(), 60);
         assert!(FrameRate::Fps60Ntsc.is_ntsc());
+        assert_eq!(FrameRate::Fps120Ntsc.timebase(), 120);
+        assert_eq!(
+            FrameRate::Fps120Ntsc.rational(),
+            Rational::new(120000, 1001)
+        );
+        assert!(FrameRate::Fps120Ntsc.is_ntsc());
+        assert_eq!(FrameRate::Fps120.rational(), Rational::new(120, 1));
         assert_eq!(FrameRate::Fps25.timebase(), 25);
         assert!(!FrameRate::Fps25.is_ntsc());
     }
@@ -211,6 +230,8 @@ mod tests {
             FrameRate::Fps50,
             FrameRate::Fps60,
             FrameRate::Fps60Ntsc,
+            FrameRate::Fps120,
+            FrameRate::Fps120Ntsc,
         ] {
             assert_eq!(FrameRate::from_rational(&rate.rational()), Some(rate));
         }

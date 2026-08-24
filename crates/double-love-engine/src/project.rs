@@ -41,7 +41,7 @@ fn project_root(path: &Path) -> Result<PathBuf, ProjectError> {
     Ok(root)
 }
 
-fn prepare_project(root: &Path) -> Result<ProjectSummary, ProjectError> {
+fn prepare_project(root: &Path, created: bool) -> Result<ProjectSummary, ProjectError> {
     fs::create_dir_all(root)?;
     let doublelove = root.join(".doublelove");
     fs::create_dir_all(doublelove.join("cache"))?;
@@ -54,6 +54,9 @@ fn prepare_project(root: &Path) -> Result<ProjectSummary, ProjectError> {
         .project_id()?
         .unwrap_or_else(|| Uuid::new_v4().to_string());
     store.set_project_id(&project_id)?;
+    if created {
+        store.ensure_project_created_at()?;
+    }
 
     let manifest_path = doublelove.join("manifest.json");
     if !manifest_path.exists() {
@@ -77,7 +80,7 @@ fn prepare_project(root: &Path) -> Result<ProjectSummary, ProjectError> {
 }
 
 pub fn create_project(path: &Path) -> Result<ProjectSummary, ProjectError> {
-    prepare_project(&project_root(path)?)
+    prepare_project(&project_root(path)?, true)
 }
 
 pub fn open_project(path: &Path) -> Result<ProjectSummary, ProjectError> {
@@ -86,5 +89,5 @@ pub fn open_project(path: &Path) -> Result<ProjectSummary, ProjectError> {
     if !database.exists() {
         return Err(ProjectError::InvalidPath(root));
     }
-    prepare_project(&root)
+    prepare_project(&root, false)
 }

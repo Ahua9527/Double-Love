@@ -371,7 +371,7 @@ impl Drop for Sidecar {
     }
 }
 
-/// Python 解释器发现：显式覆盖 → sidecar venv → PATH 里的 python3。
+/// Python 解释器发现：测试可显式注入，否则只允许使用 App 随附的 sidecar venv。
 pub fn resolve_python(override_path: Option<&Path>, venv_python: &Path) -> Option<PathBuf> {
     if let Some(explicit) = override_path
         && explicit.is_file()
@@ -381,11 +381,7 @@ pub fn resolve_python(override_path: Option<&Path>, venv_python: &Path) -> Optio
     if venv_python.is_file() {
         return Some(venv_python.to_path_buf());
     }
-    std::env::var_os("PATH").and_then(|paths| {
-        std::env::split_paths(&paths)
-            .map(|dir| dir.join("python3"))
-            .find(|candidate| candidate.is_file())
-    })
+    None
 }
 
 #[cfg(test)]

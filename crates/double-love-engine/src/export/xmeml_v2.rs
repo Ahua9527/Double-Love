@@ -345,6 +345,18 @@ mod tests {
     use crate::contracts::{CanvasSpec, OutputMapSegment};
     use crate::rational::FrameRate;
 
+    #[test]
+    fn writes_exact_120_timebases() {
+        let mut ntsc = String::new();
+        super::rate_xml(FrameRate::Fps120Ntsc, 0, &mut ntsc);
+        assert!(ntsc.contains("<timebase>120</timebase>"));
+        assert!(ntsc.contains("<ntsc>TRUE</ntsc>"));
+        let mut exact = String::new();
+        super::rate_xml(FrameRate::Fps120, 0, &mut exact);
+        assert!(exact.contains("<timebase>120</timebase>"));
+        assert!(exact.contains("<ntsc>FALSE</ntsc>"));
+    }
+
     fn source(id: &str, rate: FrameRate, path: &str) -> TimelineSource {
         TimelineSource {
             asset_id: id.to_string(),

@@ -141,7 +141,7 @@ Slice 5 未修改旧容器目录、Web/PWA、模型清单 JSON、偏好 endpoint
 
 host-neutral service 已按 Tauri 参考实现注册 `speaker_list`、`speaker_name_proposals`、`speaker_agent_payload_preview`、`speaker_name_confirm`、`speaker_merge_confirm`、`speaker_diarize_start` 与 `speaker_diarization_get`。列表、名称候选、显式确认错误码、姓名/合并 revision、合并后旧身份的 `merged_into` 归档语义和分离结果均直接复用 engine；姓名与合并在 `confirmed:false` 时统一返回 `SPEAKER_CONFIRM_REQUIRED`，不会写项目。
 
-`speaker_diarize_start` 继续从当前偏好的模型根经 service 模型状态解析已安装的 `wespeaker-zh`，未就绪返回 `MODEL_NOT_READY`；VAD 仍使用 bundled Silero 标识。speaker sidecar 定位顺序为 `DOUBLELOVE_SPEAKER_DIR` → 注入的 resource 根 → 开发仓库 `sidecars/speaker`，日志只写当前项目 `.doublelove/logs`。生产 runtime 默认且始终使用 `mock:false`；host 在无显式 `--test-transcribe-mock` 时会在启动阶段清除继承的 `DOUBLELOVE_ASR_MOCK` 与 `DOUBLELOVE_SPEAKER_MOCK`，避免 Electron main 环境绕过 runtime 配置。只有 debug host 的显式 `--test-speaker-mock`（Electron E2E 对应 `--double-love-e2e-speaker-mock`）可由 speaker 配置重新启用既有确定性 mock，不改变 engine/CLI 或 sidecar 协议。
+`speaker_diarize_start` 从当前偏好的模型根优先解析已安装的 `wespeaker-multilingual`，仅在它不可用时回退 `wespeaker-zh`；两者都未就绪时返回 `MODEL_NOT_READY`。VAD 仍使用 bundled Silero 标识。speaker sidecar 定位顺序为 `DOUBLELOVE_SPEAKER_DIR` → 注入的 resource 根 → 开发仓库 `sidecars/speaker`，日志只写当前项目 `.doublelove/logs`。生产 runtime 默认且始终使用 `mock:false`；host 在无显式 `--test-transcribe-mock` 时会在启动阶段清除继承的 `DOUBLELOVE_ASR_MOCK` 与 `DOUBLELOVE_SPEAKER_MOCK`，避免 Electron main 环境绕过 runtime 配置。只有 debug host 的显式 `--test-speaker-mock`（Electron E2E 对应 `--double-love-e2e-speaker-mock`）可由 speaker 配置重新启用既有确定性 mock，不改变 engine/CLI 或 sidecar 协议。
 
 Electron 的 Agent 预览边界会在返回前仅替换 payload 字符串中当前项目根和当前项目全部媒体源路径（含可解析的 canonical 形式）为 `<PROJECT>` / `<MEDIA>`；speaker id、发言选择、条数/字符上限和 instruction 除路径替换外保持 engine 原样。预览仍只包含请求的匿名说话人发言，不会附加音频、其他说话人的文字、项目上下文或任何外部调用。
 

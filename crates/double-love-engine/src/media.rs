@@ -166,6 +166,7 @@ fn parse_timecode_start(text: &str, rate: FrameRate) -> Option<(i64, bool)> {
         let dropped = match rate {
             FrameRate::Fps30Ntsc => 2,
             FrameRate::Fps60Ntsc => 4,
+            FrameRate::Fps120Ntsc => 8,
             _ => return None,
         };
         total -= dropped * (total_minutes - total_minutes / 10);
@@ -394,7 +395,7 @@ fn run_ffprobe(
 }
 
 /// 抽取 16kHz 单声道 pcm_s16le 准备音频（ASR 输入）。
-fn run_prepare_wav(
+pub fn prepare_media_wav(
     tools: &FfmpegTools,
     source: &Path,
     wav_path: &Path,
@@ -441,6 +442,10 @@ fn row_to_summary(row: MediaAssetRow) -> Option<MediaAssetSummary> {
         height: row.height,
         audio_channels: row.audio_channels,
         status: AssetStatus::parse(&row.status)?,
+        prepared_available: row
+            .prepared_wav_path
+            .as_deref()
+            .is_some_and(|path| Path::new(path).is_file()),
     })
 }
 
@@ -456,11 +461,35 @@ pub fn list_media_assets(store: &ProjectStore) -> OperationResult<Vec<MediaAsset
     }
 }
 
-/// 导入一个本地媒体文件：探测 → 校验 → 落库 → 抽取准备音频。
+pub fn probe_media(tools: &FfmpegTools, source: &Path) -> OperationResult<()> {
+    let source = match source.canonicalize() {
+        Ok(path) if path.is_file() => path,
+        _ => {
+            return OperationResult::failed(
+                "MEDIA_FILE_MISSING",
+                format!("文件不存在或不是普通文件：{}", source.display()),
+            );
+        }
+    };
+    let (probe, _) = match run_ffprobe(tools, &source) {
+        Ok(probe) => probe,
+        Err(diagnostic) => return OperationResult::failed(&diagnostic.code, &diagnostic.cause),
+    };
+    match validate_probe(&probe) {
+        Ok(_) => OperationResult::success(()),
+        Err(diagnostic) => {
+            let mut result = OperationResult::failed(&diagnostic.code, &diagnostic.cause);
+            result.diagnostics[0].suggested_action = diagnostic.suggested_action;
+            result
+        }
+    }
+}
+
+/// 导入一个本地媒体文件：探测 → 校验 → 落库。准备音频延迟到首次转录。
 /// 原始媒体只读引用；重复导入同一路径复用既有资产并给出 info 诊断。
 pub fn import_media(
     store: &ProjectStore,
-    prepared_dir: &Path,
+    _prepared_dir: &Path,
     tools: &FfmpegTools,
     source: &Path,
 ) -> OperationResult<MediaAssetSummary> {
@@ -476,6 +505,9 @@ pub fn import_media(
 
     match store.media_asset_by_path(&source.to_string_lossy()) {
         Ok(Some(existing)) => {
+            if let Err(error) = store.reactivate_media_asset(&existing.id) {
+                return storage_failure(error);
+            }
             let Some(summary) = row_to_summary(existing) else {
                 return OperationResult::failed("STORAGE_CORRUPT", "已存资产的帧率字段无法解析。");
             };
@@ -536,22 +568,6 @@ pub fn import_media(
         return storage_failure(error);
     }
 
-    if let Err(error) = std::fs::create_dir_all(prepared_dir) {
-        return OperationResult::failed(
-            "MEDIA_WAV_FAILED",
-            format!("无法创建准备音频目录：{error}"),
-        );
-    }
-    let wav_path = prepared_dir.join(format!("{}.wav", asset.id));
-    if let Err(diagnostic) = run_prepare_wav(tools, &source, &wav_path) {
-        let mut result = OperationResult::failed(&diagnostic.code, &diagnostic.cause);
-        result.diagnostics[0].suggested_action = diagnostic.suggested_action;
-        return result;
-    }
-    if let Err(error) = store.set_asset_prepared(&asset.id, &wav_path.to_string_lossy()) {
-        return storage_failure(error);
-    }
-
     OperationResult::success(MediaAssetSummary {
         id: asset.id,
         display_name,
@@ -561,7 +577,8 @@ pub fn import_media(
         width: probed.width,
         height: probed.height,
         audio_channels: probed.audio_channels,
-        status: AssetStatus::Prepared,
+        status: AssetStatus::Imported,
+        prepared_available: false,
     })
 }
 
@@ -613,6 +630,10 @@ mod tests {
             Some((108_000, false))
         );
         assert_eq!(parse_timecode_start("00:01:00;00", FrameRate::Fps25), None);
+        assert_eq!(
+            parse_timecode_start("01:00:00;000", FrameRate::Fps120Ntsc),
+            Some((431_568, true))
+        );
     }
 
     fn probe_json(video: &str, audio: &str, format: &str) -> FfprobeOutput {
@@ -651,6 +672,22 @@ mod tests {
         assert_eq!(media.rate, FrameRate::Fps30Ntsc);
         assert!(media.rate.is_ntsc());
         assert_eq!(media.rate.timebase(), 30);
+    }
+
+    #[test]
+    fn accepts_11988_and_120fps_as_distinct_exact_rates() {
+        for (text, expected) in [
+            ("120000/1001", FrameRate::Fps120Ntsc),
+            ("120/1", FrameRate::Fps120),
+        ] {
+            let video = format!(
+                r#"{{"codec_type":"video","avg_frame_rate":"{text}","r_frame_rate":"{text}","width":1920,"height":1080}}"#
+            );
+            let probe = probe_json(&video, AUDIO_48K, FORMAT_10S);
+            let media = validate_probe(&probe).expect("valid high frame rate probe");
+            assert_eq!(media.rate, expected);
+            assert_eq!(media.rate.timebase(), 120);
+        }
     }
 
     #[test]

@@ -96,7 +96,7 @@ pub fn transcript_view(
     store: &crate::storage::ProjectStore,
     asset_id: &str,
 ) -> crate::OperationResult<crate::contracts::TranscriptViewData> {
-    let asset = match store.media_asset(asset_id) {
+    let asset = match store.active_media_asset(asset_id) {
         Ok(Some(asset)) => asset,
         Ok(None) => {
             return crate::OperationResult::failed(

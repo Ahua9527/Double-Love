@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 use ts_rs::TS;
+use zip::ZipArchive;
 
 pub const MODEL_CATALOG_SCHEMA_VERSION: u32 = 1;
 pub const MODEL_INSTALLATIONS_SCHEMA_VERSION: u32 = 1;
@@ -29,6 +30,32 @@ pub enum ModelComponent {
     Speaker,
 }
 
+/// 模型在设置页中的呈现层级。依赖、随应用组件和旧权重仍保留给运行时与诊断，
+/// 但不会伪装成用户可单独管理的主模型。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+#[serde(rename_all = "snake_case")]
+pub enum ModelUiRole {
+    #[default]
+    Primary,
+    Dependency,
+    Bundled,
+    Legacy,
+}
+
+/// 内置模型的固定下载来源。旧清单默认视为 Hugging Face，以保持状态文件兼容；
+/// 归档模型使用 `Official`，并仍须固定 SHA-256。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+#[serde(rename_all = "lowercase")]
+pub enum ModelDownloadSource {
+    Modelscope,
+    #[default]
+    Huggingface,
+    Bundled,
+    Official,
+}
+
 /// 模型文件的固定完整性元数据。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export)]
@@ -38,6 +65,18 @@ pub struct ModelFile {
     pub sha256: String,
     // 只有 `allowed=true` 的文件可以被安装器写入最终目录。
     pub allowed: bool,
+}
+
+/// 单个可验证归档的下载说明。归档本身和解压后的每个运行时文件都必须通过哈希校验。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ModelArchive {
+    pub url: String,
+    pub size_bytes: u64,
+    pub sha256: String,
+    // 官方归档有时会包一层目录；只允许移除这一层固定、安全的前缀。
+    #[serde(default)]
+    pub strip_prefix: Option<String>,
 }
 
 /// 一个模型对另一个模型的安装依赖。
@@ -56,8 +95,13 @@ pub struct ModelDescriptor {
     pub id: String,
     pub display_name: String,
     pub component: ModelComponent,
+    #[serde(default)]
+    pub ui_role: ModelUiRole,
     pub repo_id: Option<String>,
-    // 固定的 40 位提交 hash；禁止 main、tag 或其他浮动引用。
+    #[serde(default)]
+    pub download_source: ModelDownloadSource,
+    // 本地安装 revision 保持 40 位不可变提交，确保既有安装目录和离线加载兼容。
+    // ModelScope SDK 也只能接收这个固定提交；每文件 size + SHA-256 是第二道边界。
     pub revision: String,
     pub files: Vec<ModelFile>,
     pub license: String,
@@ -65,6 +109,13 @@ pub struct ModelDescriptor {
     pub dependencies: Vec<ModelDependency>,
     pub min_memory_bytes: Option<u64>,
     pub source_url_template: String,
+    // 新的 MLX 描述符替代的旧模型 ID。仅用于迁移时计算占用空间和清理，
+    // 绝不能把旧模型重新作为推理候选。
+    #[serde(default)]
+    pub replaces_model_id: Option<String>,
+    // 有值时安装器只下载该 ZIP，再按 `files` 的白名单安全解压。
+    #[serde(default)]
+    pub archive: Option<ModelArchive>,
     // 运行时随 App 分发、不可由用户删除的组件（例如当前 Silero VAD）。
     #[serde(default)]
     pub bundled: bool,
@@ -98,6 +149,7 @@ impl ModelInstallState {
                 | (Self::NotInstalled, Self::Installed)
                 | (Self::Queued, Self::Downloading)
                 | (Self::Queued, Self::Paused)
+                | (Self::Queued, Self::Failed)
                 | (Self::Queued, Self::NotInstalled)
                 | (Self::Downloading, Self::Paused)
                 | (Self::Downloading, Self::Verifying)
@@ -105,6 +157,7 @@ impl ModelInstallState {
                 | (Self::Downloading, Self::NotInstalled)
                 | (Self::Paused, Self::Queued)
                 | (Self::Paused, Self::NotInstalled)
+                | (Self::Verifying, Self::NotInstalled)
                 | (Self::Verifying, Self::Installed)
                 | (Self::Verifying, Self::Corrupt)
                 | (Self::Verifying, Self::Failed)
@@ -160,6 +213,27 @@ pub struct ModelDescriptorWithInstallation {
     pub installation: ModelInstallation,
 }
 
+/// 一个旧模型清理候选。路径故意不出现在该类型中；设置页只需要名称、状态和
+/// 可释放空间，实际删除始终由受管模型根中的 `ModelManager` 执行。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct LegacyModelCleanupItem {
+    pub model_id: String,
+    pub display_name: String,
+    pub bytes_to_free: u64,
+    pub reason: Option<String>,
+}
+
+/// 当前 MLX 模型安装后可安全清理的旧版本预览。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct LegacyModelCleanupPreview {
+    pub target_model_id: String,
+    pub bytes_to_free: u64,
+    pub removable: Vec<LegacyModelCleanupItem>,
+    pub retained: Vec<LegacyModelCleanupItem>,
+}
+
 /// 下载进度事件。绝不包含本地绝对路径。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export)]
@@ -174,6 +248,29 @@ pub struct ModelDownloadProgress {
     pub speed_bytes_per_second: Option<u64>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+#[serde(rename_all = "snake_case")]
+pub enum ModelQueueState {
+    Active,
+    Queued,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ModelQueueEntry {
+    pub model_id: String,
+    pub position: u32,
+    pub state: ModelQueueState,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ModelQueueSnapshot {
+    pub active_model_id: Option<String>,
+    pub entries: Vec<ModelQueueEntry>,
+}
+
 /// 诊断中的单项模型完整性结果。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export)]
@@ -183,6 +280,26 @@ pub struct DoctorModelCheck {
     pub revision: String,
     pub integrity_ok: bool,
     pub error_code: Option<String>,
+}
+
+/// 诊断中的运行时能力结果。`detail` 和建议不得包含绝对路径或用户媒体内容。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+#[serde(rename_all = "snake_case")]
+pub enum DoctorCapabilityStatus {
+    Ready,
+    Warning,
+    Blocked,
+    NotRun,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct DoctorCapabilityCheck {
+    pub id: String,
+    pub status: DoctorCapabilityStatus,
+    pub detail: String,
+    pub suggested_action: Option<String>,
 }
 
 /// 本地诊断报告。路径字段仅用根目录标签，不携带绝对路径。
@@ -201,6 +318,8 @@ pub struct DoctorReport {
     pub asr_runtime_ready: bool,
     pub speaker_runtime_ready: bool,
     pub model_checks: Vec<DoctorModelCheck>,
+    #[serde(default)]
+    pub capability_checks: Vec<DoctorCapabilityCheck>,
     pub warnings: Vec<String>,
 }
 
@@ -258,6 +377,20 @@ impl ModelCatalog {
                     )));
                 }
             }
+            if let Some(legacy_id) = &descriptor.replaces_model_id {
+                let legacy = descriptors.get(legacy_id).ok_or_else(|| {
+                    ModelError::CatalogInvalid(format!(
+                        "{} 引用了不存在的旧模型 {}",
+                        descriptor.id, legacy_id
+                    ))
+                })?;
+                if legacy.ui_role != ModelUiRole::Legacy {
+                    return Err(ModelError::CatalogInvalid(format!(
+                        "{} 的替代目标 {} 不是旧模型",
+                        descriptor.id, legacy_id
+                    )));
+                }
+            }
         }
         Ok(Self { descriptors })
     }
@@ -286,6 +419,9 @@ impl ModelCatalog {
 
 impl ModelDescriptor {
     pub fn total_size(&self) -> u64 {
+        if let Some(archive) = &self.archive {
+            return archive.size_bytes;
+        }
         self.files
             .iter()
             .filter(|file| file.allowed)
@@ -299,6 +435,12 @@ impl ModelDescriptor {
 
     /// 将 `{revision}` 与 `{path}` 展开到清单提供的固定 URL 模板。
     pub fn source_url(&self, path: &str) -> Result<String, ModelError> {
+        if self.archive.is_some() {
+            return Err(ModelError::InvalidState(format!(
+                "{} 必须通过声明的归档安装",
+                self.id
+            )));
+        }
         let file = self
             .file(path)
             .ok_or_else(|| ModelError::FileNotInManifest(path.to_string()))?;
@@ -309,6 +451,11 @@ impl ModelDescriptor {
             .source_url_template
             .replace("{revision}", &self.revision)
             .replace("{path}", path))
+    }
+
+    pub fn requires_noncommercial_confirmation(&self) -> bool {
+        let license = self.license.to_ascii_uppercase();
+        license.contains("CC BY-NC-SA") || license.contains("RESEARCH-ONLY")
     }
 }
 
@@ -722,6 +869,161 @@ impl ModelManager {
         Ok(())
     }
 
+    /// 返回某次安装 staging 中归档的固定位置。归档不进入最终模型目录，避免把 ZIP
+    /// 当作运行时模型文件或意外带入原子安装结果。
+    pub fn archive_staging_path(
+        &self,
+        model_id: &str,
+        staging_id: &str,
+    ) -> Result<PathBuf, ModelError> {
+        let descriptor = self.descriptor(model_id)?;
+        if descriptor.archive.is_none() {
+            return Err(ModelError::InvalidState(format!(
+                "{} 不使用归档安装",
+                descriptor.id
+            )));
+        }
+        Ok(self
+            .staging_root(staging_id)?
+            .join(".archives")
+            .join(&descriptor.id)
+            .join(format!("{}.zip", descriptor.revision)))
+    }
+
+    /// 归档下载完成后，先检查其本身的固定大小和 SHA-256。
+    pub fn verify_archive(&self, model_id: &str, archive_path: &Path) -> Result<(), ModelError> {
+        let descriptor = self.descriptor(model_id)?;
+        let archive = descriptor
+            .archive
+            .as_ref()
+            .ok_or_else(|| ModelError::InvalidState(format!("{} 不使用归档安装", descriptor.id)))?;
+        let metadata = fs::symlink_metadata(archive_path)
+            .map_err(|_| ModelError::Integrity("模型归档不存在".to_string()))?;
+        if !metadata.file_type().is_file() || metadata.len() != archive.size_bytes {
+            return Err(ModelError::Integrity("模型归档大小不匹配".to_string()));
+        }
+        if sha256_file(archive_path)? != archive.sha256 {
+            return Err(ModelError::Integrity("模型归档校验失败".to_string()));
+        }
+        Ok(())
+    }
+
+    /// 仅解压清单明确允许的常规文件。拒绝路径穿越、符号链接、重复项、清单外文件和
+    /// 超出清单大小的 ZIP 条目；完成后仍会重新校验解压后的文件哈希。
+    pub fn extract_archive_to_staging(
+        &self,
+        model_id: &str,
+        staging_id: &str,
+        archive_path: &Path,
+    ) -> Result<(), ModelError> {
+        self.verify_archive(model_id, archive_path)?;
+        let descriptor = self.descriptor(model_id)?;
+        let archive_spec = descriptor
+            .archive
+            .as_ref()
+            .ok_or_else(|| ModelError::InvalidState(format!("{} 不使用归档安装", descriptor.id)))?;
+        let destination = self
+            .staging_root(staging_id)?
+            .join(&descriptor.id)
+            .join(&descriptor.revision);
+        if destination.exists() {
+            let metadata = fs::symlink_metadata(&destination)?;
+            if metadata.file_type().is_symlink() || !metadata.is_dir() {
+                return Err(ModelError::UnsafePath(
+                    "归档 staging 目录不是常规目录".to_string(),
+                ));
+            }
+            fs::remove_dir_all(&destination)?;
+        }
+        fs::create_dir_all(&destination)?;
+
+        let mut expected = BTreeMap::new();
+        for file in descriptor.files.iter().filter(|file| file.allowed) {
+            expected.insert(file.path.as_str(), file);
+        }
+        let file = File::open(archive_path)?;
+        let mut archive = ZipArchive::new(file)
+            .map_err(|error| ModelError::Integrity(format!("模型归档无法读取：{error}")))?;
+        let mut extracted = BTreeSet::new();
+
+        for index in 0..archive.len() {
+            let entry = archive
+                .by_index(index)
+                .map_err(|error| ModelError::Integrity(format!("模型归档条目无法读取：{error}")))?;
+            if entry
+                .unix_mode()
+                .is_some_and(|mode| (mode & 0o170_000) == 0o120_000)
+            {
+                return Err(ModelError::Integrity(
+                    "模型归档不能包含符号链接".to_string(),
+                ));
+            }
+            if entry.is_dir()
+                && archive_spec.strip_prefix.as_deref().is_some_and(|prefix| {
+                    entry.name().trim_matches('/') == prefix.trim_matches('/')
+                })
+            {
+                continue;
+            }
+            let relative =
+                archive_member_relative(entry.name(), archive_spec.strip_prefix.as_deref())?;
+            if entry.is_dir() {
+                let prefix = format!("{relative}/");
+                if !expected.keys().any(|path| path.starts_with(&prefix)) {
+                    return Err(ModelError::Integrity(format!(
+                        "模型归档含有清单外目录：{relative}"
+                    )));
+                }
+                continue;
+            }
+            let expected_file = expected.get(relative.as_str()).ok_or_else(|| {
+                ModelError::Integrity(format!("模型归档含有清单外文件：{relative}"))
+            })?;
+            if entry.size() != expected_file.size_bytes {
+                return Err(ModelError::Integrity(format!(
+                    "模型归档文件大小不匹配：{relative}"
+                )));
+            }
+            if !extracted.insert(relative.clone()) {
+                return Err(ModelError::Integrity(format!(
+                    "模型归档含有重复文件：{relative}"
+                )));
+            }
+            let destination_file = destination.join(safe_relative_path(&relative)?);
+            if let Some(parent) = destination_file.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            let mut output = OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&destination_file)?;
+            let expected_size = expected_file.size_bytes;
+            let copied = io::copy(
+                &mut entry.take(expected_size.saturating_add(1)),
+                &mut output,
+            )?;
+            if copied != expected_size {
+                return Err(ModelError::Integrity(format!(
+                    "模型归档文件解压大小不匹配：{relative}"
+                )));
+            }
+            output.sync_all()?;
+        }
+
+        let missing = expected
+            .keys()
+            .filter(|path| !extracted.contains(**path))
+            .copied()
+            .collect::<Vec<_>>();
+        if !missing.is_empty() {
+            return Err(ModelError::Integrity(format!(
+                "模型归档缺少文件：{}",
+                missing.join(", ")
+            )));
+        }
+        self.verify_directory(model_id, &destination)
+    }
+
     /// 完整校验后，把 staging 目录原子切换到最终 revision 目录，再写入安装状态。
     pub fn atomically_install(
         &mut self,
@@ -856,10 +1158,135 @@ impl ModelManager {
         Ok(next)
     }
 
+    /// Lists only legacy versions that the installed current model can safely replace.
+    /// A shared old ForcedAligner remains retained until every installed legacy ASR that
+    /// references it has been selected through its own current-model cleanup action.
+    pub fn legacy_cleanup_preview(
+        &self,
+        target_model_id: &str,
+    ) -> Result<LegacyModelCleanupPreview, ModelError> {
+        let target = self.descriptor(target_model_id)?;
+        if target.ui_role == ModelUiRole::Legacy {
+            return Err(ModelError::InvalidState(
+                "旧版模型不能作为清理目标".to_string(),
+            ));
+        }
+        if self.installation(target_model_id)?.state != ModelInstallState::Installed {
+            return Err(ModelError::InvalidState(
+                "请先完成当前 MLX 模型安装，再清理旧版本。".to_string(),
+            ));
+        }
+        let Some(legacy_id) = target.replaces_model_id.as_deref() else {
+            return Ok(LegacyModelCleanupPreview {
+                target_model_id: target_model_id.to_string(),
+                bytes_to_free: 0,
+                removable: Vec::new(),
+                retained: Vec::new(),
+            });
+        };
+        let legacy = self.descriptor(legacy_id)?;
+        if legacy.ui_role != ModelUiRole::Legacy {
+            return Err(ModelError::InvalidState(
+                "当前模型未声明可清理的旧版本。".to_string(),
+            ));
+        }
+        if self.installation(legacy_id)?.state != ModelInstallState::Installed {
+            return Ok(LegacyModelCleanupPreview {
+                target_model_id: target_model_id.to_string(),
+                bytes_to_free: 0,
+                removable: Vec::new(),
+                retained: Vec::new(),
+            });
+        }
+
+        let mut removable_ids = vec![legacy_id.to_string()];
+        let mut retained = Vec::new();
+        for dependency in legacy
+            .dependencies
+            .iter()
+            .filter(|dependency| dependency.required)
+        {
+            let dependency_descriptor = self.descriptor(&dependency.model_id)?;
+            if dependency_descriptor.ui_role != ModelUiRole::Legacy
+                || self.installation(&dependency.model_id)?.state != ModelInstallState::Installed
+            {
+                continue;
+            }
+            let remaining_users = self
+                .catalog
+                .iter()
+                .filter(|candidate| {
+                    candidate.ui_role == ModelUiRole::Legacy
+                        && candidate.id != legacy.id
+                        && self.installation(&candidate.id).is_ok_and(|installation| {
+                            installation.state == ModelInstallState::Installed
+                        })
+                        && candidate.dependencies.iter().any(|candidate_dependency| {
+                            candidate_dependency.required
+                                && candidate_dependency.model_id == dependency.model_id
+                        })
+                })
+                .map(|candidate| candidate.id.clone())
+                .collect::<Vec<_>>();
+            if remaining_users.is_empty() {
+                removable_ids.push(dependency.model_id.clone());
+            } else {
+                retained.push(self.legacy_cleanup_item(
+                    &dependency.model_id,
+                    Some(format!("仍由 {} 使用", remaining_users.join("、"))),
+                )?);
+            }
+        }
+        let removable = removable_ids
+            .iter()
+            .map(|model_id| self.legacy_cleanup_item(model_id, None))
+            .collect::<Result<Vec<_>, _>>()?;
+        let bytes_to_free = removable.iter().map(|item| item.bytes_to_free).sum();
+        Ok(LegacyModelCleanupPreview {
+            target_model_id: target_model_id.to_string(),
+            bytes_to_free,
+            removable,
+            retained,
+        })
+    }
+
+    /// Removes exactly the candidates from a freshly recomputed preview. The caller cannot
+    /// choose arbitrary legacy IDs, so a renderer request cannot bypass shared-dependency checks.
+    pub fn cleanup_legacy(
+        &mut self,
+        target_model_id: &str,
+    ) -> Result<LegacyModelCleanupPreview, ModelError> {
+        let preview = self.legacy_cleanup_preview(target_model_id)?;
+        for item in &preview.removable {
+            self.remove(&item.model_id)?;
+        }
+        Ok(preview)
+    }
+
+    fn legacy_cleanup_item(
+        &self,
+        model_id: &str,
+        reason: Option<String>,
+    ) -> Result<LegacyModelCleanupItem, ModelError> {
+        let descriptor = self.descriptor(model_id)?;
+        let bytes_to_free = directory_size(&self.installation_dir(model_id)?).unwrap_or(0);
+        Ok(LegacyModelCleanupItem {
+            model_id: descriptor.id.clone(),
+            display_name: descriptor.display_name.clone(),
+            bytes_to_free,
+            reason,
+        })
+    }
+
     pub fn doctor_report(&mut self, environment: DoctorEnvironment) -> DoctorReport {
         let mut model_checks = Vec::new();
         let mut warnings = Vec::new();
-        for descriptor in self.catalog.iter() {
+        // Legacy descriptors remain in the catalog only so the settings page can clean them up.
+        for descriptor in self
+            .catalog
+            .iter()
+            .filter(|descriptor| descriptor.ui_role != ModelUiRole::Legacy)
+        {
             let installation = self
                 .installation(&descriptor.id)
                 .expect("catalog installation exists");
@@ -913,6 +1340,7 @@ impl ModelManager {
             asr_runtime_ready: environment.asr_runtime_ready,
             speaker_runtime_ready: environment.speaker_runtime_ready,
             model_checks,
+            capability_checks: Vec::new(),
             warnings,
         }
     }
@@ -981,26 +1409,87 @@ fn validate_descriptor(descriptor: &ModelDescriptor) -> Result<(), ModelError> {
             descriptor.id
         )));
     }
-    if descriptor.revision.len() != 40
-        || descriptor
+    let immutable_revision = descriptor.revision.len() == 40
+        && descriptor
             .revision
             .chars()
-            .any(|character| !character.is_ascii_hexdigit())
-    {
+            .all(|character| character.is_ascii_hexdigit());
+    let source_is_valid = if descriptor.ui_role == ModelUiRole::Legacy {
+        !descriptor.bundled
+            && immutable_revision
+            && descriptor.archive.is_none()
+            && descriptor.source_url_template.starts_with("legacy://")
+    } else {
+        match descriptor.download_source {
+            ModelDownloadSource::Modelscope => {
+                !descriptor.bundled
+                    && immutable_revision
+                    && descriptor.archive.is_none()
+                    && descriptor
+                        .source_url_template
+                        .starts_with("https://www.modelscope.cn/api/v1/models/")
+                    && descriptor
+                        .source_url_template
+                        .contains("Revision={revision}")
+                    && descriptor.repo_id.is_some()
+            }
+            ModelDownloadSource::Huggingface => {
+                !descriptor.bundled && immutable_revision && descriptor.archive.is_none()
+            }
+            ModelDownloadSource::Bundled => {
+                descriptor.bundled
+                    && immutable_revision
+                    && descriptor.source_url_template.starts_with("bundled://")
+            }
+            ModelDownloadSource::Official => {
+                !descriptor.bundled && immutable_revision && descriptor.archive.is_some()
+            }
+        }
+    };
+    if !source_is_valid {
         return Err(ModelError::CatalogInvalid(format!(
-            "{} 的 revision 必须是 40 位 commit hash",
+            "{} 的下载来源与 revision 不匹配",
             descriptor.id
         )));
     }
+    let role_matches_distribution = match descriptor.ui_role {
+        ModelUiRole::Bundled => descriptor.bundled,
+        ModelUiRole::Primary | ModelUiRole::Dependency | ModelUiRole::Legacy => !descriptor.bundled,
+    };
+    if !role_matches_distribution {
+        return Err(ModelError::CatalogInvalid(format!(
+            "{} 的 UI 层级与分发方式不匹配",
+            descriptor.id
+        )));
+    }
+    let direct_source_is_valid = descriptor.archive.is_some()
+        || (!descriptor.source_url_template.is_empty()
+            && (descriptor.bundled
+                || descriptor.source_url_template.starts_with("https://")
+                || (descriptor.ui_role == ModelUiRole::Legacy
+                    && descriptor.source_url_template.starts_with("legacy://"))));
     if descriptor.license.is_empty()
         || !descriptor.license_url.starts_with("https://")
-        || descriptor.source_url_template.is_empty()
-        || (!descriptor.bundled && !descriptor.source_url_template.starts_with("https://"))
+        || !direct_source_is_valid
     {
         return Err(ModelError::CatalogInvalid(format!(
             "{} 缺少 license 或下载源",
             descriptor.id
         )));
+    }
+    if let Some(archive) = &descriptor.archive {
+        if !archive.url.starts_with("https://")
+            || archive.size_bytes == 0
+            || !is_sha256(&archive.sha256)
+        {
+            return Err(ModelError::CatalogInvalid(format!(
+                "{} 的归档缺少固定 URL、size 或 SHA-256",
+                descriptor.id
+            )));
+        }
+        if let Some(prefix) = archive.strip_prefix.as_deref() {
+            safe_relative_path(prefix.trim_matches('/'))?;
+        }
     }
     let mut seen_files = BTreeSet::new();
     for file in &descriptor.files {
@@ -1024,6 +1513,12 @@ fn validate_descriptor(descriptor: &ModelDescriptor) -> Result<(), ModelError> {
             )));
         }
     }
+    if descriptor.archive.is_some() && seen_files.is_empty() {
+        return Err(ModelError::CatalogInvalid(format!(
+            "{} 的归档必须声明解压后的文件清单",
+            descriptor.id
+        )));
+    }
     Ok(())
 }
 
@@ -1038,7 +1533,7 @@ fn allowed_file_type(path: &str) -> bool {
         .is_some_and(|extension| {
             matches!(
                 extension.to_ascii_lowercase().as_str(),
-                "json" | "txt" | "safetensors" | "pt" | "yaml" | "yml" | "onnx" | "bin"
+                "json" | "txt" | "safetensors" | "npz" | "pt" | "yaml" | "yml" | "onnx" | "bin"
             )
         })
 }
@@ -1058,6 +1553,31 @@ fn safe_relative_path(value: &str) -> Result<PathBuf, ModelError> {
         }
     }
     Ok(path.to_path_buf())
+}
+
+fn archive_member_relative(name: &str, strip_prefix: Option<&str>) -> Result<String, ModelError> {
+    if name.contains('\\') {
+        return Err(ModelError::UnsafePath(name.to_string()));
+    }
+    let value = name.trim_end_matches('/');
+    if value.is_empty() {
+        return Err(ModelError::UnsafePath(name.to_string()));
+    }
+    let relative = if let Some(prefix) = strip_prefix {
+        let prefix = prefix.trim_matches('/');
+        if prefix.is_empty() {
+            return Err(ModelError::UnsafePath("归档前缀不能为空".to_string()));
+        }
+        safe_relative_path(prefix)?;
+        value
+            .strip_prefix(prefix)
+            .and_then(|rest| rest.strip_prefix('/'))
+            .ok_or_else(|| ModelError::Integrity(format!("模型归档条目不在声明前缀内：{name}")))?
+    } else {
+        value
+    };
+    safe_relative_path(relative)?;
+    Ok(relative.to_string())
 }
 
 fn load_installations(
@@ -1119,6 +1639,27 @@ fn sha256_file(path: &Path) -> Result<String, ModelError> {
         hasher.update(&buffer[..count]);
     }
     Ok(format!("{:x}", hasher.finalize()))
+}
+
+fn directory_size(path: &Path) -> Result<u64, ModelError> {
+    if !path.exists() {
+        return Ok(0);
+    }
+    let metadata = fs::symlink_metadata(path)?;
+    if metadata.file_type().is_symlink() {
+        return Err(ModelError::Integrity(
+            "模型目录不能包含符号链接".to_string(),
+        ));
+    }
+    if metadata.is_file() {
+        return Ok(metadata.len());
+    }
+    let mut total = 0_u64;
+    for entry in fs::read_dir(path)? {
+        let entry = entry?;
+        total = total.saturating_add(directory_size(&entry.path())?);
+    }
+    Ok(total)
 }
 
 fn walk_files(root: &Path) -> Result<Vec<PathBuf>, ModelError> {
@@ -1196,7 +1737,9 @@ impl ModelInstallState {
 mod tests {
     use super::*;
     use std::fs;
+    use std::io::Write;
     use std::time::{SystemTime, UNIX_EPOCH};
+    use zip::write::SimpleFileOptions;
 
     fn temp_root(label: &str) -> PathBuf {
         let stamp = SystemTime::now()
@@ -1243,6 +1786,105 @@ mod tests {
         .to_string()
     }
 
+    fn legacy_cleanup_catalog() -> ModelCatalog {
+        ModelCatalog::from_json(
+            &serde_json::json!({
+                "schema_version": 1,
+                "models": [
+                    {
+                        "id": "old-aligner", "display_name": "Old aligner", "component": "forced_aligner",
+                        "ui_role": "legacy", "repo_id": "old/aligner", "download_source": "bundled",
+                        "revision": "1111111111111111111111111111111111111111", "files": [],
+                        "license": "MIT", "license_url": "https://example.invalid/license", "dependencies": [],
+                        "min_memory_bytes": null, "source_url_template": "legacy://old-aligner/{path}", "bundled": false
+                    },
+                    {
+                        "id": "old-asr-a", "display_name": "Old ASR A", "component": "asr",
+                        "ui_role": "legacy", "repo_id": "old/asr-a", "download_source": "bundled",
+                        "revision": "2222222222222222222222222222222222222222", "files": [],
+                        "license": "MIT", "license_url": "https://example.invalid/license",
+                        "dependencies": [{"model_id":"old-aligner","required":true,"reason":"old timing"}],
+                        "min_memory_bytes": null, "source_url_template": "legacy://old-asr-a/{path}", "bundled": false
+                    },
+                    {
+                        "id": "old-asr-b", "display_name": "Old ASR B", "component": "asr",
+                        "ui_role": "legacy", "repo_id": "old/asr-b", "download_source": "bundled",
+                        "revision": "3333333333333333333333333333333333333333", "files": [],
+                        "license": "MIT", "license_url": "https://example.invalid/license",
+                        "dependencies": [{"model_id":"old-aligner","required":true,"reason":"old timing"}],
+                        "min_memory_bytes": null, "source_url_template": "legacy://old-asr-b/{path}", "bundled": false
+                    },
+                    {
+                        "id": "new-asr-a", "display_name": "New ASR A", "component": "asr",
+                        "ui_role": "primary", "repo_id": "new/asr-a", "download_source": "huggingface",
+                        "revision": "4444444444444444444444444444444444444444", "files": [],
+                        "license": "MIT", "license_url": "https://example.invalid/license", "dependencies": [],
+                        "min_memory_bytes": null, "source_url_template": "https://example.invalid/new-a/{revision}/{path}",
+                        "replaces_model_id": "old-asr-a", "bundled": false
+                    },
+                    {
+                        "id": "new-asr-b", "display_name": "New ASR B", "component": "asr",
+                        "ui_role": "primary", "repo_id": "new/asr-b", "download_source": "huggingface",
+                        "revision": "5555555555555555555555555555555555555555", "files": [],
+                        "license": "MIT", "license_url": "https://example.invalid/license", "dependencies": [],
+                        "min_memory_bytes": null, "source_url_template": "https://example.invalid/new-b/{revision}/{path}",
+                        "replaces_model_id": "old-asr-b", "bundled": false
+                    }
+                ]
+            })
+            .to_string(),
+        )
+        .expect("legacy cleanup catalog")
+    }
+
+    fn write_zip(path: &Path, entries: &[(&str, &[u8], Option<u32>)]) {
+        let file = File::create(path).expect("zip file");
+        let mut writer = zip::ZipWriter::new(file);
+        for (name, bytes, mode) in entries {
+            let options = mode.map_or_else(SimpleFileOptions::default, |mode| {
+                SimpleFileOptions::default().unix_permissions(mode)
+            });
+            if name.ends_with('/') {
+                writer.add_directory(*name, options).expect("zip directory");
+            } else {
+                writer.start_file(name, options).expect("zip entry");
+                writer.write_all(bytes).expect("zip bytes");
+            }
+        }
+        writer.finish().expect("finish zip");
+    }
+
+    fn archive_catalog(archive_path: &Path, strip_prefix: Option<&str>) -> ModelCatalog {
+        let config = b"model: simam-resnet34\n";
+        let weights = b"fixture-weights";
+        let archive = fs::read(archive_path).expect("archive bytes");
+        let archive_hash = format!("{:x}", Sha256::digest(&archive));
+        let config_hash = format!("{:x}", Sha256::digest(config));
+        let weights_hash = format!("{:x}", Sha256::digest(weights));
+        ModelCatalog::from_json(
+            &serde_json::json!({
+                "schema_version": 1,
+                "models": [{
+                    "id": "speaker", "display_name": "Multilingual speaker", "component": "speaker",
+                    "ui_role": "primary", "repo_id": "official/speaker",
+                    "download_source": "official", "revision": "cccccccccccccccccccccccccccccccccccccccc",
+                    "files": [
+                        {"path": "config.yaml", "size_bytes": config.len(), "sha256": config_hash, "allowed": true},
+                        {"path": "avg_model.pt", "size_bytes": weights.len(), "sha256": weights_hash, "allowed": true}
+                    ],
+                    "license": "CC BY-NC-SA 4.0", "license_url": "https://creativecommons.org/licenses/by-nc-sa/4.0/",
+                    "dependencies": [], "min_memory_bytes": null, "source_url_template": "",
+                    "archive": {
+                        "url": "https://example.invalid/speaker.zip", "size_bytes": archive.len(), "sha256": archive_hash,
+                        "strip_prefix": strip_prefix
+                    }, "bundled": false
+                }]
+            })
+            .to_string(),
+        )
+        .expect("archive catalog")
+    }
+
     #[test]
     fn catalog_rejects_floating_revision_and_missing_hash() {
         let mut value: serde_json::Value =
@@ -1255,19 +1897,293 @@ mod tests {
     }
 
     #[test]
+    fn modelscope_requires_an_immutable_revision_and_sdk_api_template() {
+        let mut value: serde_json::Value =
+            serde_json::from_str(&fixture_catalog()).expect("fixture");
+        value["models"][0]["download_source"] = serde_json::json!("modelscope");
+        value["models"][0]["source_url_template"] = serde_json::json!(
+            "https://www.modelscope.cn/api/v1/models/fixture/aligner/repo?Revision={revision}&FilePath={path}"
+        );
+        value["models"][0]["repo_id"] = serde_json::json!("fixture/aligner");
+        assert!(ModelCatalog::from_json(&value.to_string()).is_ok());
+
+        value["models"][0]["revision"] = serde_json::json!("master");
+        assert!(matches!(
+            ModelCatalog::from_json(&value.to_string()),
+            Err(ModelError::CatalogInvalid(_))
+        ));
+    }
+
+    #[test]
     fn builtin_catalog_contains_real_asr_and_speaker_components() {
         let catalog = ModelCatalog::builtin().expect("built-in catalog");
-        assert_eq!(catalog.len(), 5);
-        let asr = catalog.get("qwen3-asr-1.7b").expect("1.7B");
-        assert_eq!(asr.component, ModelComponent::Asr);
-        assert!(asr.dependencies.iter().any(|dependency| {
-            dependency.model_id == "qwen3-forced-aligner-0.6b" && dependency.required
-        }));
-        assert!(catalog.get("silero-vad").expect("vad").bundled);
+        assert_eq!(catalog.len(), 10);
+        let low = catalog.get("qwen3-asr-0.6b-4bit").expect("0.6B MLX");
+        assert_eq!(low.revision, "70ccd0ba0c24b0c78efc313ce81c1c78c64a3dd7");
         assert_eq!(
-            catalog.get("wespeaker-zh").expect("speaker").dependencies[0].model_id,
-            "silero-vad"
+            low.repo_id.as_deref(),
+            Some("mlx-community/Qwen3-ASR-0.6B-4bit")
         );
+        assert_eq!(low.total_size(), 712_778_816);
+        assert_eq!(low.replaces_model_id.as_deref(), Some("qwen3-asr-0.6b"));
+        assert!(low.source_url_template.contains("Revision={revision}"));
+        assert!(!low.source_url_template.contains("master"));
+        assert_eq!(
+            catalog
+                .get("qwen3-forced-aligner-0.6b-8bit")
+                .expect("aligner")
+                .revision,
+            "998b617c695f61865d444c62051fe51030acef6f"
+        );
+        let asr = catalog.get("qwen3-asr-1.7b-8bit").expect("1.7B MLX");
+        assert_eq!(asr.component, ModelComponent::Asr);
+        assert_eq!(asr.download_source, ModelDownloadSource::Modelscope);
+        assert_eq!(asr.revision, "579e237ce6ec925252973afe835d2f98a138602f");
+        assert_eq!(asr.total_size(), 2_467_856_567);
+        assert!(asr.dependencies.iter().any(|dependency| {
+            dependency.model_id == "qwen3-forced-aligner-0.6b-8bit" && dependency.required
+        }));
+        assert_eq!(asr.ui_role, ModelUiRole::Primary);
+        assert_eq!(
+            catalog
+                .get("qwen3-forced-aligner-0.6b-8bit")
+                .expect("aligner")
+                .ui_role,
+            ModelUiRole::Dependency
+        );
+        let vad = catalog.get("silero-vad-v6").expect("MLX vad");
+        assert_eq!(vad.download_source, ModelDownloadSource::Modelscope);
+        assert_eq!(vad.total_size(), 1_238_323);
+        assert_eq!(vad.ui_role, ModelUiRole::Dependency);
+        let speaker = catalog
+            .get("wespeaker-voxceleb-resnet34-lm")
+            .expect("MLX speaker");
+        assert_eq!(speaker.download_source, ModelDownloadSource::Modelscope);
+        assert_eq!(speaker.total_size(), 26_614_852);
+        assert_eq!(speaker.dependencies[0].model_id, "silero-vad-v6");
+        assert_eq!(speaker.ui_role, ModelUiRole::Primary);
+        assert_eq!(speaker.license, "MIT");
+        assert!(!speaker.requires_noncommercial_confirmation());
+        for legacy_id in [
+            "qwen3-asr-0.6b",
+            "qwen3-asr-1.7b",
+            "qwen3-forced-aligner-0.6b",
+            "wespeaker-zh",
+            "silero-vad",
+        ] {
+            assert_eq!(
+                catalog.get(legacy_id).expect("legacy").ui_role,
+                ModelUiRole::Legacy
+            );
+        }
+    }
+
+    #[test]
+    fn builtin_catalog_pins_all_mlx_modelscope_revisions_and_runtime_files() {
+        let catalog = ModelCatalog::builtin().expect("built-in catalog");
+        for (id, repo, revision, path, size, sha256) in [
+            (
+                "qwen3-asr-0.6b-4bit",
+                "mlx-community/Qwen3-ASR-0.6B-4bit",
+                "70ccd0ba0c24b0c78efc313ce81c1c78c64a3dd7",
+                "model.safetensors",
+                708_236_945,
+                "70c7e67e588062adce4f10796e47ad42ead51c6671eda61a0987eae38ca95ddf",
+            ),
+            (
+                "qwen3-asr-1.7b-8bit",
+                "mlx-community/Qwen3-ASR-1.7B-8bit",
+                "579e237ce6ec925252973afe835d2f98a138602f",
+                "model.safetensors",
+                2_463_307_541,
+                "bf304b009cc7eca79283056f787b44c952d24ac22cec787b39732bba3c23c13c",
+            ),
+            (
+                "qwen3-forced-aligner-0.6b-8bit",
+                "mlx-community/Qwen3-ForcedAligner-0.6B-8bit",
+                "998b617c695f61865d444c62051fe51030acef6f",
+                "model.safetensors",
+                1_271_924_386,
+                "be19ef8ac4326d032e7673342930b14c2df30bd68c1632493b0f563e30829f91",
+            ),
+            (
+                "wespeaker-voxceleb-resnet34-lm",
+                "mlx-community/wespeaker-voxceleb-resnet34-LM",
+                "d34f9e11f648c7e83d077bf6e10da94ba56f7b72",
+                "weights.npz",
+                26_614_262,
+                "802706880b81ece11a9acefb2cf523ae91473e3b7615858390a1eded4efcdedf",
+            ),
+            (
+                "silero-vad-v6",
+                "mlx-community/silero-vad-v6",
+                "c34917caf1d6fc01b763a4ab0345ff1724fdb9c2",
+                "model.safetensors",
+                1_237_860,
+                "65b6c5f0293cbc44d109e58bef78b474d9c65dedbee814cf0b90ef5f0d9150ff",
+            ),
+        ] {
+            let descriptor = catalog.get(id).expect("MLX descriptor");
+            assert_eq!(descriptor.repo_id.as_deref(), Some(repo));
+            assert_eq!(descriptor.revision, revision);
+            let file = descriptor.file(path).expect("pinned runtime file");
+            assert!(file.allowed);
+            assert_eq!(file.size_bytes, size);
+            assert_eq!(file.sha256, sha256);
+            assert!(
+                descriptor
+                    .files
+                    .iter()
+                    .all(|file| !file.path.ends_with(".py"))
+            );
+        }
+    }
+
+    #[test]
+    fn archive_install_checks_the_outer_zip_then_each_allowed_file_before_atomic_commit() {
+        let root = temp_root("archive-install");
+        fs::create_dir_all(&root).expect("root");
+        let archive_path = root.join("speaker.zip");
+        write_zip(
+            &archive_path,
+            &[
+                ("bundle/", b"", None),
+                ("bundle/config.yaml", b"model: simam-resnet34\n", None),
+                ("bundle/avg_model.pt", b"fixture-weights", None),
+            ],
+        );
+        let catalog = archive_catalog(&archive_path, Some("bundle"));
+        let mut manager = ModelManager::new(&root, catalog).expect("manager");
+        let stage = "archive-stage";
+        let staged_archive = manager
+            .archive_staging_path("speaker", stage)
+            .expect("archive staging path");
+        fs::create_dir_all(staged_archive.parent().expect("archive parent"))
+            .expect("archive parent");
+        fs::copy(&archive_path, &staged_archive).expect("stage archive");
+        manager
+            .extract_archive_to_staging("speaker", stage, &staged_archive)
+            .expect("safe archive extraction");
+        manager
+            .transition("speaker", ModelInstallState::Queued)
+            .expect("queue");
+        manager
+            .transition("speaker", ModelInstallState::Downloading)
+            .expect("download");
+        manager
+            .transition("speaker", ModelInstallState::Verifying)
+            .expect("verify");
+        manager
+            .atomically_install("speaker", stage)
+            .expect("atomic install");
+        let installed = manager.installation_dir("speaker").expect("installed path");
+        assert_eq!(
+            fs::read(installed.join("config.yaml")).expect("config"),
+            b"model: simam-resnet34\n"
+        );
+        assert_eq!(
+            fs::read(installed.join("avg_model.pt")).expect("weights"),
+            b"fixture-weights"
+        );
+        assert!(
+            manager
+                .verify_installed("speaker")
+                .expect("installed verification")
+                .state
+                .is_installed()
+        );
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn archive_rejects_path_traversal_symlink_and_unexpected_entries() {
+        for (label, entries) in [
+            (
+                "traversal",
+                vec![
+                    (
+                        "bundle/config.yaml",
+                        b"model: simam-resnet34\n".as_slice(),
+                        None,
+                    ),
+                    ("bundle/avg_model.pt", b"fixture-weights".as_slice(), None),
+                    ("bundle/../escape.txt", b"escape".as_slice(), None),
+                ],
+            ),
+            (
+                "symlink",
+                vec![
+                    (
+                        "bundle/config.yaml",
+                        b"model: simam-resnet34\n".as_slice(),
+                        None,
+                    ),
+                    ("bundle/avg_model.pt", b"fixture-weights".as_slice(), None),
+                    ("bundle/link", b"target".as_slice(), Some(0o120777)),
+                ],
+            ),
+            (
+                "unexpected",
+                vec![
+                    (
+                        "bundle/config.yaml",
+                        b"model: simam-resnet34\n".as_slice(),
+                        None,
+                    ),
+                    ("bundle/avg_model.pt", b"fixture-weights".as_slice(), None),
+                    ("bundle/readme.txt", b"unexpected".as_slice(), None),
+                ],
+            ),
+        ] {
+            let root = temp_root(label);
+            fs::create_dir_all(&root).expect("root");
+            let archive_path = root.join("speaker.zip");
+            write_zip(&archive_path, &entries);
+            let catalog = archive_catalog(&archive_path, Some("bundle"));
+            let manager = ModelManager::new(&root, catalog).expect("manager");
+            let result = manager.extract_archive_to_staging("speaker", "unsafe", &archive_path);
+            assert!(matches!(
+                result,
+                Err(ModelError::Integrity(_)) | Err(ModelError::UnsafePath(_))
+            ));
+            assert!(
+                !root.join("escape.txt").exists(),
+                "{label} entry must not escape the staging directory"
+            );
+            fs::remove_dir_all(root).ok();
+        }
+    }
+
+    #[test]
+    fn archive_requires_fixed_hash_and_noncommercial_models_require_confirmation() {
+        let root = temp_root("archive-metadata");
+        fs::create_dir_all(&root).expect("root");
+        let archive_path = root.join("speaker.zip");
+        write_zip(
+            &archive_path,
+            &[
+                ("config.yaml", b"model: simam-resnet34\n", None),
+                ("avg_model.pt", b"fixture-weights", None),
+            ],
+        );
+        let mut value: serde_json::Value = serde_json::from_str(
+            &serde_json::to_string(&serde_json::json!({
+                "schema_version": 1,
+                "models": []
+            }))
+            .expect("empty catalog json"),
+        )
+        .expect("value");
+        let catalog = archive_catalog(&archive_path, None);
+        let descriptor = catalog.get("speaker").expect("speaker");
+        assert!(descriptor.requires_noncommercial_confirmation());
+        value["models"] = serde_json::to_value(vec![descriptor]).expect("descriptor json");
+        value["models"][0]["archive"]["sha256"] = serde_json::json!("bad");
+        assert!(matches!(
+            ModelCatalog::from_json(&value.to_string()),
+            Err(ModelError::CatalogInvalid(_))
+        ));
+        fs::remove_dir_all(root).ok();
     }
 
     #[test]
@@ -1312,6 +2228,111 @@ mod tests {
             manager.remove("aligner"),
             Err(ModelError::DependencyInUse { .. })
         ));
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn cleanup_preview_removes_old_versions_but_retains_a_shared_legacy_aligner() {
+        let root = temp_root("legacy-cleanup");
+        let mut manager = ModelManager::new(&root, legacy_cleanup_catalog()).expect("manager");
+        for model_id in [
+            "old-aligner",
+            "old-asr-a",
+            "old-asr-b",
+            "new-asr-a",
+            "new-asr-b",
+        ] {
+            let directory = manager.installation_dir(model_id).expect("directory");
+            fs::create_dir_all(&directory).expect("directory");
+            fs::write(directory.join("legacy.bin"), model_id.as_bytes()).expect("model bytes");
+            manager
+                .transition(model_id, ModelInstallState::Installed)
+                .expect("installed state");
+        }
+
+        let first = manager
+            .legacy_cleanup_preview("new-asr-a")
+            .expect("first preview");
+        assert_eq!(
+            first
+                .removable
+                .iter()
+                .map(|item| item.model_id.as_str())
+                .collect::<Vec<_>>(),
+            ["old-asr-a"]
+        );
+        assert_eq!(first.retained.len(), 1);
+        assert_eq!(first.retained[0].model_id, "old-aligner");
+        assert!(
+            first.retained[0]
+                .reason
+                .as_deref()
+                .is_some_and(|reason| reason.contains("old-asr-b"))
+        );
+        assert!(first.bytes_to_free > 0);
+        manager.cleanup_legacy("new-asr-a").expect("first cleanup");
+        assert_eq!(
+            manager.installation("old-asr-a").expect("old a").state,
+            ModelInstallState::NotInstalled
+        );
+        assert_eq!(
+            manager
+                .installation("old-aligner")
+                .expect("old aligner")
+                .state,
+            ModelInstallState::Installed
+        );
+
+        let second = manager
+            .legacy_cleanup_preview("new-asr-b")
+            .expect("second preview");
+        assert_eq!(
+            second
+                .removable
+                .iter()
+                .map(|item| item.model_id.as_str())
+                .collect::<Vec<_>>(),
+            ["old-asr-b", "old-aligner"]
+        );
+        manager.cleanup_legacy("new-asr-b").expect("second cleanup");
+        assert_eq!(
+            manager
+                .installation("old-aligner")
+                .expect("old aligner")
+                .state,
+            ModelInstallState::NotInstalled
+        );
+        assert!(matches!(
+            manager.legacy_cleanup_preview("old-asr-a"),
+            Err(ModelError::InvalidState(_))
+        ));
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn doctor_report_excludes_legacy_models_reserved_for_cleanup() {
+        let root = temp_root("doctor-legacy-models");
+        let mut manager = ModelManager::new(&root, legacy_cleanup_catalog()).expect("manager");
+
+        let report = manager.doctor_report(DoctorEnvironment {
+            architecture: "arm64".to_string(),
+            os_version: "fixture".to_string(),
+            memory_bytes: 16,
+            free_model_bytes: 8,
+            ffmpeg_available: true,
+            libass_available: true,
+            asr_runtime_ready: true,
+            speaker_runtime_ready: true,
+        });
+
+        assert_eq!(
+            report
+                .model_checks
+                .iter()
+                .map(|check| check.model_id.as_str())
+                .collect::<Vec<_>>(),
+            ["new-asr-a", "new-asr-b"]
+        );
         fs::remove_dir_all(root).ok();
     }
 

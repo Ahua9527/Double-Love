@@ -2,21 +2,28 @@ pub mod models;
 pub mod preferences;
 
 use std::collections::HashMap;
+use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use double_love_engine::{
-    CanvasSpec, DEFAULT_HANDLES_MS, Diagnostic, DiagnosticLevel, DiarizeConfig, DoctorEnvironment,
-    FfmpegTools, FrameRate, MediaAssetSummary, ModelError, OperationResult, ProgressEvent,
-    ProgressSink, ProjectExportPreview, ProjectStore, ProjectSummary, SharedSink, SpeakerIdentity,
-    SpeakerNameAgentPayload, SubtitleStyle, TaskRegistry, TaskState, TranscribeConfig,
-    agent_name_payload_preview, append_full_main_track_asset, append_main_track_clip,
-    backup_sqlite_database, compile_project_timeline, create_project, export_project_ass_to,
-    export_project_xmeml_to, export_rough_cut, export_rough_cut_to, ffmpeg_supports_ass_filter,
-    import_media as engine_import_media, list_media_assets, local_name_proposals,
-    move_main_track_clip, omit_words, open_project, preview_project_export, remove_main_track_clip,
-    render_project_mp4_to, restore_words, speaker_diarization_result, split_main_track_clip,
-    start_speaker_diarization, start_transcription, transcript_view, trim_main_track_clip,
+    CanvasSpec, DEFAULT_HANDLES_MS, Diagnostic, DiagnosticLevel, DiarizeConfig,
+    DoctorCapabilityCheck, DoctorCapabilityStatus, DoctorEnvironment, FfmpegTools, FrameRate,
+    MainTrackClip, MediaAssetSummary, ModelError, OperationResult, ProgressEvent, ProgressSink,
+    ProjectExportPreview, ProjectStore, ProjectSummary, SharedSink, Sidecar, SidecarCommand,
+    SidecarEvent, SidecarPoll, SpeakerIdentity, SpeakerNameAgentPayload, SubtitleStyle,
+    TaskRegistry, TaskState, TranscribeConfig, agent_name_payload_preview,
+    append_full_main_track_asset, append_main_track_clip, backup_sqlite_database,
+    compile_project_timeline, create_project, export_project_ass_to, export_project_xmeml_to,
+    export_rough_cut, export_rough_cut_to, ffmpeg_supports_ass_filter,
+    import_media as engine_import_media, insert_full_main_track_assets, list_media_assets,
+    local_name_proposals, move_main_track_clip, omit_words, open_project, preview_project_export,
+    probe_media, remove_main_track_clip, render_project_mp4_to, restore_words,
+    speaker_diarization_result, split_main_track_clip, start_speaker_diarization,
+    start_transcription, transcript_view, trim_main_track_clip,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -107,6 +114,22 @@ impl OpenProjectSlot {
             Ok(operation(&store, &open.summary))
         })?
     }
+
+    pub fn close(&self) -> Result<Option<ProjectSummary>, DesktopServiceError> {
+        let mut current = self
+            .project
+            .lock()
+            .map_err(|_| DesktopServiceError::internal("open-project state lock is unavailable"))?;
+        Ok(current.take().map(|open| open.summary))
+    }
+
+    pub fn current_project_id(&self) -> Result<Option<String>, DesktopServiceError> {
+        let current = self
+            .project
+            .lock()
+            .map_err(|_| DesktopServiceError::internal("open-project state lock is unavailable"))?;
+        Ok(current.as_ref().map(|open| open.summary.project_id.clone()))
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -135,6 +158,7 @@ pub struct DesktopState {
     preferences: preferences::PreferencesState,
     models: models::ModelState,
     history_navigation: Mutex<HistoryNavigation>,
+    active_asset_tasks: Arc<Mutex<HashMap<String, String>>>,
 }
 
 impl DesktopState {
@@ -147,6 +171,7 @@ impl DesktopState {
             preferences: preferences::PreferencesState::default(),
             models: models::ModelState::default(),
             history_navigation: Mutex::new(HistoryNavigation::default()),
+            active_asset_tasks: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -172,6 +197,25 @@ impl DesktopState {
 
     pub fn history_navigation(&self) -> &Mutex<HistoryNavigation> {
         &self.history_navigation
+    }
+
+    fn track_asset_task(&self, task_id: &str, asset_id: &str) {
+        if let Ok(mut tasks) = self.active_asset_tasks.lock() {
+            tasks.insert(task_id.to_string(), asset_id.to_string());
+            if self
+                .task_registry
+                .state(task_id)
+                .is_some_and(|state| !matches!(state, TaskState::Pending | TaskState::Running))
+            {
+                tasks.remove(task_id);
+            }
+        }
+    }
+
+    fn asset_has_active_task(&self, asset_id: &str) -> bool {
+        self.active_asset_tasks
+            .lock()
+            .is_ok_and(|tasks| tasks.values().any(|candidate| candidate == asset_id))
     }
 
     pub fn install_project(
@@ -222,6 +266,21 @@ fn history_navigation_for_store(
     })
 }
 
+fn configured_history_limit(state: &DesktopState) -> Option<usize> {
+    preferences::current_preferences(state.app_data_dir(), state.preferences())
+        .ok()
+        .and_then(|value| value.history_limit)
+        .map(|value| value as usize)
+}
+
+fn prune_current_project_history(state: &DesktopState) -> Result<u64, String> {
+    state
+        .open_project()
+        .with_store(|store, _| store.prune_project_snapshots(configured_history_limit(state)))
+        .map_err(|error| error.to_string())?
+        .map_err(|error| error.to_string())
+}
+
 type CommandHandler = dyn Fn(&DesktopState, Arc<dyn DesktopEventSink>, Value) -> Result<Value, DesktopServiceError>
     + Send
     + Sync;
@@ -266,7 +325,22 @@ impl CommandRegistry {
         let handler = self.handlers.get(name).ok_or_else(|| {
             DesktopServiceError::new(UNKNOWN_COMMAND, format!("unknown command: {name}"))
         })?;
-        handler(state, event_sink, payload)
+        let mut value = handler(state, event_sink, payload)?;
+        if value.get("revision").is_some_and(Value::is_number)
+            && let Err(error) = prune_current_project_history(state)
+            && let Some(diagnostics) = value.get_mut("diagnostics").and_then(Value::as_array_mut)
+        {
+            diagnostics.push(serde_json::json!({
+                "level": "warning",
+                "code": "HISTORY_LIMIT_APPLY_FAILED",
+                "cause": error,
+                "object_id": null,
+                "impact": "本次编辑已保存，但旧恢复快照尚未按上限清理。",
+                "blocks_export": false,
+                "suggested_action": "重新打开项目后再试。"
+            }));
+        }
+        Ok(value)
     }
 }
 
@@ -441,9 +515,28 @@ struct ResolvedMediaAsset {
     path: String,
 }
 
+#[derive(Serialize)]
+struct PreparedProjectTrash {
+    path: String,
+    was_current: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
+struct ProjectThumbnailFingerprint {
+    asset_id: String,
+    source_frame: i64,
+    source_size: u64,
+    source_modified_ms: u128,
+}
+
 #[derive(Default, Deserialize)]
 struct ProjectHistoryParams {
     limit: Option<usize>,
+}
+
+#[derive(Deserialize)]
+struct HistoryLimitParams {
+    limit: Option<u32>,
 }
 
 #[derive(Deserialize)]
@@ -475,6 +568,14 @@ struct MainTrackAppendParams {
 struct MainTrackAppendFullParams {
     #[serde(alias = "assetId")]
     asset_id: String,
+}
+
+#[derive(Deserialize)]
+struct MainTrackInsertAssetsParams {
+    #[serde(alias = "assetIds")]
+    asset_ids: Vec<String>,
+    #[serde(alias = "beforeClipId")]
+    before_clip_id: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -524,6 +625,12 @@ struct RecentProjectForgetParams {
     root: String,
 }
 
+#[derive(Deserialize)]
+struct RecentProjectOpenParams {
+    #[serde(alias = "projectId")]
+    project_id: String,
+}
+
 #[derive(Default, Deserialize)]
 struct OnboardingCompleteParams {
     #[serde(default, alias = "defaultAsrModel")]
@@ -538,16 +645,54 @@ struct ModelIdParams {
     model_id: String,
 }
 
-#[derive(Default, Deserialize)]
-struct ModelRevealParams {
-    #[serde(default, alias = "modelId")]
-    model_id: Option<String>,
+#[derive(Deserialize)]
+struct ModelLegacyCleanupApplyParams {
+    #[serde(alias = "modelId")]
+    model_id: String,
+    confirmed: bool,
+}
+
+#[derive(Deserialize)]
+struct ModelInstallParams {
+    #[serde(alias = "modelId")]
+    model_id: String,
+    #[serde(default, alias = "acceptNoncommercialLicense")]
+    accept_noncommercial_license: bool,
+    #[serde(default, alias = "appVersion")]
+    app_version: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct ModelResumeParams {
+    #[serde(alias = "modelId")]
+    model_id: String,
+    #[serde(default, alias = "appVersion")]
+    app_version: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct ModelImportFolderParams {
+    #[serde(alias = "modelId")]
+    model_id: String,
+    source_path: PathBuf,
+    #[serde(default, alias = "acceptNoncommercialLicense")]
+    accept_noncommercial_license: bool,
+}
+
+#[derive(Clone, Copy, Default, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum DoctorRunDepth {
+    #[default]
+    Quick,
+    Deep,
 }
 
 #[derive(Default, Deserialize)]
 struct DoctorRunParams {
     #[serde(default, alias = "appVersion")]
     app_version: Option<String>,
+    #[serde(default)]
+    depth: DoctorRunDepth,
 }
 
 #[derive(Serialize)]
@@ -663,6 +808,7 @@ struct ResolvedPath {
 struct ServiceProgressSink {
     events: Arc<dyn DesktopEventSink>,
     renderer_path_replacements: Vec<(String, &'static str)>,
+    active_asset_tasks: Option<Arc<Mutex<HashMap<String, String>>>>,
 }
 
 impl ServiceProgressSink {
@@ -673,7 +819,13 @@ impl ServiceProgressSink {
         Self {
             events,
             renderer_path_replacements,
+            active_asset_tasks: None,
         }
+    }
+
+    fn with_active_asset_tasks(mut self, tasks: Arc<Mutex<HashMap<String, String>>>) -> Self {
+        self.active_asset_tasks = Some(tasks);
+        self
     }
 }
 
@@ -693,6 +845,12 @@ impl ProgressSink for ServiceProgressSink {
     }
 
     fn task_state(&self, task_id: &str, state: TaskState) {
+        if !matches!(state, TaskState::Pending | TaskState::Running)
+            && let Some(tasks) = &self.active_asset_tasks
+            && let Ok(mut tasks) = tasks.lock()
+        {
+            tasks.remove(task_id);
+        }
         if let Ok(payload) = serde_json::to_value(TaskStateEvent {
             task_id: task_id.to_string(),
             state,
@@ -702,68 +860,762 @@ impl ProgressSink for ServiceProgressSink {
     }
 }
 
-fn resolve_asr_sidecar_dir(state: &DesktopState) -> PathBuf {
-    if let Some(dir) = std::env::var_os("DOUBLELOVE_ASR_DIR") {
-        return PathBuf::from(dir);
-    }
-    if let Some(resource_dir) = state.runtime.resource_dir.as_deref() {
-        for candidate in [
-            resource_dir.join("model-runtime/asr"),
-            resource_dir.join("resources/model-runtime/asr"),
-        ] {
-            if candidate.is_dir() {
-                return candidate;
-            }
-        }
-    }
-    let manifest_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+fn resolve_bundled_model_runtime_dir(
+    state: &DesktopState,
+    component: &str,
+) -> Result<PathBuf, String> {
+    let resource_dir = state.runtime.resource_dir.as_deref().ok_or_else(|| {
+        "App 内置模型运行时不可用，请重新安装完整的 Double Love Studio。".to_string()
+    })?;
     for candidate in [
-        manifest_root.join("sidecars/asr"),
-        PathBuf::from("sidecars/asr"),
-        PathBuf::from("../sidecars/asr"),
+        resource_dir.join(format!("model-runtime/{component}")),
+        resource_dir.join(format!("resources/model-runtime/{component}")),
     ] {
         if candidate.is_dir() {
-            return candidate;
+            return Ok(candidate);
         }
     }
-    manifest_root.join("sidecars/asr")
+    Err(format!(
+        "App 内置 {component} 运行时不可用，请重新安装完整的 Double Love Studio。"
+    ))
 }
 
-fn resolve_speaker_sidecar_dir(state: &DesktopState) -> PathBuf {
-    if let Some(dir) = std::env::var_os("DOUBLELOVE_SPEAKER_DIR") {
-        return PathBuf::from(dir);
-    }
-    if let Some(resource_dir) = state.runtime.resource_dir.as_deref() {
-        for candidate in [
-            resource_dir.join("model-runtime/speaker"),
-            resource_dir.join("resources/model-runtime/speaker"),
-        ] {
-            if candidate.is_dir() {
-                return candidate;
-            }
-        }
-    }
-    let manifest_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    manifest_root.join("sidecars/speaker")
+fn resolve_model_download_runtime(state: &DesktopState) -> Option<models::ModelDownloadRuntime> {
+    let package_dir = resolve_bundled_model_runtime_dir(state, "asr").ok()?;
+    let python = package_dir.join(".venv/bin/python");
+    (python.is_file() && package_dir.is_dir()).then_some(models::ModelDownloadRuntime {
+        python,
+        package_dir,
+    })
 }
 
-/// Prefer the explicitly injected packaged runtime; development falls back to PATH/Homebrew.
+fn mlx_supported() -> bool {
+    mlx_supported_for(std::env::consts::OS, std::env::consts::ARCH)
+}
+
+fn mlx_supported_for(os: &str, architecture: &str) -> bool {
+    os == "macos" && matches!(architecture, "aarch64" | "arm64")
+}
+
+fn mlx_unsupported_message() -> &'static str {
+    "本机模型仅支持 Apple Silicon（M 系列芯片）的 macOS。"
+}
+
+fn resolve_asr_sidecar_dir(state: &DesktopState) -> Result<PathBuf, String> {
+    resolve_bundled_model_runtime_dir(state, "asr")
+}
+
+fn resolve_speaker_sidecar_dir(state: &DesktopState) -> Result<PathBuf, String> {
+    resolve_bundled_model_runtime_dir(state, "speaker")
+}
+
+/// The desktop product accepts only the media runtime shipped inside the App.
 fn resolve_media_tools(
     state: &DesktopState,
 ) -> Result<FfmpegTools, Box<double_love_engine::Diagnostic>> {
-    if let Some(resource_dir) = state.runtime.resource_dir.as_deref() {
-        for runtime_dir in [
-            resource_dir.join("runtime"),
-            resource_dir.join("resources/runtime"),
-        ] {
-            let ffmpeg = runtime_dir.join("ffmpeg");
-            let ffprobe = runtime_dir.join("ffprobe");
-            if ffmpeg.is_file() || ffprobe.is_file() {
-                return FfmpegTools::from_paths(ffprobe, ffmpeg);
-            }
+    let resource_dir = state.runtime.resource_dir.as_deref().ok_or_else(|| {
+        Box::new(Diagnostic {
+            level: DiagnosticLevel::Error,
+            code: "MEDIA_RUNTIME_MISSING".to_string(),
+            cause: "App 内置媒体运行时不可用。".to_string(),
+            object_id: None,
+            impact: "无法导入、生成缩略图或渲染 MP4".to_string(),
+            blocks_export: true,
+            suggested_action: Some("请重新安装完整的 Double Love Studio。".to_string()),
+        })
+    })?;
+    for runtime_dir in [
+        resource_dir.join("runtime"),
+        resource_dir.join("resources/runtime"),
+    ] {
+        let ffmpeg = runtime_dir.join("ffmpeg");
+        let ffprobe = runtime_dir.join("ffprobe");
+        if ffmpeg.is_file() || ffprobe.is_file() {
+            return FfmpegTools::from_paths(ffprobe, ffmpeg);
         }
     }
-    FfmpegTools::discover()
+    Err(Box::new(Diagnostic {
+        level: DiagnosticLevel::Error,
+        code: "MEDIA_RUNTIME_MISSING".to_string(),
+        cause: "App 内置媒体运行时不可用。".to_string(),
+        object_id: None,
+        impact: "无法导入、生成缩略图或渲染 MP4".to_string(),
+        blocks_export: true,
+        suggested_action: Some("请重新安装完整的 Double Love Studio。".to_string()),
+    }))
+}
+
+struct DoctorRuntimeProbe {
+    checks: Vec<DoctorCapabilityCheck>,
+    ffmpeg_available: bool,
+    libass_available: bool,
+    asr_runtime_ready: bool,
+    speaker_runtime_ready: bool,
+}
+
+fn doctor_check(
+    id: &str,
+    status: DoctorCapabilityStatus,
+    detail: impl Into<String>,
+    suggested_action: Option<&str>,
+) -> DoctorCapabilityCheck {
+    DoctorCapabilityCheck {
+        id: id.to_string(),
+        status,
+        detail: detail.into(),
+        suggested_action: suggested_action.map(str::to_string),
+    }
+}
+
+fn command_succeeds(program: &Path, args: &[&str]) -> bool {
+    Command::new(program)
+        .args(args)
+        .output()
+        .is_ok_and(|output| output.status.success())
+}
+
+fn command_output_contains(program: &Path, args: &[&str], needle: &str) -> bool {
+    Command::new(program)
+        .args(args)
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .map(|output| {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            stdout
+                .lines()
+                .chain(stderr.lines())
+                .any(|line| line.split_whitespace().any(|token| token == needle))
+        })
+        .unwrap_or(false)
+}
+
+fn python_runtime_matches(python: &Path, code: &str) -> bool {
+    Command::new(python)
+        .args(["-c", code])
+        .output()
+        .is_ok_and(|output| output.status.success())
+}
+
+fn probe_python_runtime(
+    package_dir: Result<PathBuf, String>,
+    package_name: &str,
+    code: &str,
+    id: &str,
+) -> (DoctorCapabilityCheck, bool) {
+    let Ok(package_dir) = package_dir else {
+        return (
+            doctor_check(
+                id,
+                DoctorCapabilityStatus::Blocked,
+                format!("App 内置 {package_name} 运行时不可用。"),
+                Some("请重新安装完整的 Double Love Studio。"),
+            ),
+            false,
+        );
+    };
+    let python = package_dir.join(".venv/bin/python");
+    if !python.is_file() {
+        return (
+            doctor_check(
+                id,
+                DoctorCapabilityStatus::Blocked,
+                format!("App 内置 {package_name} Python 运行时不可用。"),
+                Some("请重新安装完整的 Double Love Studio。"),
+            ),
+            false,
+        );
+    }
+    let ready = python_runtime_matches(&python, code);
+    (
+        doctor_check(
+            id,
+            if ready {
+                DoctorCapabilityStatus::Ready
+            } else {
+                DoctorCapabilityStatus::Blocked
+            },
+            if ready {
+                format!("App 内置 {package_name} 运行时可用。")
+            } else {
+                format!("App 内置 {package_name} Python 依赖不完整或版本不匹配。")
+            },
+            (!ready).then_some("请重新安装完整的 Double Love Studio。"),
+        ),
+        ready,
+    )
+}
+
+fn probe_bundled_runtime(state: &DesktopState) -> DoctorRuntimeProbe {
+    let mut checks = Vec::new();
+    let tools = resolve_media_tools(state).ok();
+    let ffmpeg_available = tools
+        .as_ref()
+        .is_some_and(|tools| command_succeeds(&tools.ffmpeg, &["-hide_banner", "-version"]));
+    let ffprobe_available = tools
+        .as_ref()
+        .is_some_and(|tools| command_succeeds(&tools.ffprobe, &["-hide_banner", "-version"]));
+    let libass_available = tools.as_ref().is_some_and(ffmpeg_supports_ass_filter);
+    let h264_available = tools.as_ref().is_some_and(|tools| {
+        command_output_contains(&tools.ffmpeg, &["-hide_banner", "-encoders"], "libx264")
+    });
+    let aac_available = tools.as_ref().is_some_and(|tools| {
+        command_output_contains(&tools.ffmpeg, &["-hide_banner", "-encoders"], "aac")
+    });
+    checks.push(doctor_check(
+        "media.ffmpeg_runtime",
+        if ffmpeg_available {
+            DoctorCapabilityStatus::Ready
+        } else {
+            DoctorCapabilityStatus::Blocked
+        },
+        if ffmpeg_available {
+            "App 内置 ffmpeg 可用。"
+        } else {
+            "App 内置 ffmpeg 不可用。"
+        },
+        (!ffmpeg_available).then_some("请重新安装完整的 Double Love Studio。"),
+    ));
+    checks.push(doctor_check(
+        "media.ffprobe_runtime",
+        if ffprobe_available {
+            DoctorCapabilityStatus::Ready
+        } else {
+            DoctorCapabilityStatus::Blocked
+        },
+        if ffprobe_available {
+            "App 内置 ffprobe 可用。"
+        } else {
+            "App 内置 ffprobe 不可用。"
+        },
+        (!ffprobe_available).then_some("请重新安装完整的 Double Love Studio。"),
+    ));
+    for (id, ready, detail) in [
+        (
+            "media.ass_filter",
+            libass_available,
+            "App 内置 ffmpeg 的 ASS/libass 字幕滤镜",
+        ),
+        (
+            "media.h264_encoder",
+            h264_available,
+            "App 内置 ffmpeg 的 H.264 编码器",
+        ),
+        (
+            "media.aac_encoder",
+            aac_available,
+            "App 内置 ffmpeg 的 AAC 编码器",
+        ),
+    ] {
+        checks.push(doctor_check(
+            id,
+            if ready {
+                DoctorCapabilityStatus::Ready
+            } else if tools.is_some() {
+                DoctorCapabilityStatus::Blocked
+            } else {
+                DoctorCapabilityStatus::NotRun
+            },
+            if ready {
+                format!("{detail}可用。")
+            } else {
+                format!("{detail}不可用。")
+            },
+            (!ready).then_some("请重新安装完整的 Double Love Studio。"),
+        ));
+    }
+
+    let (asr_check, asr_runtime_ready) = probe_python_runtime(
+        resolve_asr_sidecar_dir(state),
+        "ASR",
+        "import importlib.metadata as m\nimport double_love_asr, modelscope, modelscope_hub\nassert m.version('mlx-qwen3-asr') == '0.3.5'\nassert m.version('modelscope') == '1.39.1'\nassert m.version('modelscope-hub') == '0.2.0'\nfor name in ('torch', 'torchaudio', 'wespeaker', 'silero-vad', 'onnxruntime'):\n    try: m.version(name)\n    except m.PackageNotFoundError: continue\n    raise SystemExit(name)",
+        "runtime.asr",
+    );
+    let (speaker_check, speaker_runtime_ready) = probe_python_runtime(
+        resolve_speaker_sidecar_dir(state),
+        "Speaker",
+        "import importlib.metadata as m\nimport mlx, mlx_audio, numpy, double_love_speaker.engine, double_love_speaker.mlx_resnet\nassert m.version('mlx') == '0.31.1'\nassert m.version('mlx-audio') == '0.5.0'\nassert m.version('numpy') == '2.3.5'\nfor name in ('torch', 'torchaudio', 'wespeaker', 'silero-vad', 'onnxruntime'):\n    try: m.version(name)\n    except m.PackageNotFoundError: continue\n    raise SystemExit(name)",
+        "runtime.speaker",
+    );
+    checks.push(asr_check);
+    checks.push(speaker_check);
+    checks.push(doctor_check(
+        "system.mlx_platform",
+        if mlx_supported() {
+            DoctorCapabilityStatus::Ready
+        } else {
+            DoctorCapabilityStatus::Blocked
+        },
+        if mlx_supported() {
+            "本机满足 Apple Silicon MLX 运行条件。"
+        } else {
+            mlx_unsupported_message()
+        },
+        (!mlx_supported()).then_some("请在 Apple Silicon macOS 上运行 Double Love Studio。"),
+    ));
+
+    DoctorRuntimeProbe {
+        checks,
+        ffmpeg_available,
+        libass_available,
+        asr_runtime_ready,
+        speaker_runtime_ready,
+    }
+}
+
+fn doctor_temp_stem(label: &str) -> PathBuf {
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or_default();
+    std::env::temp_dir().join(format!("double-love-doctor-{label}-{stamp}"))
+}
+
+fn write_doctor_wav(path: &Path) -> Result<(), String> {
+    let sample_rate = 16_000_u32;
+    let sample_count = sample_rate;
+    let data_bytes = sample_count * 2;
+    let mut file = fs::File::create(path).map_err(|error| error.to_string())?;
+    file.write_all(b"RIFF").map_err(|error| error.to_string())?;
+    file.write_all(&(36 + data_bytes).to_le_bytes())
+        .map_err(|error| error.to_string())?;
+    file.write_all(b"WAVEfmt ")
+        .map_err(|error| error.to_string())?;
+    file.write_all(&16_u32.to_le_bytes())
+        .map_err(|error| error.to_string())?;
+    file.write_all(&1_u16.to_le_bytes())
+        .map_err(|error| error.to_string())?;
+    file.write_all(&1_u16.to_le_bytes())
+        .map_err(|error| error.to_string())?;
+    file.write_all(&sample_rate.to_le_bytes())
+        .map_err(|error| error.to_string())?;
+    file.write_all(&(sample_rate * 2).to_le_bytes())
+        .map_err(|error| error.to_string())?;
+    file.write_all(&2_u16.to_le_bytes())
+        .map_err(|error| error.to_string())?;
+    file.write_all(&16_u16.to_le_bytes())
+        .map_err(|error| error.to_string())?;
+    file.write_all(b"data").map_err(|error| error.to_string())?;
+    file.write_all(&data_bytes.to_le_bytes())
+        .map_err(|error| error.to_string())?;
+    file.write_all(&vec![0_u8; data_bytes as usize])
+        .map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+fn deep_media_smoke(state: &DesktopState) -> DoctorCapabilityCheck {
+    let Some(tools) = resolve_media_tools(state).ok() else {
+        return doctor_check(
+            "deep.media_render",
+            DoctorCapabilityStatus::NotRun,
+            "App 内置媒体运行时不可用，未执行编码试跑。",
+            Some("请重新安装完整的 Double Love Studio。"),
+        );
+    };
+    let output_path = doctor_temp_stem("render").with_extension("mp4");
+    let result = Command::new(&tools.ffmpeg)
+        .args([
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=black:s=16x16:r=25:d=1",
+            "-f",
+            "lavfi",
+            "-i",
+            "anullsrc=r=48000:cl=mono",
+            "-t",
+            "1",
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            "-c:a",
+            "aac",
+            "-ar",
+            "48000",
+        ])
+        .arg(&output_path)
+        .output()
+        .is_ok_and(|output| {
+            output.status.success()
+                && command_succeeds(
+                    &tools.ffprobe,
+                    &[
+                        "-hide_banner",
+                        "-v",
+                        "error",
+                        "-show_entries",
+                        "format=format_name",
+                        "-of",
+                        "default=nw=1",
+                        output_path.to_string_lossy().as_ref(),
+                    ],
+                )
+        });
+    let _ = fs::remove_file(&output_path);
+    doctor_check(
+        "deep.media_render",
+        if result {
+            DoctorCapabilityStatus::Ready
+        } else {
+            DoctorCapabilityStatus::Blocked
+        },
+        if result {
+            "App 内置 ffmpeg/ffprobe 已完成 H.264/AAC 短时编码验证。"
+        } else {
+            "App 内置 ffmpeg/ffprobe 编码试跑失败。"
+        },
+        (!result).then_some("请重新安装完整的 Double Love Studio。"),
+    )
+}
+
+fn deep_asr_smoke(
+    state: &DesktopState,
+    preferences: &preferences::AppPreferencesV1,
+    report: &double_love_engine::DoctorReport,
+) -> DoctorCapabilityCheck {
+    let model_id = preferences.default_asr_model.as_str();
+    let ready = |id: &str| {
+        report
+            .model_checks
+            .iter()
+            .find(|check| check.model_id == id)
+            .is_some_and(|check| check.state == double_love_engine::ModelInstallState::Installed)
+    };
+    if !ready(model_id) || !ready("qwen3-forced-aligner-0.6b-8bit") {
+        return doctor_check(
+            "deep.asr",
+            DoctorCapabilityStatus::NotRun,
+            "默认转录模型或 ForcedAligner 未安装，未执行模型试跑。",
+            Some("请先在设置 → 本地模型中完成安装和校验。"),
+        );
+    }
+    let Ok(package_dir) = resolve_asr_sidecar_dir(state) else {
+        return doctor_check(
+            "deep.asr",
+            DoctorCapabilityStatus::NotRun,
+            "App 内置 ASR 运行时不可用，未执行模型试跑。",
+            Some("请重新安装完整的 Double Love Studio。"),
+        );
+    };
+    let python = package_dir.join(".venv/bin/python");
+    let root = Path::new(&preferences.model_root);
+    let Ok(model_dir) = state.models().installed_inference_dir(root, model_id) else {
+        return doctor_check(
+            "deep.asr",
+            DoctorCapabilityStatus::NotRun,
+            "默认转录模型未通过本地完整性检查，未执行模型试跑。",
+            Some("请在设置 → 本地模型中重新校验模型。"),
+        );
+    };
+    let Ok(aligner_dir) = state
+        .models()
+        .installed_inference_dir(root, "qwen3-forced-aligner-0.6b-8bit")
+    else {
+        return doctor_check(
+            "deep.asr",
+            DoctorCapabilityStatus::NotRun,
+            "ForcedAligner 未通过本地完整性检查，未执行模型试跑。",
+            Some("请在设置 → 本地模型中重新校验模型。"),
+        );
+    };
+    let base = doctor_temp_stem("asr");
+    let wav_path = base.with_extension("wav");
+    let log_path = base.with_extension("log");
+    let task_id = "doctor-asr".to_string();
+    let success = (|| -> Result<bool, String> {
+        write_doctor_wav(&wav_path)?;
+        let mut sidecar = Sidecar::spawn(&python, &package_dir, false, &log_path)
+            .map_err(|error| error.to_string())?;
+        sidecar
+            .send(&SidecarCommand::Transcribe {
+                task_id: task_id.clone(),
+                wav_path: wav_path.to_string_lossy().into_owned(),
+                model: model_id.to_string(),
+                model_dir: model_dir.to_string_lossy().into_owned(),
+                aligner_dir: aligner_dir.to_string_lossy().into_owned(),
+                language: "zh".to_string(),
+                source_sample_rate: 16_000,
+                chunk_seconds: 1,
+            })
+            .map_err(|error| error.to_string())?;
+        let deadline = std::time::Instant::now() + Duration::from_secs(120);
+        loop {
+            if std::time::Instant::now() >= deadline {
+                return Err("ASR 模型试跑超时。".to_string());
+            }
+            match sidecar.next_event(Duration::from_secs(1)) {
+                SidecarPoll::Event(Ok(SidecarEvent::Done { .. })) => return Ok(true),
+                SidecarPoll::Event(Ok(SidecarEvent::Error { message, .. })) => {
+                    return Err(message);
+                }
+                SidecarPoll::Event(Err(error)) => return Err(error),
+                SidecarPoll::Closed => return Err("ASR sidecar 已关闭。".to_string()),
+                SidecarPoll::TimedOut | SidecarPoll::Event(Ok(_)) => {}
+            }
+        }
+    })()
+    .unwrap_or(false);
+    let _ = fs::remove_file(&wav_path);
+    let _ = fs::remove_file(&log_path);
+    doctor_check(
+        "deep.asr",
+        if success {
+            DoctorCapabilityStatus::Ready
+        } else {
+            DoctorCapabilityStatus::Blocked
+        },
+        if success {
+            "App 内置 ASR 与 ForcedAligner 已完成短时运行验证。"
+        } else {
+            "App 内置 ASR 或 ForcedAligner 模型试跑失败。"
+        },
+        (!success)
+            .then_some("请在设置 → 本地模型中重新校验模型，并重新安装完整的 Double Love Studio。"),
+    )
+}
+
+fn deep_speaker_smoke(
+    state: &DesktopState,
+    preferences: &preferences::AppPreferencesV1,
+    report: &double_love_engine::DoctorReport,
+) -> DoctorCapabilityCheck {
+    let ready = |id: &str| {
+        report
+            .model_checks
+            .iter()
+            .find(|check| check.model_id == id)
+            .is_some_and(|check| check.state == double_love_engine::ModelInstallState::Installed)
+    };
+    if !ready("wespeaker-voxceleb-resnet34-lm") || !ready("silero-vad-v6") {
+        return doctor_check(
+            "deep.speaker",
+            DoctorCapabilityStatus::NotRun,
+            "说话人模型或 Silero VAD 未安装，未执行模型试跑。",
+            Some("请先在设置 → 本地模型中完成安装和校验。"),
+        );
+    }
+    let Ok(package_dir) = resolve_speaker_sidecar_dir(state) else {
+        return doctor_check(
+            "deep.speaker",
+            DoctorCapabilityStatus::NotRun,
+            "App 内置 Speaker 运行时不可用，未执行模型试跑。",
+            Some("请重新安装完整的 Double Love Studio。"),
+        );
+    };
+    let python = package_dir.join(".venv/bin/python");
+    let root = Path::new(&preferences.model_root);
+    let Ok(speaker_model_dir) = state.models().selected_speaker_model_dir(root) else {
+        return doctor_check(
+            "deep.speaker",
+            DoctorCapabilityStatus::NotRun,
+            "说话人模型未通过本地完整性检查，未执行模型试跑。",
+            Some("请在设置 → 本地模型中重新校验模型。"),
+        );
+    };
+    let Ok(vad_model_dir) = state
+        .models()
+        .installed_inference_dir(root, "silero-vad-v6")
+    else {
+        return doctor_check(
+            "deep.speaker",
+            DoctorCapabilityStatus::NotRun,
+            "Silero VAD 未通过本地完整性检查，未执行模型试跑。",
+            Some("请在设置 → 本地模型中重新校验模型。"),
+        );
+    };
+    let base = doctor_temp_stem("speaker");
+    let wav_path = base.with_extension("wav");
+    let log_path = base.with_extension("log");
+    let success = (|| -> Result<bool, String> {
+        write_doctor_wav(&wav_path)?;
+        let mut sidecar = Sidecar::spawn_module(
+            &python,
+            &package_dir,
+            "double_love_speaker",
+            false,
+            &log_path,
+        )
+        .map_err(|error| error.to_string())?;
+        sidecar
+            .send(&SidecarCommand::Diarize {
+                task_id: "doctor-speaker".to_string(),
+                wav_path: wav_path.to_string_lossy().into_owned(),
+                vad_model_dir: vad_model_dir.to_string_lossy().into_owned(),
+                speaker_model_dir: speaker_model_dir.to_string_lossy().into_owned(),
+                source_sample_rate: 16_000,
+            })
+            .map_err(|error| error.to_string())?;
+        let deadline = std::time::Instant::now() + Duration::from_secs(120);
+        loop {
+            if std::time::Instant::now() >= deadline {
+                return Err("Speaker 模型试跑超时。".to_string());
+            }
+            match sidecar.next_event(Duration::from_secs(1)) {
+                SidecarPoll::Event(Ok(SidecarEvent::DiarizationDone { .. })) => return Ok(true),
+                SidecarPoll::Event(Ok(SidecarEvent::Error { message, .. })) => {
+                    return Err(message);
+                }
+                SidecarPoll::Event(Err(error)) => return Err(error),
+                SidecarPoll::Closed => return Err("Speaker sidecar 已关闭。".to_string()),
+                SidecarPoll::TimedOut | SidecarPoll::Event(Ok(_)) => {}
+            }
+        }
+    })()
+    .unwrap_or(false);
+    let _ = fs::remove_file(&wav_path);
+    let _ = fs::remove_file(&log_path);
+    doctor_check(
+        "deep.speaker",
+        if success {
+            DoctorCapabilityStatus::Ready
+        } else {
+            DoctorCapabilityStatus::Blocked
+        },
+        if success {
+            "App 内置 Speaker 与 Silero VAD 已完成短时运行验证。"
+        } else {
+            "App 内置 Speaker 或 Silero VAD 模型试跑失败。"
+        },
+        (!success)
+            .then_some("请在设置 → 本地模型中重新校验模型，并重新安装完整的 Double Love Studio。"),
+    )
+}
+
+fn deep_diagnostics(
+    state: &DesktopState,
+    preferences: &preferences::AppPreferencesV1,
+    report: &double_love_engine::DoctorReport,
+) -> Vec<DoctorCapabilityCheck> {
+    vec![
+        deep_media_smoke(state),
+        deep_asr_smoke(state, preferences, report),
+        deep_speaker_smoke(state, preferences, report),
+    ]
+}
+
+fn resolve_project_thumbnail(
+    state: &DesktopState,
+    project_id: &str,
+) -> OperationResult<ResolvedMediaAsset> {
+    let root = match preferences::recent_project_path(
+        state.app_data_dir(),
+        state.preferences(),
+        project_id,
+    ) {
+        Ok(root) => root,
+        Err(error) => {
+            return OperationResult::failed("PROJECT_THUMBNAIL_FORBIDDEN", error.to_string());
+        }
+    };
+    let database = root.join(".doublelove/project.sqlite");
+    let store = match ProjectStore::open(&database) {
+        Ok(store) => store,
+        Err(error) => {
+            return OperationResult::failed("PROJECT_THUMBNAIL_UNAVAILABLE", error.to_string());
+        }
+    };
+    let source = match store.project_thumbnail_source() {
+        Ok(Some(source)) => source,
+        Ok(None) => {
+            return OperationResult::failed(
+                "PROJECT_THUMBNAIL_EMPTY",
+                "项目还没有可以生成缩略图的视频。",
+            );
+        }
+        Err(error) => {
+            return OperationResult::failed("PROJECT_THUMBNAIL_UNAVAILABLE", error.to_string());
+        }
+    };
+    let source_path = Path::new(&source.original_path);
+    let source_metadata = match source_path.metadata() {
+        Ok(metadata) if metadata.is_file() => metadata,
+        _ => {
+            return OperationResult::failed(
+                "PROJECT_THUMBNAIL_SOURCE_MISSING",
+                "项目缩略图引用的源视频已经不可用。",
+            );
+        }
+    };
+    let fingerprint = ProjectThumbnailFingerprint {
+        asset_id: source.asset_id,
+        source_frame: source.source_frame,
+        source_size: source_metadata.len(),
+        source_modified_ms: source_metadata
+            .modified()
+            .ok()
+            .and_then(|value| value.duration_since(UNIX_EPOCH).ok())
+            .map(|value| value.as_millis())
+            .unwrap_or_default(),
+    };
+    let cache = root.join(".doublelove/cache");
+    let thumbnail = cache.join("project-library-thumbnail.jpg");
+    let fingerprint_path = cache.join("project-library-thumbnail.json");
+    let cached = fs::read(&fingerprint_path)
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<ProjectThumbnailFingerprint>(&bytes).ok())
+        .is_some_and(|value| value == fingerprint);
+    if cached && thumbnail.is_file() {
+        return OperationResult::success(ResolvedMediaAsset {
+            path: thumbnail.to_string_lossy().into_owned(),
+        });
+    }
+    let tools = match resolve_media_tools(state) {
+        Ok(tools) => tools,
+        Err(diagnostic) => {
+            return OperationResult::failed(&diagnostic.code, &diagnostic.cause);
+        }
+    };
+    if let Err(error) = fs::create_dir_all(&cache) {
+        return OperationResult::failed("PROJECT_THUMBNAIL_WRITE_FAILED", error.to_string());
+    }
+    let temporary = cache.join("project-library-thumbnail.tmp.jpg");
+    let rational = source.rate.rational();
+    let seek_seconds =
+        source.source_frame.max(0) as f64 * rational.den as f64 / rational.num as f64;
+    let output = Command::new(&tools.ffmpeg)
+        .args(["-hide_banner", "-loglevel", "error", "-y", "-ss"])
+        .arg(format!("{seek_seconds:.6}"))
+        .arg("-i")
+        .arg(source_path)
+        .args([
+            "-frames:v",
+            "1",
+            "-vf",
+            "scale=640:360:force_original_aspect_ratio=decrease,pad=640:360:(ow-iw)/2:(oh-ih)/2:black",
+            "-q:v",
+            "3",
+        ])
+        .arg(&temporary)
+        .output();
+    match output {
+        Ok(output) if output.status.success() && temporary.is_file() => {}
+        Ok(output) => {
+            let _ = fs::remove_file(&temporary);
+            return OperationResult::failed(
+                "PROJECT_THUMBNAIL_GENERATE_FAILED",
+                String::from_utf8_lossy(&output.stderr).into_owned(),
+            );
+        }
+        Err(error) => {
+            return OperationResult::failed("PROJECT_THUMBNAIL_GENERATE_FAILED", error.to_string());
+        }
+    }
+    if let Err(error) = fs::rename(&temporary, &thumbnail) {
+        let _ = fs::remove_file(&temporary);
+        return OperationResult::failed("PROJECT_THUMBNAIL_WRITE_FAILED", error.to_string());
+    }
+    if let Ok(bytes) = serde_json::to_vec(&fingerprint) {
+        let _ = fs::write(fingerprint_path, bytes);
+    }
+    OperationResult::success(ResolvedMediaAsset {
+        path: thumbnail.to_string_lossy().into_owned(),
+    })
 }
 
 fn with_store<T>(
@@ -827,8 +1679,8 @@ fn set_project_subtitle_style(
     sanitize_project_result(result, summary)
 }
 
-fn warning(
-    result: &mut OperationResult<ProjectSummary>,
+fn warning<T>(
+    result: &mut OperationResult<T>,
     code: &str,
     cause: impl Into<String>,
     impact: &str,
@@ -866,6 +1718,9 @@ fn install_open_project(
     summary: &ProjectSummary,
 ) -> Result<(), DesktopServiceError> {
     let store = ProjectStore::open(Path::new(&summary.database))
+        .map_err(|error| DesktopServiceError::new("STORAGE_ERROR", error.to_string()))?;
+    store
+        .prune_project_snapshots(configured_history_limit(state))
         .map_err(|error| DesktopServiceError::new("STORAGE_ERROR", error.to_string()))?;
     state
         .install_project(summary.clone(), Arc::new(Mutex::new(store)))
@@ -906,6 +1761,26 @@ fn reset_history_navigation(
 ) -> Result<(), String> {
     *navigation = history_navigation_for_store(store, project_id)?;
     Ok(())
+}
+
+fn open_project_at_path(
+    state: &DesktopState,
+    events: &dyn DesktopEventSink,
+    project_root: &Path,
+) -> OperationResult<ProjectSummary> {
+    match backup_existing_project_database(project_root)
+        .and_then(|()| open_project(project_root).map_err(|error| error.to_string()))
+    {
+        Ok(summary) => match install_open_project(state, &summary) {
+            Ok(()) => {
+                let mut result = OperationResult::success(summary.clone());
+                record_recent_project_warning(state, events, &summary, &mut result, false);
+                result
+            }
+            Err(error) => OperationResult::failed("STORAGE_ERROR", error.message),
+        },
+        Err(error) => OperationResult::failed("PROJECT_OPEN_FAILED", error.to_string()),
+    }
 }
 
 /// Registers the migrated host-neutral desktop commands.
@@ -963,27 +1838,123 @@ pub fn register_commands(registry: &mut CommandRegistry) {
     });
     registry.register("project_open", |state, events, payload| {
         let params: ProjectPathParams = params(payload)?;
-        let project_root = Path::new(&params.path);
-        let result = match backup_existing_project_database(project_root)
-            .and_then(|()| open_project(project_root).map_err(|error| error.to_string()))
+        result_value(open_project_at_path(
+            state,
+            events.as_ref(),
+            Path::new(&params.path),
+        ))
+    });
+    registry.register("recent_project_open", |state, events, payload| {
+        let params: RecentProjectOpenParams = params(payload)?;
+        let project_root = match preferences::recent_project_path(
+            state.app_data_dir(),
+            state.preferences(),
+            &params.project_id,
+        ) {
+            Ok(path) => path,
+            Err(error) => {
+                let message = error.to_string();
+                let code = if message == "项目位置已经丢失。" {
+                    "RECENT_PROJECT_MISSING"
+                } else {
+                    "RECENT_PROJECT_NOT_FOUND"
+                };
+                return result_value(OperationResult::<ProjectSummary>::failed(code, message));
+            }
+        };
+        result_value(open_project_at_path(state, events.as_ref(), &project_root))
+    });
+    registry.register("project_checkpoint", |state, _events, _payload| {
+        let result = match state
+            .open_project()
+            .with_store(|store, _| store.checkpoint().and_then(|()| store.revision()))
         {
-            Ok(summary) => match install_open_project(state, &summary) {
-                Ok(()) => {
-                    let mut result = OperationResult::success(summary.clone());
-                    record_recent_project_warning(
-                        state,
-                        events.as_ref(),
-                        &summary,
-                        &mut result,
-                        false,
-                    );
-                    result
-                }
-                Err(error) => OperationResult::failed("STORAGE_ERROR", error.message),
-            },
-            Err(error) => OperationResult::failed("PROJECT_OPEN_FAILED", error.to_string()),
+            Ok(Ok(revision)) => OperationResult::success(Some(revision)),
+            Ok(Err(error)) => {
+                OperationResult::failed("PROJECT_CHECKPOINT_FAILED", error.to_string())
+            }
+            Err(error) if error.code == PROJECT_NOT_OPEN => OperationResult::success(None),
+            Err(error) => OperationResult::failed(error.code, error.message),
         };
         result_value(result)
+    });
+    registry.register("project_close", |state, _events, _payload| {
+        let checkpoint = match state
+            .open_project()
+            .with_store(|store, _| store.checkpoint())
+        {
+            Ok(Ok(())) => None,
+            Ok(Err(error)) => Some(error.to_string()),
+            Err(error) if error.code == PROJECT_NOT_OPEN => None,
+            Err(error) => Some(error.message),
+        };
+        if let Some(error) = checkpoint {
+            return result_value(OperationResult::<()>::failed("PROJECT_CLOSE_FAILED", error));
+        }
+        state.open_project().close()?;
+        if let Ok(mut navigation) = state.history_navigation().lock() {
+            *navigation = HistoryNavigation::default();
+        }
+        result_value(OperationResult::success(()))
+    });
+    registry.register("prepare_project_trash", |state, _events, payload| {
+        let params: RecentProjectOpenParams = params(payload)?;
+        if state.task_registry().has_active() {
+            return result_value(OperationResult::<PreparedProjectTrash>::failed(
+                "PROJECT_TRASH_TASK_ACTIVE",
+                "后台任务运行时不能移动项目到废纸篓。",
+            ));
+        }
+        let root = match preferences::recent_project_path(
+            state.app_data_dir(),
+            state.preferences(),
+            &params.project_id,
+        ) {
+            Ok(root) => root,
+            Err(error) => {
+                return result_value(OperationResult::<PreparedProjectTrash>::failed(
+                    "PROJECT_TRASH_FORBIDDEN",
+                    error.to_string(),
+                ));
+            }
+        };
+        let database = root.join(".doublelove/project.sqlite");
+        let store = match ProjectStore::open(&database) {
+            Ok(store) => store,
+            Err(error) => {
+                return result_value(OperationResult::<PreparedProjectTrash>::failed(
+                    "PROJECT_TRASH_INVALID",
+                    error.to_string(),
+                ));
+            }
+        };
+        if store.project_id().ok().flatten().as_deref() != Some(params.project_id.as_str()) {
+            return result_value(OperationResult::<PreparedProjectTrash>::failed(
+                "PROJECT_TRASH_INVALID",
+                "项目标识与项目文件夹不匹配。",
+            ));
+        }
+        let was_current = state.open_project().current_project_id()?.as_deref()
+            == Some(params.project_id.as_str());
+        if was_current {
+            let checkpoint = state
+                .open_project()
+                .with_store(|current, _| current.checkpoint());
+            match checkpoint {
+                Ok(Ok(())) => {}
+                Ok(Err(error)) => {
+                    return result_value(OperationResult::<PreparedProjectTrash>::failed(
+                        "PROJECT_CHECKPOINT_FAILED",
+                        error.to_string(),
+                    ));
+                }
+                Err(error) => return Err(error),
+            }
+        }
+        result_value(OperationResult::success(PreparedProjectTrash {
+            path: root.to_string_lossy().into_owned(),
+            was_current,
+        }))
     });
     registry.register("import_media", |state, _events, payload| {
         let params: ProjectPathParams = params(payload)?;
@@ -1007,16 +1978,68 @@ pub fn register_commands(registry: &mut CommandRegistry) {
             sanitize_renderer_diagnostics(result, &replacements)
         }))
     });
+    registry.register("media_preflight", |state, _events, payload| {
+        let params: ProjectPathParams = params(payload)?;
+        result_value(with_store(state, |_store, summary| {
+            let replacements = renderer_path_replacements(&[
+                (&params.path, "<SELECTED_MEDIA>"),
+                (&summary.root, "<PROJECT>"),
+            ]);
+            let result = match resolve_media_tools(state) {
+                Ok(tools) => probe_media(&tools, Path::new(&params.path)),
+                Err(diagnostic) => {
+                    let mut result = OperationResult::failed(&diagnostic.code, &diagnostic.cause);
+                    result.diagnostics[0].suggested_action = diagnostic.suggested_action.clone();
+                    result
+                }
+            };
+            sanitize_renderer_diagnostics(result, &replacements)
+        }))
+    });
     registry.register("assets_list", |state, _events, _payload| {
         result_value(with_store(state, |store, summary| {
             let replacements = renderer_path_replacements(&[(&summary.root, "<PROJECT>")]);
             sanitize_renderer_diagnostics(list_media_assets(store), &replacements)
         }))
     });
+    registry.register("media_asset_remove", |state, _events, payload| {
+        let params: AssetIdParams = params(payload)?;
+        if state.asset_has_active_task(&params.asset_id) {
+            return result_value(OperationResult::<Value>::failed(
+                "MEDIA_ASSET_BUSY",
+                "这个素材正在执行转录或说话人任务，请先结束任务。",
+            ));
+        }
+        result_value(with_store(state, |store, summary| {
+            match store.remove_media_asset(&params.asset_id) {
+                Ok((revision, removed_clips, prepared_wav_path)) => {
+                    if let Some(path) = prepared_wav_path {
+                        let prepared_root = Path::new(&summary.root).join(".doublelove/prepared");
+                        if let (Ok(canonical_path), Ok(canonical_root)) = (
+                            Path::new(&path).canonicalize(),
+                            prepared_root.canonicalize(),
+                        ) && canonical_path.starts_with(canonical_root)
+                            && canonical_path.is_file()
+                        {
+                            let _ = std::fs::remove_file(canonical_path);
+                        }
+                    }
+                    let mut result =
+                        OperationResult::success(double_love_engine::MediaAssetRemoval {
+                            asset_id: params.asset_id,
+                            removed_clips,
+                        });
+                    result.revision = Some(revision);
+                    result
+                }
+                Err(error) => OperationResult::failed("MEDIA_REMOVE_FAILED", error.to_string()),
+            }
+        }))
+    });
     registry.register("resolve_media_asset", |state, _events, payload| {
         let params: ResolveMediaAssetParams = params(payload)?;
         result_value(with_store(state, |store, _| {
-            match store.media_asset(&params.asset_id) {
+            match store.active_media_asset(&params.asset_id) {
                 Ok(Some(asset)) if Path::new(&asset.original_path).is_file() => {
                     OperationResult::success(ResolvedMediaAsset {
                         path: asset.original_path,
@@ -1044,6 +2067,29 @@ pub fn register_commands(registry: &mut CommandRegistry) {
                 Err(error) => OperationResult::failed("STORAGE_ERROR", error.to_string()),
             }
         }))
+    });
+    registry.register("history_limit_preview", |state, _events, payload| {
+        let params: HistoryLimitParams = params(payload)?;
+        let Some(limit) = params.limit else {
+            return result_value(OperationResult::success(0_u64));
+        };
+        let mut removed = 0_u64;
+        if let Ok(paths) =
+            preferences::registered_project_paths(state.app_data_dir(), state.preferences())
+        {
+            for root in paths {
+                let database = root.join(".doublelove/project.sqlite");
+                if !database.is_file() {
+                    continue;
+                }
+                if let Ok(count) = ProjectStore::open(&database)
+                    .and_then(|store| store.restorable_snapshot_count())
+                {
+                    removed = removed.saturating_add(count.saturating_sub(limit as u64));
+                }
+            }
+        }
+        result_value(OperationResult::success(removed))
     });
     registry.register("project_restore_revision", |state, _events, payload| {
         let params: ProjectRevisionParams = params(payload)?;
@@ -1147,10 +2193,16 @@ pub fn register_commands(registry: &mut CommandRegistry) {
     });
     registry.register("timeline_get", |state, _events, _payload| {
         result_value(with_store(state, |store, summary| {
-            sanitize_project_result(
+            let mut result = sanitize_project_result(
                 compile_project_timeline(store, &project_timeline_name(summary)),
                 summary,
-            )
+            );
+            if let Some(timeline) = result.data.as_mut() {
+                for source in &mut timeline.sources {
+                    source.original_path.clear();
+                }
+            }
+            result
         }))
     });
     registry.register("main_track_append", |state, _events, payload| {
@@ -1172,6 +2224,25 @@ pub fn register_commands(registry: &mut CommandRegistry) {
         result_value(with_store(state, |store, summary| {
             sanitize_project_result(
                 append_full_main_track_asset(store, &params.asset_id),
+                summary,
+            )
+        }))
+    });
+    registry.register("main_track_insert_assets", |state, _events, payload| {
+        let params: MainTrackInsertAssetsParams = params(payload)?;
+        if params.asset_ids.is_empty() || params.asset_ids.len() > 64 {
+            return result_value(OperationResult::<Vec<MainTrackClip>>::failed(
+                "MAIN_TRACK_INSERT_INVALID",
+                "请选择 1 到 64 个素材。",
+            ));
+        }
+        result_value(with_store(state, |store, summary| {
+            sanitize_project_result(
+                insert_full_main_track_assets(
+                    store,
+                    &params.asset_ids,
+                    params.before_clip_id.as_deref(),
+                ),
                 summary,
             )
         }))
@@ -1313,6 +2384,7 @@ pub fn register_commands(registry: &mut CommandRegistry) {
     });
     registry.register("preferences_update", |state, events, payload| {
         let params: PreferencesUpdateParams = params(payload)?;
+        let history_limit_changed = params.patch.history_limit.is_some();
         if let Some(model_root) = params.patch.model_root.as_deref() {
             let current =
                 match preferences::current_preferences(state.app_data_dir(), state.preferences()) {
@@ -1333,18 +2405,61 @@ pub fn register_commands(registry: &mut CommandRegistry) {
                 ));
             }
         }
-        result_value(preferences::preferences_update(
+        let mut result = preferences::preferences_update(
             state.app_data_dir(),
             state.preferences(),
             events.as_ref(),
             params.patch,
-        ))
+        );
+        if history_limit_changed && result.status == double_love_engine::OperationStatus::Success {
+            let limit = result
+                .data
+                .as_ref()
+                .and_then(|preferences| preferences.history_limit)
+                .map(|value| value as usize);
+            let mut failed = 0_u64;
+            if let Ok(paths) =
+                preferences::registered_project_paths(state.app_data_dir(), state.preferences())
+            {
+                for root in paths {
+                    let database = root.join(".doublelove/project.sqlite");
+                    if !database.is_file() {
+                        continue;
+                    }
+                    if ProjectStore::open(&database)
+                        .and_then(|store| store.prune_project_snapshots(limit))
+                        .is_err()
+                    {
+                        failed += 1;
+                    }
+                }
+            }
+            if failed > 0 {
+                warning(
+                    &mut result,
+                    "HISTORY_LIMIT_PARTIAL",
+                    format!("有 {failed} 个项目暂时无法更新回滚上限。"),
+                    "偏好已保存，可访问项目已更新。",
+                    "下次打开这些项目时会再次应用。",
+                );
+            }
+            let _ = state.open_project().with_store(|store, summary| {
+                if let Ok(mut navigation) = state.history_navigation().lock() {
+                    let _ = reset_history_navigation(&mut navigation, store, &summary.project_id);
+                }
+            });
+        }
+        result_value(result)
     });
     registry.register("recent_projects_list", |state, _events, _payload| {
         result_value(preferences::recent_projects_list(
             state.app_data_dir(),
             state.preferences(),
         ))
+    });
+    registry.register("resolve_project_thumbnail", |state, _events, payload| {
+        let params: RecentProjectOpenParams = params(payload)?;
+        result_value(resolve_project_thumbnail(state, &params.project_id))
     });
     registry.register("recent_project_forget", |state, events, payload| {
         let params: RecentProjectForgetParams = params(payload)?;
@@ -1404,8 +2519,22 @@ pub fn register_commands(registry: &mut CommandRegistry) {
         };
         result_value(result)
     });
+    registry.register("model_queue_get", |state, _events, _payload| {
+        result_value(match state.models().queue_snapshot() {
+            Ok(snapshot) => OperationResult::success(snapshot),
+            Err(error) => OperationResult::failed("MODEL_QUEUE_FAILED", error),
+        })
+    });
     registry.register("model_install", |state, events, payload| {
-        let params: ModelIdParams = params(payload)?;
+        let params: ModelInstallParams = params(payload)?;
+        if !mlx_supported() {
+            return result_value(
+                OperationResult::<double_love_engine::ModelInstallation>::failed(
+                    "MLX_APPLE_SILICON_REQUIRED",
+                    mlx_unsupported_message(),
+                ),
+            );
+        }
         let preferences =
             match preferences::current_preferences(state.app_data_dir(), state.preferences()) {
                 Ok(preferences) => preferences,
@@ -1415,10 +2544,13 @@ pub fn register_commands(registry: &mut CommandRegistry) {
                     >(error, true));
                 }
             };
-        let result = match state.models().begin_install(
+        let result = match state.models().begin_install_with_runtime(
             PathBuf::from(preferences.model_root),
             preferences.model_endpoint,
+            resolve_model_download_runtime(state),
             &params.model_id,
+            params.accept_noncommercial_license,
+            normalize_app_version(params.app_version),
             events,
         ) {
             Ok(installation) => OperationResult::success(installation),
@@ -1430,7 +2562,7 @@ pub fn register_commands(registry: &mut CommandRegistry) {
         ("model_pause", false, "MODEL_PAUSE_FAILED"),
         ("model_cancel", true, "MODEL_CANCEL_FAILED"),
     ] {
-        registry.register(name, move |state, _events, payload| {
+        registry.register(name, move |state, events, payload| {
             let params: ModelIdParams = params(payload)?;
             let preferences =
                 match preferences::current_preferences(state.app_data_dir(), state.preferences()) {
@@ -1441,10 +2573,11 @@ pub fn register_commands(registry: &mut CommandRegistry) {
                         >(error, true));
                     }
                 };
-            let result = match state.models().set_cancel(
+            let result = match state.models().set_cancel_with_events(
                 Path::new(&preferences.model_root),
                 &params.model_id,
                 cancel,
+                events.as_ref(),
             ) {
                 Ok(installation) => OperationResult::success(installation),
                 Err(error) => OperationResult::failed(error_code, error),
@@ -1453,7 +2586,15 @@ pub fn register_commands(registry: &mut CommandRegistry) {
         });
     }
     registry.register("model_resume", |state, events, payload| {
-        let params: ModelIdParams = params(payload)?;
+        let params: ModelResumeParams = params(payload)?;
+        if !mlx_supported() {
+            return result_value(
+                OperationResult::<double_love_engine::ModelInstallation>::failed(
+                    "MLX_APPLE_SILICON_REQUIRED",
+                    mlx_unsupported_message(),
+                ),
+            );
+        }
         let preferences =
             match preferences::current_preferences(state.app_data_dir(), state.preferences()) {
                 Ok(preferences) => preferences,
@@ -1463,10 +2604,13 @@ pub fn register_commands(registry: &mut CommandRegistry) {
                     >(error, true));
                 }
             };
-        let result = match state.models().begin_install(
+        let result = match state.models().begin_install_with_runtime(
             PathBuf::from(preferences.model_root),
             preferences.model_endpoint,
+            resolve_model_download_runtime(state),
             &params.model_id,
+            true,
+            normalize_app_version(params.app_version),
             events,
         ) {
             Ok(installation) => OperationResult::success(installation),
@@ -1522,12 +2666,105 @@ pub fn register_commands(registry: &mut CommandRegistry) {
         };
         result_value(result)
     });
-    registry.register("model_reveal", |state, _events, payload| {
-        let params: ModelRevealParams = if payload.is_null() {
-            ModelRevealParams::default()
-        } else {
-            params(payload)?
+    registry.register("model_legacy_cleanup_preview", |state, _events, payload| {
+        let params: ModelIdParams = params(payload)?;
+        let preferences =
+            match preferences::current_preferences(state.app_data_dir(), state.preferences()) {
+                Ok(preferences) => preferences,
+                Err(error) => {
+                    return result_value(preferences::command_error::<
+                        double_love_engine::LegacyModelCleanupPreview,
+                    >(error, true));
+                }
+            };
+        let result = match state
+            .models()
+            .legacy_cleanup_preview(Path::new(&preferences.model_root), &params.model_id)
+        {
+            Ok(preview) => OperationResult::success(preview),
+            Err(error) => OperationResult::failed("MODEL_LEGACY_CLEANUP_PREVIEW_FAILED", error),
         };
+        result_value(result)
+    });
+    registry.register("model_legacy_cleanup_apply", |state, events, payload| {
+        let params: ModelLegacyCleanupApplyParams = params(payload)?;
+        if !params.confirmed {
+            return result_value(OperationResult::<
+                double_love_engine::LegacyModelCleanupPreview,
+            >::failed(
+                "MODEL_LEGACY_CLEANUP_CONFIRM_REQUIRED",
+                "请确认后再清理旧模型版本。",
+            ));
+        }
+        let preferences =
+            match preferences::current_preferences(state.app_data_dir(), state.preferences()) {
+                Ok(preferences) => preferences,
+                Err(error) => {
+                    return result_value(preferences::command_error::<
+                        double_love_engine::LegacyModelCleanupPreview,
+                    >(error, true));
+                }
+            };
+        let result = match state
+            .models()
+            .cleanup_legacy(Path::new(&preferences.model_root), &params.model_id)
+        {
+            Ok(preview) => {
+                if let Ok(snapshot) = state.models().snapshot(Path::new(&preferences.model_root)) {
+                    for item in &preview.removable {
+                        if let Some(installation) = snapshot
+                            .iter()
+                            .find(|entry| entry.descriptor.id == item.model_id)
+                            .map(|entry| &entry.installation)
+                            && let Ok(payload) = serde_json::to_value(installation)
+                        {
+                            let _ = events.emit("dl://model-state", payload);
+                        }
+                    }
+                }
+                OperationResult::success(preview)
+            }
+            Err(error) => OperationResult::failed("MODEL_LEGACY_CLEANUP_FAILED", error),
+        };
+        result_value(result)
+    });
+    registry.register("model_import_folder", |state, events, payload| {
+        let params: ModelImportFolderParams = params(payload)?;
+        if !mlx_supported() {
+            return result_value(
+                OperationResult::<double_love_engine::ModelInstallation>::failed(
+                    "MLX_APPLE_SILICON_REQUIRED",
+                    mlx_unsupported_message(),
+                ),
+            );
+        }
+        let preferences =
+            match preferences::current_preferences(state.app_data_dir(), state.preferences()) {
+                Ok(preferences) => preferences,
+                Err(error) => {
+                    return result_value(preferences::command_error::<
+                        double_love_engine::ModelInstallation,
+                    >(error, true));
+                }
+            };
+        let result = match state.models().import_from_folder(
+            Path::new(&preferences.model_root),
+            &params.model_id,
+            &params.source_path,
+            params.accept_noncommercial_license,
+        ) {
+            Ok(installation) => {
+                if let Ok(payload) = serde_json::to_value(&installation) {
+                    let _ = events.emit("dl://model-state", payload);
+                }
+                OperationResult::success(installation)
+            }
+            Err(error) => OperationResult::failed("MODEL_IMPORT_FAILED", error),
+        };
+        result_value(result)
+    });
+    registry.register("model_reveal", |state, _events, payload| {
+        let params: ModelIdParams = params(payload)?;
         let preferences =
             match preferences::current_preferences(state.app_data_dir(), state.preferences()) {
                 Ok(preferences) => preferences,
@@ -1535,29 +2772,26 @@ pub fn register_commands(registry: &mut CommandRegistry) {
                     return result_value(preferences::command_error::<ResolvedPath>(error, true));
                 }
             };
-        let path = if let Some(model_id) = params.model_id {
-            match state
-                .models()
-                .installation_dir(Path::new(&preferences.model_root), &model_id)
-            {
-                Ok(path) => path,
-                Err(error) => {
-                    return result_value(OperationResult::<ResolvedPath>::failed(
-                        "MODEL_REVEAL_FAILED",
-                        error,
-                    ));
-                }
+        let path = match state
+            .models()
+            .reveal_installed_dir(Path::new(&preferences.model_root), &params.model_id)
+        {
+            Ok(path) => path,
+            Err(error) => {
+                return result_value(OperationResult::<ResolvedPath>::failed(
+                    "MODEL_REVEAL_FAILED",
+                    error,
+                ));
             }
-        } else {
-            PathBuf::from(preferences.model_root)
         };
-        let _ = std::fs::create_dir_all(&path);
         result_value(OperationResult::success(ResolvedPath {
             path: path.to_string_lossy().into_owned(),
         }))
     });
     registry.register("doctor_run", |state, events, payload| {
-        let app_version = normalize_app_version(params::<DoctorRunParams>(payload)?.app_version);
+        let doctor_params = params::<DoctorRunParams>(payload)?;
+        let app_version = normalize_app_version(doctor_params.app_version);
+        let depth = doctor_params.depth;
         let preferences =
             match preferences::current_preferences(state.app_data_dir(), state.preferences()) {
                 Ok(preferences) => preferences,
@@ -1577,26 +2811,83 @@ pub fn register_commands(registry: &mut CommandRegistry) {
                     ));
                 }
             };
-        let tools = FfmpegTools::discover().ok();
+        let runtime_probe = probe_bundled_runtime(state);
         let environment = DoctorEnvironment {
             architecture: profile.architecture,
             os_version: profile.os_version,
             memory_bytes: profile.memory_bytes,
             free_model_bytes: profile.free_model_bytes,
-            ffmpeg_available: tools.is_some(),
-            libass_available: tools.as_ref().is_some_and(ffmpeg_supports_ass_filter),
-            asr_runtime_ready: resolve_asr_sidecar_dir(state)
-                .join(".venv/bin/python")
-                .is_file(),
-            speaker_runtime_ready: resolve_speaker_sidecar_dir(state)
-                .join(".venv/bin/python")
-                .is_file(),
+            ffmpeg_available: runtime_probe.ffmpeg_available,
+            libass_available: runtime_probe.libass_available,
+            asr_runtime_ready: runtime_probe.asr_runtime_ready,
+            speaker_runtime_ready: runtime_probe.speaker_runtime_ready,
         };
         let result = match state
             .models()
             .doctor_report(Path::new(&preferences.model_root), environment)
         {
-            Ok(report) => {
+            Ok(mut report) => {
+                report.capability_checks = runtime_probe.checks;
+                let installed = |model_id: &str| {
+                    report
+                        .model_checks
+                        .iter()
+                        .find(|check| check.model_id == model_id)
+                        .is_some_and(|check| {
+                            check.state == double_love_engine::ModelInstallState::Installed
+                        })
+                };
+                let model_root_ready = report.model_root_available;
+                let asr_chain_ready = installed(&preferences.default_asr_model)
+                    && installed("qwen3-forced-aligner-0.6b-8bit");
+                let speaker_chain_ready =
+                    installed("wespeaker-voxceleb-resnet34-lm") && installed("silero-vad-v6");
+                report.capability_checks.push(doctor_check(
+                    "storage.model_root",
+                    if model_root_ready {
+                        DoctorCapabilityStatus::Ready
+                    } else {
+                        DoctorCapabilityStatus::Blocked
+                    },
+                    if model_root_ready {
+                        "模型目录可用。"
+                    } else {
+                        "模型目录不可用。"
+                    },
+                    (!model_root_ready).then_some("请在设置中重新选择可用的模型目录。"),
+                ));
+                report.capability_checks.push(doctor_check(
+                    "models.asr_chain",
+                    if asr_chain_ready {
+                        DoctorCapabilityStatus::Ready
+                    } else {
+                        DoctorCapabilityStatus::Warning
+                    },
+                    if asr_chain_ready {
+                        "默认转录模型与 ForcedAligner 均已校验。"
+                    } else {
+                        "默认转录模型或 ForcedAligner 尚未准备完成。"
+                    },
+                    (!asr_chain_ready).then_some("请在设置 → 本地模型中完成安装和校验。"),
+                ));
+                report.capability_checks.push(doctor_check(
+                    "models.speaker_chain",
+                    if speaker_chain_ready {
+                        DoctorCapabilityStatus::Ready
+                    } else {
+                        DoctorCapabilityStatus::Warning
+                    },
+                    if speaker_chain_ready {
+                        "说话人模型与 Silero VAD 均已校验。"
+                    } else {
+                        "说话人模型或 Silero VAD 尚未准备完成。"
+                    },
+                    (!speaker_chain_ready).then_some("请在设置 → 本地模型中完成安装和校验。"),
+                ));
+                if depth == DoctorRunDepth::Deep {
+                    let deep_checks = deep_diagnostics(state, &preferences, &report);
+                    report.capability_checks.extend(deep_checks);
+                }
                 let renderer_report = RendererDoctorReport {
                     report,
                     app_version,
@@ -1617,6 +2908,12 @@ pub fn register_commands(registry: &mut CommandRegistry) {
     });
     registry.register("transcribe_start", |state, events, payload| {
         let params: TranscribeStartParams = params(payload)?;
+        if !mlx_supported() {
+            return result_value(OperationResult::<Value>::failed(
+                "MLX_APPLE_SILICON_REQUIRED",
+                mlx_unsupported_message(),
+            ));
+        }
         let preferences =
             match preferences::current_preferences(state.app_data_dir(), state.preferences()) {
                 Ok(preferences) => preferences,
@@ -1625,7 +2922,10 @@ pub fn register_commands(registry: &mut CommandRegistry) {
                 }
             };
         let model_root = Path::new(&preferences.model_root);
-        let model_dir = match state.models().installed_dir(model_root, &params.model) {
+        let model_dir = match state
+            .models()
+            .installed_inference_dir(model_root, &params.model)
+        {
             Ok(path) => path,
             Err(error) => {
                 return result_value(OperationResult::<Value>::failed("MODEL_NOT_READY", error));
@@ -1633,15 +2933,29 @@ pub fn register_commands(registry: &mut CommandRegistry) {
         };
         let aligner_dir = match state
             .models()
-            .installed_dir(model_root, "qwen3-forced-aligner-0.6b")
+            .installed_inference_dir(model_root, "qwen3-forced-aligner-0.6b-8bit")
         {
             Ok(path) => path,
             Err(error) => {
                 return result_value(OperationResult::<Value>::failed("MODEL_NOT_READY", error));
             }
         };
+        let media_tools = match resolve_media_tools(state) {
+            Ok(tools) => tools,
+            Err(error) => {
+                return result_value(OperationResult::<Value>::failed(&error.code, &error.cause));
+            }
+        };
+        let package_dir = match resolve_asr_sidecar_dir(state) {
+            Ok(path) => path,
+            Err(error) => {
+                return result_value(OperationResult::<Value>::failed(
+                    "ASR_RUNTIME_MISSING",
+                    error,
+                ));
+            }
+        };
         let result = match state.open_project().with_current(|open| {
-            let package_dir = resolve_asr_sidecar_dir(state);
             let model_root_path = model_root.to_string_lossy().into_owned();
             let model_dir_path = model_dir.to_string_lossy().into_owned();
             let aligner_dir_path = aligner_dir.to_string_lossy().into_owned();
@@ -1654,7 +2968,7 @@ pub fn register_commands(registry: &mut CommandRegistry) {
                 (&model_root_path, "<MODEL>"),
             ]);
             let config = TranscribeConfig {
-                asset_id: params.asset_id,
+                asset_id: params.asset_id.clone(),
                 model: params.model,
                 model_dir,
                 aligner_dir,
@@ -1663,12 +2977,20 @@ pub fn register_commands(registry: &mut CommandRegistry) {
                 python: None,
                 package_dir,
                 log_dir: Path::new(&open.summary.root).join(".doublelove/logs"),
+                prepared_dir: Path::new(&open.summary.root).join(".doublelove/prepared"),
+                media_tools,
                 chunk_seconds: 30,
             };
-            let sink: SharedSink = Arc::new(ServiceProgressSink::new(events, replacements));
+            let sink: SharedSink = Arc::new(
+                ServiceProgressSink::new(events, replacements)
+                    .with_active_asset_tasks(Arc::clone(&state.active_asset_tasks)),
+            );
             start_transcription(Arc::clone(&open.store), state.task_registry(), sink, config)
         }) {
-            Ok(Ok(task_id)) => OperationResult::success(serde_json::json!({"task_id": task_id})),
+            Ok(Ok(task_id)) => {
+                state.track_asset_task(&task_id, &params.asset_id);
+                OperationResult::success(serde_json::json!({"task_id": task_id}))
+            }
             Ok(Err(error)) => OperationResult::failed("TRANSCRIBE_START_FAILED", error),
             Err(error) if error.code == PROJECT_NOT_OPEN => {
                 OperationResult::failed(PROJECT_NOT_OPEN, "请先打开或创建一个项目。")
@@ -1786,6 +3108,12 @@ pub fn register_commands(registry: &mut CommandRegistry) {
     });
     registry.register("speaker_diarize_start", |state, events, payload| {
         let params: AssetIdParams = params(payload)?;
+        if !mlx_supported() {
+            return result_value(OperationResult::<Value>::failed(
+                "MLX_APPLE_SILICON_REQUIRED",
+                mlx_unsupported_message(),
+            ));
+        }
         let preferences =
             match preferences::current_preferences(state.app_data_dir(), state.preferences()) {
                 Ok(preferences) => preferences,
@@ -1797,36 +3125,61 @@ pub fn register_commands(registry: &mut CommandRegistry) {
                 }
             };
         let model_root = Path::new(&preferences.model_root);
-        let speaker_model_dir = match state.models().installed_dir(model_root, "wespeaker-zh") {
+        let speaker_model_dir = match state.models().selected_speaker_model_dir(model_root) {
             Ok(path) => path,
             Err(error) => {
                 return result_value(OperationResult::<Value>::failed("MODEL_NOT_READY", error));
             }
         };
+        let vad_model_dir = match state
+            .models()
+            .installed_inference_dir(model_root, "silero-vad-v6")
+        {
+            Ok(path) => path,
+            Err(error) => {
+                return result_value(OperationResult::<Value>::failed("MODEL_NOT_READY", error));
+            }
+        };
+        let package_dir = match resolve_speaker_sidecar_dir(state) {
+            Ok(path) => path,
+            Err(error) => {
+                return result_value(OperationResult::<Value>::failed(
+                    "SPEAKER_RUNTIME_MISSING",
+                    error,
+                ));
+            }
+        };
         let result = match state.open_project().with_current(|open| {
-            let package_dir = resolve_speaker_sidecar_dir(state);
             let model_root_path = model_root.to_string_lossy().into_owned();
             let speaker_model_dir_path = speaker_model_dir.to_string_lossy().into_owned();
+            let vad_model_dir_path = vad_model_dir.to_string_lossy().into_owned();
             let package_dir_path = package_dir.to_string_lossy().into_owned();
             let replacements = renderer_path_replacements(&[
                 (&open.summary.root, "<PROJECT>"),
                 (&speaker_model_dir_path, "<MODEL>"),
+                (&vad_model_dir_path, "<MODEL>"),
                 (&package_dir_path, "<MODEL>"),
                 (&model_root_path, "<MODEL>"),
             ]);
             let config = DiarizeConfig {
-                asset_id: params.asset_id,
+                asset_id: params.asset_id.clone(),
                 mock: state.runtime.test_speaker_mock,
                 python: None,
                 package_dir,
                 log_dir: Path::new(&open.summary.root).join(".doublelove/logs"),
-                vad_model_dir: PathBuf::from("bundled"),
+                vad_model_dir,
                 speaker_model_dir,
             };
-            let sink: SharedSink = Arc::new(ServiceProgressSink::new(events, replacements));
+            let sink: SharedSink = Arc::new(
+                ServiceProgressSink::new(events, replacements)
+                    .with_active_asset_tasks(Arc::clone(&state.active_asset_tasks)),
+            );
             start_speaker_diarization(Arc::clone(&open.store), state.task_registry(), sink, config)
         }) {
-            Ok(Ok(task_id)) => OperationResult::success(serde_json::json!({"task_id": task_id})),
+            Ok(Ok(task_id)) => {
+                state.track_asset_task(&task_id, &params.asset_id);
+                OperationResult::success(serde_json::json!({"task_id": task_id}))
+            }
             Ok(Err(error)) => OperationResult::failed("SPEAKER_START_FAILED", error),
             Err(error) if error.code == PROJECT_NOT_OPEN => {
                 OperationResult::failed(PROJECT_NOT_OPEN, "请先打开或创建一个项目。")
@@ -2065,6 +3418,14 @@ mod tests {
     }
 
     #[test]
+    fn mlx_model_runtime_is_gated_to_apple_silicon() {
+        assert!(mlx_supported_for("macos", "aarch64"));
+        assert!(mlx_supported_for("macos", "arm64"));
+        assert!(!mlx_supported_for("macos", "x86_64"));
+        assert!(!mlx_supported_for("linux", "aarch64"));
+    }
+
+    #[test]
     fn open_project_slot_installs_replaces_and_reports_not_open() -> Result<(), Box<dyn Error>> {
         let app_data_dir = temp_directory("app-data");
         let service = DesktopService::new(Some(app_data_dir.clone()), Arc::new(TestEventSink))?;
@@ -2270,6 +3631,29 @@ mod tests {
     }
 
     #[test]
+    fn product_runtime_resolution_never_falls_back_to_external_tools() {
+        let state = DesktopState::new(
+            temp_directory("runtime-no-fallback"),
+            DesktopRuntimeConfig::default(),
+        );
+
+        assert!(resolve_media_tools(&state).is_err());
+        assert!(resolve_asr_sidecar_dir(&state).is_err());
+        assert!(resolve_speaker_sidecar_dir(&state).is_err());
+        assert!(resolve_model_download_runtime(&state).is_none());
+
+        let probe = probe_bundled_runtime(&state);
+        assert!(!probe.ffmpeg_available);
+        assert!(!probe.asr_runtime_ready);
+        assert!(probe.checks.iter().any(|check| {
+            check.id == "media.ffmpeg_runtime" && check.status == DoctorCapabilityStatus::Blocked
+        }));
+        assert!(probe.checks.iter().any(|check| {
+            check.id == "runtime.asr" && check.status == DoctorCapabilityStatus::Blocked
+        }));
+    }
+
+    #[test]
     fn renderer_diagnostic_sanitization_preserves_the_operation_contract() {
         let selected = "/private/source/selected.mp4";
         let project = "/private/project";
@@ -2392,6 +3776,22 @@ mod tests {
         assert!(!serialized.contains(&model_text));
         assert!(!serialized.contains(&aligner_text));
         assert!(!serialized.contains("0.1,0.2"));
+    }
+
+    #[test]
+    fn terminal_task_state_releases_the_asset_delete_guard() {
+        let tasks = Arc::new(Mutex::new(HashMap::from([(
+            "task-1".to_string(),
+            "asset-1".to_string(),
+        )])));
+        let events: Arc<dyn DesktopEventSink> = Arc::new(RecordingEventSink::default());
+        let sink = ServiceProgressSink::new(events, Vec::new())
+            .with_active_asset_tasks(Arc::clone(&tasks));
+
+        sink.task_state("task-1", TaskState::Running);
+        assert_eq!(tasks.lock().expect("tasks").len(), 1);
+        sink.task_state("task-1", TaskState::Cancelled);
+        assert!(tasks.lock().expect("tasks").is_empty());
     }
 
     #[test]

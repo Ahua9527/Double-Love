@@ -15,8 +15,8 @@ SQLite，也不要把项目、媒体、日志或凭据上传到公开 issue。
 `main.jsonl.1` 等轮转。项目内的转录与说话人任务日志位于
 `<project>/.doublelove/logs/`。
 
-打开“设置 → 诊断”，先点“运行诊断”。诊断页检查应用架构、
-ffmpeg/ffprobe、libass、模型完整性、离线 Python 运行时和模型目录剩余空间。
+打开“设置 → 诊断”，先点“运行诊断”。诊断页只检查 App 内置的
+ffmpeg/ffprobe、libass、H.264/AAC 编码能力、模型完整性、离线 Python 运行时和模型目录剩余空间；不会回退到 PATH、Homebrew 或系统 Python。
 “打开日志目录”只打开上述应用日志目录，不把路径返回 renderer。
 
 报告问题前保存：应用版本、macOS 版本、诊断项状态、可复现步骤和相关日志
@@ -42,13 +42,13 @@ marker 只含时间、exit code 与 signal；下一次 host 握手成功会清�
 ## libass 不可用或 MP4 渲染失败
 
 正式包应自带 `runtime/ffmpeg` 与 `runtime/ffprobe`，其中 ffmpeg 必须包含
-`ass` filter。诊断显示 ffmpeg 可用但 libass 不可用时：
+`ass` filter、`libx264` 和 `aac`。诊断显示 App 内置媒体运行时不可用时：
 
 1. 不要用 Homebrew 覆盖应用包内二进制，也不要绕过签名修改 `.app`。
 2. 从正式 Release 重新下载 DMG，验证后重装同版本。
-3. 在修复前可继续导出不依赖烧录的 XMEML 或 ASS；不要把失败 MP4 当成
+3. 在修复前可继续导出不依赖媒体 runtime 的 XMEML 或 ASS；不要把失败 MP4 当成
    完整输出。
-4. 发布机或开发机运行 `scripts/verify-release-runtime.sh`；它失败就不能
+4. 发布机运行 `scripts/verify-release-runtime.sh`；它失败就不能
    生成候选。
 
 ## 模型未就绪

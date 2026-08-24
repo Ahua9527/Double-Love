@@ -1,4 +1,5 @@
 import { Pause, Play, SkipBack, SkipForward } from 'lucide-react'
+import { Tooltip } from './Tooltip'
 
 interface TransportProps {
   playing: boolean
@@ -12,16 +13,16 @@ interface TransportProps {
 export function Transport({ playing, clock, disabled, onTogglePlay, onSkip }: TransportProps) {
   return (
     <div className="studio-transport">
-      <button
+      <Tooltip label="后退 5 秒"><button
         type="button"
+        aria-label="后退 5 秒"
         disabled={disabled}
         onClick={() => onSkip(-5)}
         className="studio-transport-skip"
       >
-        <SkipBack size={12} />
-        后退 5 秒
-      </button>
-      <button
+        <SkipBack size={15} />
+      </button></Tooltip>
+      <Tooltip label={playing ? '暂停' : '播放'}><button
         type="button"
         aria-label={playing ? '暂停' : '播放'}
         disabled={disabled}
@@ -29,16 +30,16 @@ export function Transport({ playing, clock, disabled, onTogglePlay, onSkip }: Tr
         className="studio-play-button"
       >
         {playing ? <Pause size={14} /> : <Play size={14} className="ml-0.5" />}
-      </button>
-      <button
+      </button></Tooltip>
+      <Tooltip label="前进 5 秒"><button
         type="button"
+        aria-label="前进 5 秒"
         disabled={disabled}
         onClick={() => onSkip(5)}
         className="studio-transport-skip"
       >
-        前进 5 秒
-        <SkipForward size={12} />
-      </button>
+        <SkipForward size={15} />
+      </button></Tooltip>
       <span className="studio-transport-clock">{clock}</span>
     </div>
   )

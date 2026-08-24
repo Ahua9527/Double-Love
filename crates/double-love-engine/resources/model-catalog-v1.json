@@ -2,17 +2,21 @@
   "schema_version": 1,
   "models": [
     {
-      "id": "qwen3-asr-0.6b",
-      "display_name": "Qwen3 ASR 0.6B",
+      "id": "qwen3-asr-0.6b-4bit",
+      "display_name": "Qwen3 ASR 0.6B · 4-bit",
       "component": "asr",
-      "repo_id": "Qwen/Qwen3-ASR-0.6B",
-      "revision": "5eb144179a02acc5e5ba31e748d22b0cf3e303b0",
+      "ui_role": "primary",
+      "repo_id": "mlx-community/Qwen3-ASR-0.6B-4bit",
+      "download_source": "modelscope",
+      "revision": "70ccd0ba0c24b0c78efc313ce81c1c78c64a3dd7",
       "files": [
         { "path": "chat_template.json", "size_bytes": 1161, "sha256": "75a8cfca24f00de72d796fbfed6858fc9614ef3dabd8696684cc3bc03a9c58ff", "allowed": true },
-        { "path": "config.json", "size_bytes": 6193, "sha256": "76d3ae4601ce939830b2517f4a6cadb86cc51316c3900af6b020b051c21a478c", "allowed": true },
+        { "path": "config.json", "size_bytes": 7187, "sha256": "923618cf5ca452fda0253a6be5c1a17f94a2e4851d3b98beb45848565587bd72", "allowed": true },
+        { "path": "configuration.json", "size_bytes": 64, "sha256": "625c81a3527ce4f7a739854b431f380a987dc4af5e07e099b568e50e2e3b248c", "allowed": true },
         { "path": "generation_config.json", "size_bytes": 142, "sha256": "1da527824d81e07118facff437e03f2e24a23311e3bdeb2368973fe77e5f275c", "allowed": true },
         { "path": "merges.txt", "size_bytes": 1671853, "sha256": "8831e4f1a044471340f7c0a83d7bd71306a5b867e95fd870f74d0c5308a904d5", "allowed": true },
-        { "path": "model.safetensors", "size_bytes": 1876091704, "sha256": "79d6cbd4c98c7bbffe9db2edac07f56cd6637d0d5944b27f6c2b8353840323ea", "allowed": true },
+        { "path": "model.safetensors", "size_bytes": 708236945, "sha256": "70c7e67e588062adce4f10796e47ad42ead51c6671eda61a0987eae38ca95ddf", "allowed": true },
+        { "path": "model.safetensors.index.json", "size_bytes": 71814, "sha256": "e3bb80ef0fd42a5be07b04e90c97d60460bbde8af3531e0bfe9100a61404d81a", "allowed": true },
         { "path": "preprocessor_config.json", "size_bytes": 330, "sha256": "45e120a4eda2c20c5d7f2ea9354e63536bf35e27aa573fb7cdf78017b378770d", "allowed": true },
         { "path": "tokenizer_config.json", "size_bytes": 12487, "sha256": "4942d005604266809309cabc9f4e9cb89ce855d59b14681fdc0e1cc62ea26c4c", "allowed": true },
         { "path": "vocab.json", "size_bytes": 2776833, "sha256": "ca10d7e9fb3ed18575dd1e277a2579c16d108e32f27439684afa0e10b1440910", "allowed": true }
@@ -20,26 +24,29 @@
       "license": "Apache-2.0",
       "license_url": "https://www.apache.org/licenses/LICENSE-2.0",
       "dependencies": [
-        { "model_id": "qwen3-forced-aligner-0.6b", "required": true, "reason": "Qwen3 ASR 逐词时间戳需要共享 ForcedAligner" }
+        { "model_id": "qwen3-forced-aligner-0.6b-8bit", "required": true, "reason": "Qwen3 ASR 逐词时间戳需要共享 ForcedAligner" }
       ],
       "min_memory_bytes": 8589934592,
-      "source_url_template": "https://huggingface.co/Qwen/Qwen3-ASR-0.6B/resolve/{revision}/{path}?download=true",
+      "source_url_template": "https://www.modelscope.cn/api/v1/models/mlx-community/Qwen3-ASR-0.6B-4bit/repo?Revision={revision}&FilePath={path}",
+      "replaces_model_id": "qwen3-asr-0.6b",
       "bundled": false
     },
     {
-      "id": "qwen3-asr-1.7b",
-      "display_name": "Qwen3 ASR 1.7B",
+      "id": "qwen3-asr-1.7b-8bit",
+      "display_name": "Qwen3 ASR 1.7B · 8-bit",
       "component": "asr",
-      "repo_id": "Qwen/Qwen3-ASR-1.7B",
-      "revision": "7278e1e70fe206f11671096ffdd38061171dd6e5",
+      "ui_role": "primary",
+      "repo_id": "mlx-community/Qwen3-ASR-1.7B-8bit",
+      "download_source": "modelscope",
+      "revision": "579e237ce6ec925252973afe835d2f98a138602f",
       "files": [
         { "path": "chat_template.json", "size_bytes": 1161, "sha256": "75a8cfca24f00de72d796fbfed6858fc9614ef3dabd8696684cc3bc03a9c58ff", "allowed": true },
-        { "path": "config.json", "size_bytes": 6194, "sha256": "2e74a751548b8ad7d7526d29365ad8144c345d8b412b1152d25dc6698452712f", "allowed": true },
+        { "path": "config.json", "size_bytes": 7188, "sha256": "1b76b3b6c655fc54595da025f7a96474ad9fa86363303fbdd61a7d8483ccfaf7", "allowed": true },
+        { "path": "configuration.json", "size_bytes": 64, "sha256": "625c81a3527ce4f7a739854b431f380a987dc4af5e07e099b568e50e2e3b248c", "allowed": true },
         { "path": "generation_config.json", "size_bytes": 142, "sha256": "1da527824d81e07118facff437e03f2e24a23311e3bdeb2368973fe77e5f275c", "allowed": true },
         { "path": "merges.txt", "size_bytes": 1671853, "sha256": "8831e4f1a044471340f7c0a83d7bd71306a5b867e95fd870f74d0c5308a904d5", "allowed": true },
-        { "path": "model-00001-of-00002.safetensors", "size_bytes": 4220320824, "sha256": "a4cd1f1a04d90b757dc7f7dd26254e69a013b19e80efe590a83c6a3bde8608d6", "allowed": true },
-        { "path": "model-00002-of-00002.safetensors", "size_bytes": 478200688, "sha256": "6e0b9d9e09e2e0238e7ef3cc8a484ab387e91b90f1900bedf88bc92d7929ccfc", "allowed": true },
-        { "path": "model.safetensors.index.json", "size_bytes": 64821, "sha256": "f994739fe38e5210b9e3e8ce6c6307315e2ceac3cb630e7b7414d69dce520f60", "allowed": true },
+        { "path": "model.safetensors", "size_bytes": 2463307541, "sha256": "bf304b009cc7eca79283056f787b44c952d24ac22cec787b39732bba3c23c13c", "allowed": true },
+        { "path": "model.safetensors.index.json", "size_bytes": 78968, "sha256": "0a5d0ec11188602242ff81a9969883d0fdeb98cd5d85cd1413089d897c201af5", "allowed": true },
         { "path": "preprocessor_config.json", "size_bytes": 330, "sha256": "45e120a4eda2c20c5d7f2ea9354e63536bf35e27aa573fb7cdf78017b378770d", "allowed": true },
         { "path": "tokenizer_config.json", "size_bytes": 12487, "sha256": "4942d005604266809309cabc9f4e9cb89ce855d59b14681fdc0e1cc62ea26c4c", "allowed": true },
         { "path": "vocab.json", "size_bytes": 2776833, "sha256": "ca10d7e9fb3ed18575dd1e277a2579c16d108e32f27439684afa0e10b1440910", "allowed": true }
@@ -47,24 +54,29 @@
       "license": "Apache-2.0",
       "license_url": "https://www.apache.org/licenses/LICENSE-2.0",
       "dependencies": [
-        { "model_id": "qwen3-forced-aligner-0.6b", "required": true, "reason": "Qwen3 ASR 逐词时间戳需要共享 ForcedAligner" }
+        { "model_id": "qwen3-forced-aligner-0.6b-8bit", "required": true, "reason": "Qwen3 ASR 逐词时间戳需要共享 ForcedAligner" }
       ],
       "min_memory_bytes": 17179869184,
-      "source_url_template": "https://huggingface.co/Qwen/Qwen3-ASR-1.7B/resolve/{revision}/{path}?download=true",
+      "source_url_template": "https://www.modelscope.cn/api/v1/models/mlx-community/Qwen3-ASR-1.7B-8bit/repo?Revision={revision}&FilePath={path}",
+      "replaces_model_id": "qwen3-asr-1.7b",
       "bundled": false
     },
     {
-      "id": "qwen3-forced-aligner-0.6b",
-      "display_name": "Qwen3 ForcedAligner 0.6B",
+      "id": "qwen3-forced-aligner-0.6b-8bit",
+      "display_name": "Qwen3 ForcedAligner 0.6B · 8-bit",
       "component": "forced_aligner",
-      "repo_id": "Qwen/Qwen3-ForcedAligner-0.6B",
-      "revision": "c7cbfc2048c462b0d63a45797104fc9db3ad62b7",
+      "ui_role": "dependency",
+      "repo_id": "mlx-community/Qwen3-ForcedAligner-0.6B-8bit",
+      "download_source": "modelscope",
+      "revision": "998b617c695f61865d444c62051fe51030acef6f",
       "files": [
         { "path": "chat_template.json", "size_bytes": 1161, "sha256": "75a8cfca24f00de72d796fbfed6858fc9614ef3dabd8696684cc3bc03a9c58ff", "allowed": true },
-        { "path": "config.json", "size_bytes": 5982, "sha256": "d616c65d46c4b90bdc651b0a0963ea932732241140f337f9bb6b0335a9c8ef09", "allowed": true },
+        { "path": "config.json", "size_bytes": 6940, "sha256": "8dc126e1a4ac001acb02f3a9ca6277c8a20a25485fde293bc99eeab3aedc604d", "allowed": true },
+        { "path": "configuration.json", "size_bytes": 64, "sha256": "625c81a3527ce4f7a739854b431f380a987dc4af5e07e099b568e50e2e3b248c", "allowed": true },
         { "path": "generation_config.json", "size_bytes": 115, "sha256": "948d089b23bca1d214e768d59c4438365665f52ec6d33678f4062206b3fbbb8c", "allowed": true },
         { "path": "merges.txt", "size_bytes": 1671853, "sha256": "8831e4f1a044471340f7c0a83d7bd71306a5b867e95fd870f74d0c5308a904d5", "allowed": true },
-        { "path": "model.safetensors", "size_bytes": 1835544544, "sha256": "47831d0e82f96b20e9034dba01a075ee06436654719f6a68289e49f1b65ce0e7", "allowed": true },
+        { "path": "model.safetensors", "size_bytes": 1271924386, "sha256": "be19ef8ac4326d032e7673342930b14c2df30bd68c1632493b0f563e30829f91", "allowed": true },
+        { "path": "model.safetensors.index.json", "size_bytes": 79108, "sha256": "766eb50873855eeb4d95ab92def358cfd173bfc8c7aabd8635ababa1edf6db79", "allowed": true },
         { "path": "preprocessor_config.json", "size_bytes": 330, "sha256": "45e120a4eda2c20c5d7f2ea9354e63536bf35e27aa573fb7cdf78017b378770d", "allowed": true },
         { "path": "tokenizer_config.json", "size_bytes": 12666, "sha256": "3ab80063f8511deb9566e6ad438d17b7a6277fcffd52d92854112f19d36bd81c", "allowed": true },
         { "path": "vocab.json", "size_bytes": 2776833, "sha256": "ca10d7e9fb3ed18575dd1e277a2579c16d108e32f27439684afa0e10b1440910", "allowed": true }
@@ -73,40 +85,130 @@
       "license_url": "https://www.apache.org/licenses/LICENSE-2.0",
       "dependencies": [],
       "min_memory_bytes": 8589934592,
-      "source_url_template": "https://huggingface.co/Qwen/Qwen3-ForcedAligner-0.6B/resolve/{revision}/{path}?download=true",
+      "source_url_template": "https://www.modelscope.cn/api/v1/models/mlx-community/Qwen3-ForcedAligner-0.6B-8bit/repo?Revision={revision}&FilePath={path}",
+      "replaces_model_id": "qwen3-forced-aligner-0.6b",
+      "bundled": false
+    },
+    {
+      "id": "wespeaker-voxceleb-resnet34-lm",
+      "display_name": "说话人识别 · MLX",
+      "component": "speaker",
+      "ui_role": "primary",
+      "repo_id": "mlx-community/wespeaker-voxceleb-resnet34-LM",
+      "download_source": "modelscope",
+      "revision": "d34f9e11f648c7e83d077bf6e10da94ba56f7b72",
+      "files": [
+        { "path": "config.json", "size_bytes": 590, "sha256": "5e598e1ef04d0c014a59f47d6a7884f26b9203bdefe08d2a5876c7b86cb40b75", "allowed": true },
+        { "path": "weights.npz", "size_bytes": 26614262, "sha256": "802706880b81ece11a9acefb2cf523ae91473e3b7615858390a1eded4efcdedf", "allowed": true }
+      ],
+      "license": "MIT",
+      "license_url": "https://opensource.org/license/mit",
+      "dependencies": [
+        { "model_id": "silero-vad-v6", "required": true, "reason": "说话人区间需要 Silero VAD" }
+      ],
+      "min_memory_bytes": null,
+      "source_url_template": "https://www.modelscope.cn/api/v1/models/mlx-community/wespeaker-voxceleb-resnet34-LM/repo?Revision={revision}&FilePath={path}",
+      "replaces_model_id": "wespeaker-zh",
+      "bundled": false
+    },
+    {
+      "id": "silero-vad-v6",
+      "display_name": "Silero VAD v6 · MLX",
+      "component": "vad",
+      "ui_role": "dependency",
+      "repo_id": "mlx-community/silero-vad-v6",
+      "download_source": "modelscope",
+      "revision": "c34917caf1d6fc01b763a4ab0345ff1724fdb9c2",
+      "files": [
+        { "path": "config.json", "size_bytes": 463, "sha256": "9fe1befb9692a0d4135adadc33f8075ef6d350bd2391b88d750f2c233f97fa0b", "allowed": true },
+        { "path": "model.safetensors", "size_bytes": 1237860, "sha256": "65b6c5f0293cbc44d109e58bef78b474d9c65dedbee814cf0b90ef5f0d9150ff", "allowed": true }
+      ],
+      "license": "MIT",
+      "license_url": "https://opensource.org/license/mit",
+      "dependencies": [],
+      "min_memory_bytes": null,
+      "source_url_template": "https://www.modelscope.cn/api/v1/models/mlx-community/silero-vad-v6/repo?Revision={revision}&FilePath={path}",
+      "replaces_model_id": "silero-vad",
+      "bundled": false
+    },
+    {
+      "id": "qwen3-asr-0.6b",
+      "display_name": "Qwen3 ASR 0.6B（旧版）",
+      "component": "asr",
+      "ui_role": "legacy",
+      "repo_id": "Qwen/Qwen3-ASR-0.6B",
+      "download_source": "modelscope",
+      "revision": "5eb144179a02acc5e5ba31e748d22b0cf3e303b0",
+      "files": [],
+      "license": "Apache-2.0",
+      "license_url": "https://www.apache.org/licenses/LICENSE-2.0",
+      "dependencies": [ { "model_id": "qwen3-forced-aligner-0.6b", "required": true, "reason": "旧版逐词时间戳依赖" } ],
+      "min_memory_bytes": 8589934592,
+      "source_url_template": "legacy://qwen3-asr-0.6b/{path}",
+      "bundled": false
+    },
+    {
+      "id": "qwen3-asr-1.7b",
+      "display_name": "Qwen3 ASR 1.7B（旧版）",
+      "component": "asr",
+      "ui_role": "legacy",
+      "repo_id": "Qwen/Qwen3-ASR-1.7B",
+      "download_source": "modelscope",
+      "revision": "7278e1e70fe206f11671096ffdd38061171dd6e5",
+      "files": [],
+      "license": "Apache-2.0",
+      "license_url": "https://www.apache.org/licenses/LICENSE-2.0",
+      "dependencies": [ { "model_id": "qwen3-forced-aligner-0.6b", "required": true, "reason": "旧版逐词时间戳依赖" } ],
+      "min_memory_bytes": 17179869184,
+      "source_url_template": "legacy://qwen3-asr-1.7b/{path}",
+      "bundled": false
+    },
+    {
+      "id": "qwen3-forced-aligner-0.6b",
+      "display_name": "Qwen3 ForcedAligner 0.6B（旧版）",
+      "component": "forced_aligner",
+      "ui_role": "legacy",
+      "repo_id": "Qwen/Qwen3-ForcedAligner-0.6B",
+      "download_source": "modelscope",
+      "revision": "c7cbfc2048c462b0d63a45797104fc9db3ad62b7",
+      "files": [],
+      "license": "Apache-2.0",
+      "license_url": "https://www.apache.org/licenses/LICENSE-2.0",
+      "dependencies": [],
+      "min_memory_bytes": 8589934592,
+      "source_url_template": "legacy://qwen3-forced-aligner-0.6b/{path}",
+      "bundled": false
+    },
+    {
+      "id": "wespeaker-zh",
+      "display_name": "说话人识别（中文，旧版）",
+      "component": "speaker",
+      "ui_role": "legacy",
+      "repo_id": "Wespeaker/wespeaker-cnceleb-resnet34",
+      "download_source": "huggingface",
+      "revision": "f5a201849aa7cae741ec75cd02a0bc9dd5712ca2",
+      "files": [],
+      "license": "CNCeleb Research-Only",
+      "license_url": "https://www.cnceleb.org/",
+      "dependencies": [ { "model_id": "silero-vad", "required": true, "reason": "旧版说话人区间依赖" } ],
+      "min_memory_bytes": null,
+      "source_url_template": "legacy://wespeaker-zh/{path}",
       "bundled": false
     },
     {
       "id": "silero-vad",
-      "display_name": "Silero VAD",
+      "display_name": "Silero VAD（旧版）",
       "component": "vad",
+      "ui_role": "legacy",
       "repo_id": "snakers4/silero-vad",
+      "download_source": "bundled",
       "revision": "806dcba3f0b5d95282d0889a074954a2f8c6397b",
       "files": [],
       "license": "MIT",
       "license_url": "https://github.com/snakers4/silero-vad/blob/master/LICENSE",
       "dependencies": [],
       "min_memory_bytes": null,
-      "source_url_template": "bundled://silero-vad/{revision}/{path}",
-      "bundled": true
-    },
-    {
-      "id": "wespeaker-zh",
-      "display_name": "WeSpeaker 中文说话人",
-      "component": "speaker",
-      "repo_id": "Wespeaker/wespeaker-cnceleb-resnet34",
-      "revision": "f5a201849aa7cae741ec75cd02a0bc9dd5712ca2",
-      "files": [
-        { "path": "config.yaml", "size_bytes": 1618, "sha256": "561486e23fa2717edd40342c311fae9e04d8434b67799e87e032541af891ac75", "allowed": true },
-        { "path": "avg_model.pt", "size_bytes": 35219659, "sha256": "e44852f375b6e22de812f64dc8dad17d2634ed44b90098b5da6c36e0a076cc30", "allowed": true }
-      ],
-      "license": "Apache-2.0",
-      "license_url": "https://github.com/wenet-e2e/wespeaker/blob/master/LICENSE",
-      "dependencies": [
-        { "model_id": "silero-vad", "required": true, "reason": "说话人区间需要 Silero VAD" }
-      ],
-      "min_memory_bytes": null,
-      "source_url_template": "https://huggingface.co/Wespeaker/wespeaker-cnceleb-resnet34/resolve/{revision}/{path}?download=true",
+      "source_url_template": "legacy://silero-vad/{path}",
       "bundled": false
     }
   ]

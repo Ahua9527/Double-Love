@@ -1,9 +1,13 @@
-"""Silero VAD + WeSpeaker local diarization implementation.
+"""Pure-MLX local diarization: Silero VAD v6 + WeSpeaker ResNet34.
 
-Only anonymous segment labels and cluster centroids leave this module. The Rust host stores the
-centroids in the local project database and never writes them to logs or export payloads.
+The host passes only already-verified, absolute model directories.  This module never
+accepts a repository id and never imports source code from a model directory, so a model
+download cannot turn into executable Python in the desktop process.
 """
 
+from __future__ import annotations
+
+import json
 import math
 import os
 import tempfile
@@ -12,6 +16,26 @@ from pathlib import Path
 
 
 PREPARED_RATE = 16_000
+VAD_CHUNK_SAMPLES = 512
+VAD_BLOCK_SAMPLES = VAD_CHUNK_SAMPLES * 8
+_VAD_MODELS: dict[str, object] = {}
+_SPEAKER_MODELS: dict[str, object] = {}
+_SILERO_16K_WEIGHTS = {
+    "vad_16k.conv1.bias",
+    "vad_16k.conv1.weight",
+    "vad_16k.conv2.bias",
+    "vad_16k.conv2.weight",
+    "vad_16k.conv3.bias",
+    "vad_16k.conv3.weight",
+    "vad_16k.conv4.bias",
+    "vad_16k.conv4.weight",
+    "vad_16k.final_conv.bias",
+    "vad_16k.final_conv.weight",
+    "vad_16k.lstm.Wh",
+    "vad_16k.lstm.Wx",
+    "vad_16k.lstm.bias",
+    "vad_16k.stft_conv.weight",
+}
 
 
 class SpeakerError(Exception):
@@ -57,7 +81,7 @@ def _write_segment(path: Path, pcm: bytes, start: int, end: int) -> None:
 def _cosine(left: list[float], right: list[float]) -> float:
     numerator = sum(a * b for a, b in zip(left, right))
     left_norm = math.sqrt(sum(a * a for a in left))
-    right_norm = math.sqrt(sum(b * b for b in right))
+    right_norm = math.sqrt(sum(a * a for a in right))
     return numerator / max(left_norm * right_norm, 1e-12)
 
 
@@ -66,73 +90,191 @@ def _mean(vectors: list[list[float]]) -> list[float]:
     return [sum(vector[index] for vector in vectors) / len(vectors) for index in range(length)]
 
 
+def _local_model_dir(value: str, *, label: str, files: tuple[str, ...]) -> Path:
+    path = Path(value).expanduser()
+    if not path.is_absolute() or not path.is_dir():
+        raise SpeakerError("SPEAKER_MODEL_PATH_INVALID", f"本地 {label} 模型目录不可用。")
+    if any(not (path / file).is_file() for file in files):
+        raise SpeakerError("SPEAKER_MODEL_FILES_MISSING", f"本地 {label} 模型文件不完整。")
+    return path
+
+
+def _vad_scalar(value) -> float:
+    """Convert an evaluated MLX scalar (or a test double) without importing another backend."""
+    try:
+        value = value[0][0]
+    except (IndexError, TypeError):
+        pass
+    if hasattr(value, "item"):
+        value = value.item()
+    return float(value)
+
+
+def _validate_vad_weights(path: Path) -> None:
+    """Require the exact v6 16 kHz tensor layout before using non-strict loading.
+
+    mlx-audio builds both the 8 kHz and 16 kHz branches, while the selected v6
+    checkpoint intentionally ships only the 16 kHz branch.  Our media pipeline is
+    fixed at 16 kHz, so the absent 8 kHz parameters are expected; every 16 kHz
+    parameter must still be present and no unknown tensor is accepted.
+    """
+    try:
+        import mlx.core as mx
+
+        keys = set(mx.load(str(path)).keys())
+    except Exception as error:
+        raise SpeakerError("SPEAKER_MODEL_MISSING", "本地 Silero VAD 权重不可读取。") from error
+    if keys != _SILERO_16K_WEIGHTS:
+        raise SpeakerError("SPEAKER_MODEL_MISSING", "本地 Silero VAD 权重结构不匹配。")
+
+
+def _vad_256ms_segments(model, samples, config: dict) -> list[tuple[int, int]]:
+    """Run Silero in 8×32ms batches and aggregate each 256ms block with noisy-OR.
+
+    `mlx_audio.vad.Model.feed` performs the MLX forward pass and carries its LSTM state.
+    The grouping here reduces synchronization overhead for offline editor media while keeping
+    all time values as 16 kHz integer samples.
+    """
+    import numpy as np
+
+    original_length = int(samples.size)
+    if original_length == 0:
+        return []
+    padding = (-original_length) % VAD_BLOCK_SAMPLES
+    if padding:
+        samples = np.pad(samples, (0, padding))
+    state = model.initial_state(sample_rate=PREPARED_RATE)
+    probabilities: list[float] = []
+    for block_start in range(0, int(samples.size), VAD_BLOCK_SAMPLES):
+        product = 1.0
+        block = samples[block_start : block_start + VAD_BLOCK_SAMPLES]
+        for chunk_start in range(0, VAD_BLOCK_SAMPLES, VAD_CHUNK_SAMPLES):
+            probability, state = model.feed(
+                block[chunk_start : chunk_start + VAD_CHUNK_SAMPLES],
+                state=state,
+                sample_rate=PREPARED_RATE,
+            )
+            product *= 1.0 - max(0.0, min(1.0, _vad_scalar(probability)))
+        probabilities.append(1.0 - product)
+
+    threshold = float(config.get("threshold", 0.5))
+    min_speech = max(1, round(float(config.get("min_speech_duration_ms", 250)) * PREPARED_RATE / 1000))
+    min_silence = max(1, round(float(config.get("min_silence_duration_ms", 100)) * PREPARED_RATE / 1000))
+    pad = max(0, round(float(config.get("speech_pad_ms", 30)) * PREPARED_RATE / 1000))
+    raw: list[tuple[int, int]] = []
+    start: int | None = None
+    last_speech_end: int | None = None
+    silence = 0
+    for index, probability in enumerate(probabilities):
+        block_start = index * VAD_BLOCK_SAMPLES
+        block_end = min(original_length, block_start + VAD_BLOCK_SAMPLES)
+        if block_start >= original_length:
+            break
+        if probability >= threshold:
+            if start is None:
+                start = block_start
+            last_speech_end = block_end
+            silence = 0
+            continue
+        if start is None:
+            continue
+        silence += block_end - block_start
+        if silence >= min_silence:
+            end = last_speech_end or block_start
+            if end - start >= min_speech:
+                raw.append((start, end))
+            start = None
+            last_speech_end = None
+            silence = 0
+    if start is not None:
+        end = last_speech_end or original_length
+        if end - start >= min_speech:
+            raw.append((start, end))
+
+    padded: list[tuple[int, int]] = []
+    for start, end in raw:
+        start = max(0, start - pad)
+        end = min(original_length, end + pad)
+        if padded and start <= padded[-1][1]:
+            padded[-1] = (padded[-1][0], max(padded[-1][1], end))
+        else:
+            padded.append((start, end))
+    return padded
+
+
 def _vad_segments(pcm: bytes, vad_model_dir: str) -> list[tuple[int, int]]:
+    model_dir = _local_model_dir(
+        vad_model_dir,
+        label="Silero VAD",
+        files=("config.json", "model.safetensors"),
+    )
+    key = str(model_dir)
     try:
         import numpy as np
-        import torch
-        from silero_vad import get_speech_timestamps, load_silero_vad
+        from mlx_audio.vad import load as load_vad
     except Exception as error:
         raise SpeakerError(
             "SPEAKER_DEPENDENCY_MISSING",
-            "Silero VAD 依赖不可用；请重新运行 prepare-speaker.sh。",
+            "MLX Silero VAD 依赖不可用；请重新安装本机模型运行时。",
         ) from error
-    # 当前 Silero 权重随签名 App 的 Python runtime 分发。要求 Rust 仍传入一个
-    # 本地目录/`bundled` 标识，防止未来误把 repo id 交给此处而触发联网下载。
-    if vad_model_dir and vad_model_dir != "bundled":
-        vad_path = Path(vad_model_dir).expanduser()
-        if not vad_path.is_absolute() or not vad_path.is_dir():
-            raise SpeakerError("SPEAKER_MODEL_PATH_INVALID", "Silero VAD 必须使用本地 bundled runtime。")
-    os.environ["HF_HUB_OFFLINE"] = "1"
-    os.environ["TRANSFORMERS_OFFLINE"] = "1"
-    audio = torch.from_numpy(np.frombuffer(pcm, dtype=np.int16).copy()).float() / 32768.0
-    model = load_silero_vad(onnx=True)
-    timestamps = get_speech_timestamps(audio, model, sampling_rate=PREPARED_RATE)
-    return [(int(item["start"]), int(item["end"])) for item in timestamps if item["end"] > item["start"]]
-
-
-def _load_wespeaker(speaker_model_dir: str):
-    model_dir = Path(speaker_model_dir).expanduser()
-    if not model_dir.is_absolute() or not model_dir.is_dir():
-        raise SpeakerError("SPEAKER_MODEL_PATH_INVALID", "本地 WeSpeaker 模型目录不可用。")
-    if not (model_dir / "config.yaml").is_file() or not (model_dir / "avg_model.pt").is_file():
-        raise SpeakerError("SPEAKER_MODEL_FILES_MISSING", "本地 WeSpeaker 模型文件不完整。")
-    try:
-        import wespeaker
-    except Exception as error:
-        raise SpeakerError(
-            "SPEAKER_DEPENDENCY_MISSING",
-            "WeSpeaker 依赖不可用；请重新运行 prepare-speaker.sh。",
-        ) from error
-    try:
+    if key not in _VAD_MODELS:
         os.environ["HF_HUB_OFFLINE"] = "1"
         os.environ["TRANSFORMERS_OFFLINE"] = "1"
-        # 只传绝对目录；不再传 "chinese"，避免 API 自动下载或访问 WESPEAKER_HOME。
-        return wespeaker.load_model(str(model_dir))
+        try:
+            _validate_vad_weights(model_dir / "model.safetensors")
+            # The v6 checkpoint contains only the verified 16 kHz branch.  The
+            # loader's optional 8 kHz branch therefore has to remain unfilled.
+            _VAD_MODELS[key] = load_vad(model_dir, strict=False)
+        except Exception as error:
+            raise SpeakerError("SPEAKER_MODEL_MISSING", "本地 Silero VAD 模型不可用。") from error
+    try:
+        samples = np.frombuffer(pcm, dtype=np.int16).astype(np.float32) / 32768.0
+        config = json.loads((model_dir / "config.json").read_text(encoding="utf-8"))
+        return _vad_256ms_segments(_VAD_MODELS[key], samples, config)
+    except SpeakerError:
+        raise
     except Exception as error:
-        raise SpeakerError(
-            "SPEAKER_MODEL_MISSING",
-            "本地 WeSpeaker 模型不可用；请先在设置中完成下载。",
-        ) from error
+        raise SpeakerError("SPEAKER_VAD_FAILED", "MLX Silero VAD 无法分析准备音频。") from error
+
+
+def _load_speaker(speaker_model_dir: str):
+    model_dir = _local_model_dir(
+        speaker_model_dir,
+        label="说话人识别",
+        files=("config.json", "weights.npz"),
+    )
+    key = str(model_dir)
+    if key not in _SPEAKER_MODELS:
+        try:
+            from .mlx_resnet import load_resnet34_embedding
+
+            _SPEAKER_MODELS[key] = load_resnet34_embedding(model_dir / "weights.npz")
+        except SpeakerError:
+            raise
+        except Exception as error:
+            raise SpeakerError("SPEAKER_MODEL_MISSING", "本地 MLX 说话人模型不可用。") from error
+    return _SPEAKER_MODELS[key]
 
 
 def _embedding(model, wav: Path) -> list[float]:
     try:
-        value = model.extract_embedding(str(wav))
-        if hasattr(value, "detach"):
-            value = value.detach().cpu().numpy()
+        from .mlx_resnet import fbank_80, read_pcm_wav
+
+        features = fbank_80(read_pcm_wav(wav))
+        value = model.extract_embedding(features)
         if hasattr(value, "tolist"):
             value = value.tolist()
         if value and isinstance(value[0], list):
             value = value[0]
         return [float(item) for item in value]
     except Exception as error:
-        raise SpeakerError("SPEAKER_EMBEDDING_FAILED", "无法提取本地声纹嵌入。") from error
+        raise SpeakerError("SPEAKER_EMBEDDING_FAILED", "无法提取本地 MLX 声纹嵌入。") from error
 
 
 def diarize(cmd: dict, cancel, emit) -> None:
     task_id = cmd.get("task_id", "")
     source_rate = int(cmd.get("source_sample_rate", 48_000))
-    vad_model_dir = cmd.get("vad_model_dir", "bundled")
+    vad_model_dir = cmd.get("vad_model_dir", "")
     speaker_model_dir = cmd.get("speaker_model_dir", "")
     if source_rate <= 0:
         raise SpeakerError("SPEAKER_BAD_COMMAND", "source_sample_rate 必须为正整数。")
@@ -146,7 +288,7 @@ def diarize(cmd: dict, cancel, emit) -> None:
         emit({"event": "speaker_segments", "task_id": task_id, "segments": [], "embeddings": []})
         emit({"event": "diarization_done", "task_id": task_id, "segment_count": 0})
         return
-    model = _load_wespeaker(speaker_model_dir)
+    model = _load_speaker(speaker_model_dir)
     clusters: list[dict] = []
     rows: list[tuple[int, int, str]] = []
     threshold = float(os.environ.get("DOUBLELOVE_SPEAKER_CLUSTER_THRESHOLD", "0.82"))
@@ -155,8 +297,6 @@ def diarize(cmd: dict, cancel, emit) -> None:
             if cancel.is_set():
                 emit({"event": "cancelled", "task_id": task_id})
                 return
-            # WeSpeaker needs enough speech to build a stable embedding; short VAD bursts are merged
-            # by attaching them to the nearest discovered cluster only after an embedding is available.
             if end - start < PREPARED_RATE // 2:
                 continue
             wav = Path(temp_dir) / f"segment-{index}.wav"

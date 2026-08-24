@@ -54,7 +54,7 @@ fn run(
     apply: bool,
     resolve_target: impl FnOnce(&str) -> PathBuf,
 ) -> OperationResult<ExportOutcome> {
-    let asset = match store.media_asset(asset_id) {
+    let asset = match store.active_media_asset(asset_id) {
         Ok(Some(asset)) => asset,
         Ok(None) => {
             return OperationResult::failed(

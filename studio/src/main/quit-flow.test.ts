@@ -29,12 +29,11 @@ describe('before-quit flow', () => {
     const quit = vi.fn()
 
     handleBeforeQuit({ preventDefault }, state, { stop, stopImmediately }, quit)
-    await Promise.resolve()
+    await vi.waitFor(() => expect(quit).toHaveBeenCalledOnce())
 
     expect(preventDefault).toHaveBeenCalledOnce()
     expect(stop).toHaveBeenCalledOnce()
     expect(stopImmediately).not.toHaveBeenCalled()
-    expect(quit).toHaveBeenCalledOnce()
     expect(state.allowQuit).toBe(true)
   })
 })

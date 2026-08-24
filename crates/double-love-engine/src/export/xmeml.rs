@@ -448,6 +448,8 @@ mod tests {
             (FrameRate::Fps24Ntsc, 24, "TRUE"),
             (FrameRate::Fps30Ntsc, 30, "TRUE"),
             (FrameRate::Fps60Ntsc, 60, "TRUE"),
+            (FrameRate::Fps120Ntsc, 120, "TRUE"),
+            (FrameRate::Fps120, 120, "FALSE"),
             (FrameRate::Fps25, 25, "FALSE"),
         ] {
             let ir = golden_ir(rate);

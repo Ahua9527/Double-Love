@@ -8,6 +8,8 @@ import {
   clampSeconds,
   exportBlockMessage,
   formatClock,
+  formatFrameTimecode,
+  formatTimecodeSeconds,
   frameRateFps,
   loadPanelState,
   needsSpaceBetween,
@@ -36,11 +38,24 @@ describe('播放头时钟', () => {
   })
 
   it('播放头时钟含总长且 clamp 到总长', () => {
-    expect(playheadClock(0, 120)).toBe('00:00 / 02:00')
-    expect(playheadClock(42.5, 120)).toBe('00:42 / 02:00')
-    expect(playheadClock(120, 120)).toBe('02:00 / 02:00')
-    expect(playheadClock(999, 120)).toBe('02:00 / 02:00')
-    expect(playheadClock(42.125, 120, true)).toBe('00:42.125 / 02:00.000')
+    expect(playheadClock(0, 120, 'fps_25')).toBe('00:00:00:00 / 00:02:00:00')
+    expect(playheadClock(42.5, 120, 'fps_25')).toBe('00:00:42:12 / 00:02:00:00')
+    expect(playheadClock(120, 120, 'fps_25')).toBe('00:02:00:00 / 00:02:00:00')
+    expect(playheadClock(999, 120, 'fps_25')).toBe('00:02:00:00 / 00:02:00:00')
+    expect(playheadClock(1, 999, 'fps_30_ntsc', 30)).toBe('00:00:00:29 / 00:00:01:00')
+  })
+
+  it('全部支持帧率都显示非丢帧 HH:MM:SS:FF', () => {
+    expect(formatFrameTimecode(0, 'fps_24')).toBe('00:00:00:00')
+    expect(formatFrameTimecode(24, 'fps_24_ntsc')).toBe('00:00:01:00')
+    expect(formatFrameTimecode(25, 'fps_25')).toBe('00:00:01:00')
+    expect(formatFrameTimecode(30, 'fps_30_ntsc')).toBe('00:00:01:00')
+    expect(formatFrameTimecode(50, 'fps_50')).toBe('00:00:01:00')
+    expect(formatFrameTimecode(60, 'fps_60_ntsc')).toBe('00:00:01:00')
+    expect(formatFrameTimecode(119, 'fps_120_ntsc')).toBe('00:00:00:119')
+    expect(formatFrameTimecode(120, 'fps_120')).toBe('00:00:01:000')
+    expect(formatFrameTimecode(25 * 60 * 60, 'fps_25')).toBe('01:00:00:00')
+    expect(formatTimecodeSeconds(1, 'fps_30_ntsc')).toBe('00:00:00:29')
   })
 
   it('clampSeconds 边界', () => {
@@ -222,6 +237,8 @@ describe('帧率数值（帧→秒显示换算）', () => {
     expect(frameRateFps('fps_60')).toBe(60)
     expect(frameRateFps('fps_24_ntsc')).toBeCloseTo(23.976, 3)
     expect(frameRateFps('fps_30_ntsc')).toBeCloseTo(29.97, 2)
+    expect(frameRateFps('fps_120')).toBe(120)
+    expect(frameRateFps('fps_120_ntsc')).toBeCloseTo(119.88, 2)
   })
 })
 

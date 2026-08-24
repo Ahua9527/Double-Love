@@ -20,10 +20,12 @@ struct HostProcess {
 }
 
 impl HostProcess {
-    fn spawn(app_data_dir: &Path) -> Self {
+    fn spawn(app_data_dir: &Path, resource_dir: &Path) -> Self {
         let mut child = Command::new(env!("CARGO_BIN_EXE_double-love-desktop-host"))
             .arg("--app-data-dir")
             .arg(app_data_dir)
+            .arg("--resource-dir")
+            .arg(resource_dir)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -161,11 +163,20 @@ fn imports_lists_and_resolves_project_media_without_renderer_path_exposure() {
     let unsupported_media = root.join("unsupported.mp4");
     let probe_failure_media = root.join("synthetic-ffprobe-failure.mp4");
     fs::create_dir_all(&root).expect("temporary root");
-    generate_media(&tools, &supported_media, "25");
+    let bundled_runtime = root.join("runtime");
+    fs::create_dir_all(&bundled_runtime).expect("bundled runtime directory");
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(&tools.ffmpeg, bundled_runtime.join("ffmpeg"))
+            .expect("link bundled ffmpeg fixture");
+        std::os::unix::fs::symlink(&tools.ffprobe, bundled_runtime.join("ffprobe"))
+            .expect("link bundled ffprobe fixture");
+    }
+    generate_media(&tools, &supported_media, "120");
     generate_media(&tools, &unsupported_media, "27");
     fs::write(&probe_failure_media, b"synthetic invalid media").expect("invalid media fixture");
 
-    let mut host = HostProcess::spawn(&app_data);
+    let mut host = HostProcess::spawn(&app_data, &root);
     for (id, command, payload) in [
         (
             "closed-import",
@@ -186,6 +197,10 @@ fn imports_lists_and_resolves_project_media_without_renderer_path_exposure() {
 
     let created = host.invoke("create", "project_create", json!({"path": project}));
     assert_eq!(created["status"], "success");
+    let project_id = created["data"]["project_id"]
+        .as_str()
+        .expect("project id")
+        .to_string();
     let canonical_project = project
         .canonicalize()
         .expect("canonical project")
@@ -232,7 +247,16 @@ fn imports_lists_and_resolves_project_media_without_renderer_path_exposure() {
 
     let imported = host.invoke("import", "import_media", json!({"path": supported_media}));
     assert_eq!(imported["status"], "success");
-    assert_eq!(imported["data"]["status"], "prepared");
+    assert_eq!(imported["data"]["status"], "imported");
+    assert!(
+        !project.join(".doublelove/prepared").exists()
+            || std::fs::read_dir(project.join(".doublelove/prepared"))
+                .expect("prepared directory")
+                .next()
+                .is_none(),
+        "import must not extract a prepared WAV"
+    );
+    assert_eq!(imported["data"]["rate"], "fps_120");
     let asset_id = imported["data"]["id"]
         .as_str()
         .expect("imported asset id")
@@ -262,7 +286,8 @@ fn imports_lists_and_resolves_project_media_without_renderer_path_exposure() {
     assert_eq!(listed["status"], "success");
     assert_eq!(listed["data"].as_array().expect("asset list").len(), 1);
     assert_eq!(listed["data"][0]["id"], asset_id);
-    assert_eq!(listed["data"][0]["status"], "prepared");
+    assert_eq!(listed["data"][0]["status"], "imported");
+    assert_eq!(listed["data"][0]["prepared_available"], false);
     let mut asset_fields = listed["data"][0]
         .as_object()
         .expect("asset summary object")
@@ -279,6 +304,7 @@ fn imports_lists_and_resolves_project_media_without_renderer_path_exposure() {
             "duration_samples",
             "height",
             "id",
+            "prepared_available",
             "rate",
             "status",
             "width",
@@ -304,6 +330,27 @@ fn imports_lists_and_resolves_project_media_without_renderer_path_exposure() {
     );
     assert_eq!(resolved["status"], "success");
     assert_eq!(resolved["data"], json!({"path": canonical_media}));
+
+    let thumbnail = host.invoke(
+        "thumbnail",
+        "resolve_project_thumbnail",
+        json!({"project_id": project_id}),
+    );
+    assert_eq!(thumbnail["status"], "success");
+    let thumbnail_path = thumbnail["data"]["path"]
+        .as_str()
+        .expect("thumbnail cache path");
+    assert!(Path::new(thumbnail_path).is_file());
+    assert!(thumbnail_path.contains(".doublelove/cache/project-library-thumbnail.jpg"));
+    assert!(!thumbnail_path.contains(&canonical_media));
+    assert_eq!(
+        host.invoke(
+            "thumbnail-cached",
+            "resolve_project_thumbnail",
+            json!({"project_id": created["data"]["project_id"]}),
+        )["data"]["path"],
+        thumbnail_path
+    );
 
     let unknown = host.invoke(
         "resolve-unknown",
@@ -332,6 +379,7 @@ fn imports_lists_and_resolves_project_media_without_renderer_path_exposure() {
         .and_then(|tail| tail.split("])").next())
         .expect("renderer command allowlist");
     assert!(!renderer_allowlist.contains("resolve_media_asset"));
+    assert!(!renderer_allowlist.contains("resolve_project_thumbnail"));
 
     assert_eq!(
         host.invoke("usable", "assets_list", json!({}))["status"],

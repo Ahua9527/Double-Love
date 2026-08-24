@@ -5,7 +5,7 @@ import type { MediaAssetSummary } from '../../../../bindings/MediaAssetSummary'
 import type { TranscriptViewData } from '../../../../bindings/TranscriptViewData'
 import type { WordAnchor } from '../../../../bindings/WordAnchor'
 import {
-  formatClock,
+  formatTimecodeSeconds,
   needsSpaceBetween,
   num,
   omitCovers,
@@ -155,7 +155,7 @@ function VirtualTranscript({
                 className={`studio-transcript-segment ${segment.omitted ? 'is-omitted' : ''}`}
                 style={{ position: 'absolute', top: 0, left: 0, width: '100%', transform: `translateY(${virtualRow.start}px)` }}
               >
-                <time>{formatClock(num(segment.start_sample) / sampleRate)}</time>
+                <time>{formatTimecodeSeconds(num(segment.start_sample) / sampleRate, asset.rate)}</time>
                 <div>
                   {speakerName && <strong>{speakerName}</strong>}
                   <p>{words.map((word, index) => renderWord(word, words[index - 1]))}</p>

@@ -237,6 +237,8 @@ mod tests {
             FrameRate::Fps50,
             FrameRate::Fps60Ntsc,
             FrameRate::Fps60,
+            FrameRate::Fps120Ntsc,
+            FrameRate::Fps120,
         ];
         let sources = rates
             .iter()

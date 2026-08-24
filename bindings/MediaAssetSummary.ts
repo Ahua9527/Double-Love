@@ -5,4 +5,4 @@ import type { FrameRate } from "./FrameRate";
 /**
  * 导入后的资产摘要（import_media 命令返回值）。
  */
-export type MediaAssetSummary = { id: string, display_name: string, duration_samples: bigint, audio_sample_rate: bigint, rate: FrameRate, width: bigint | null, height: bigint | null, audio_channels: bigint | null, status: AssetStatus, };
+export type MediaAssetSummary = { id: string, display_name: string, duration_samples: bigint, audio_sample_rate: bigint, rate: FrameRate, width: bigint | null, height: bigint | null, audio_channels: bigint | null, status: AssetStatus, prepared_available: boolean, };

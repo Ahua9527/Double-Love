@@ -13,9 +13,10 @@
     "preview": "vite preview",
     "preview:vite": "vite",
     "postinstall": "install-electron",
+    "native:build": "scripts/build-avfoundation-player.sh",
     "electron:dev": "electron-vite dev",
-    "electron:build": "electron-vite build",
-    "e2e:electron": "electron-vite build && playwright test",
+    "electron:build": "pnpm native:build && electron-vite build",
+    "e2e:electron": "pnpm native:build && electron-vite build && playwright test",
     "pack:dir": "electron-builder --dir",
     "pack": "electron-builder --mac --arm64"
   },

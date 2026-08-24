@@ -29,6 +29,8 @@ extraResources:
     to: runtime
   - from: build/model-runtime
     to: model-runtime
+  - from: build/native
+    to: native
 publish:
   provider: github
   owner: Ahua9527

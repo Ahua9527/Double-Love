@@ -55,7 +55,7 @@ class TranscriberOfflineTests(unittest.TestCase):
             pcm = b"\x00\x00" * 16_000
             words = transcriber.transcribe_chunk(
                 pcm,
-                model="qwen3-asr-0.6b",
+                model="qwen3-asr-0.6b-4bit",
                 model_dir=str(asr),
                 aligner_dir=str(aligner),
                 language="zh",

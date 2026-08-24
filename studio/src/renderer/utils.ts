@@ -44,17 +44,47 @@ export function formatClock(seconds: number): string {
   return `${pad2(minutes)}:${pad2(secs)}`
 }
 
-function formatClockMilliseconds(seconds: number): string {
-  const clamped = Math.max(0, seconds)
-  const total = Math.floor(clamped)
-  const millis = Math.floor((clamped - total) * 1000)
-  return `${formatClock(total)}.${String(millis).padStart(3, '0')}`
+export function frameRateTimebase(rate: FrameRate): number {
+  if (rate === 'fps_24' || rate === 'fps_24_ntsc') return 24
+  if (rate === 'fps_25') return 25
+  if (rate === 'fps_30' || rate === 'fps_30_ntsc') return 30
+  if (rate === 'fps_50') return 50
+  if (rate === 'fps_60' || rate === 'fps_60_ntsc') return 60
+  return 120
 }
 
-/** 传输条上的播放头时钟；设置开启时显示毫秒。 */
-export function playheadClock(currentSec: number, durationSec: number, showMilliseconds = false): string {
-  const format = showMilliseconds ? formatClockMilliseconds : formatClock
-  return `${format(clampSeconds(currentSec, durationSec))} / ${format(durationSec)}`
+export function secondsToFrame(seconds: number, rate: FrameRate): number {
+  return Math.max(0, Math.floor(Math.max(0, seconds) * frameRateFps(rate) + 1e-7))
+}
+
+/** 整数帧号 → 非丢帧 HH:MM:SS:FF。仅用于用户显示，不改变引擎时间基。 */
+export function formatFrameTimecode(frame: number | bigint, rate: FrameRate): string {
+  const timebase = frameRateTimebase(rate)
+  const totalFrames = Math.max(0, Math.floor(Number(frame)))
+  const frames = totalFrames % timebase
+  const totalSeconds = Math.floor(totalFrames / timebase)
+  const seconds = totalSeconds % 60
+  const totalMinutes = Math.floor(totalSeconds / 60)
+  const minutes = totalMinutes % 60
+  const hours = Math.floor(totalMinutes / 60)
+  const frameWidth = timebase >= 100 ? 3 : 2
+  return `${String(hours).padStart(2, '0')}:${pad2(minutes)}:${pad2(seconds)}:${String(frames).padStart(frameWidth, '0')}`
+}
+
+export function formatTimecodeSeconds(seconds: number, rate: FrameRate): string {
+  return formatFrameTimecode(secondsToFrame(seconds, rate), rate)
+}
+
+/** 传输条时钟固定显示帧；精确总帧数可绕过秒数往返换算。 */
+export function playheadClock(
+  currentSec: number,
+  durationSec: number,
+  rate: FrameRate,
+  durationFrames?: number | bigint,
+): string {
+  const current = secondsToFrame(clampSeconds(currentSec, durationSec), rate)
+  const duration = durationFrames ?? secondsToFrame(durationSec, rate)
+  return `${formatFrameTimecode(current, rate)} / ${formatFrameTimecode(duration, rate)}`
 }
 
 // ---- 时间线刻度尺 ----
@@ -203,6 +233,8 @@ const FRAME_RATE_LABELS: Record<FrameRate, string> = {
   fps_50: '50 fps',
   fps_60: '60 fps',
   fps_60_ntsc: '59.94 fps (NTSC)',
+  fps_120: '120 fps',
+  fps_120_ntsc: '119.88 fps (NTSC)',
 }
 
 export function frameRateLabel(rate: FrameRate): string {
@@ -220,7 +252,46 @@ export function frameRateFps(rate: FrameRate): number {
     case 'fps_50': return 50
     case 'fps_60': return 60
     case 'fps_60_ntsc': return 60000 / 1001
+    case 'fps_120': return 120
+    case 'fps_120_ntsc': return 120000 / 1001
   }
+}
+
+const HISTORY_OPERATION_LABELS: Record<string, string> = {
+  main_track_append: '添加素材',
+  main_track_move: '调整片段顺序',
+  main_track_trim: '裁切片段',
+  main_track_split: '拆分片段',
+  main_track_remove: '移除片段',
+  edit_omit: '删除文字片段',
+  edit_restore: '恢复文字片段',
+  canvas_set: '修改画布',
+  output_rate_set: '修改输出帧率',
+  output_rate_clear: '跟随素材帧率',
+  subtitle_style_set: '更新字幕样式',
+  speaker_name_confirm: '更新说话人名称',
+  speaker_merge_confirm: '合并说话人',
+  speaker_diarize: '保存说话人结果',
+  transcript_activate: '保存转录结果',
+  history_restore: '恢复历史版本',
+}
+
+export function historyOperationLabel(operation: string): string {
+  return HISTORY_OPERATION_LABELS[operation] ?? '更新项目'
+}
+
+export function historyRecordTitle(operation: string): string {
+  return `${operation === 'history_restore' ? '恢复版本' : '自动保存'} · ${historyOperationLabel(operation)}`
+}
+
+export function historyTimestamp(value: string): string {
+  const date = new Date(value.includes('T') ? value : `${value.replace(' ', 'T')}Z`)
+  return Number.isNaN(date.getTime())
+    ? value
+    : new Intl.DateTimeFormat('zh-CN', {
+        year: 'numeric', month: '2-digit', day: '2-digit',
+        hour: '2-digit', minute: '2-digit', second: '2-digit',
+      }).format(date)
 }
 
 const ASSET_STATUS_LABELS = {

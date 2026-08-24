@@ -49,6 +49,7 @@ function asset(id: string): MediaAssetSummary {
     height: BigInt(1080),
     audio_channels: BigInt(2),
     status: 'prepared',
+    prepared_available: true,
   }
 }
 
@@ -82,6 +83,7 @@ function renderTimeline(selectedId: string | null = null) {
   const onTrim = vi.fn()
   const onSplit = vi.fn()
   const onRemove = vi.fn()
+  const onDropFiles = vi.fn()
   const view = render(
     <MainTrackTimeline
       clips={[clip('clip-a', 'asset-a'), clip('clip-b', 'asset-b')]}
@@ -97,9 +99,10 @@ function renderTimeline(selectedId: string | null = null) {
       onSplit={onSplit}
       onRemove={onRemove}
       onAdd={vi.fn()}
+      onDropFiles={onDropFiles}
     />,
   )
-  return { ...view, onSeek, onSelect, onMove, onTrim, onSplit, onRemove }
+  return { ...view, onSeek, onSelect, onMove, onTrim, onSplit, onRemove, onDropFiles }
 }
 
 function setTrackRect(container: HTMLElement, left = 100, width = 500): HTMLElement {
@@ -196,6 +199,31 @@ describe('MainTrackTimeline 播放头', () => {
 })
 
 describe('MainTrackTimeline 控件隔离', () => {
+  it('Finder 文件按片段最近边界插入，不拆分现有片段', () => {
+    const { container, onDropFiles, onSplit } = renderTimeline()
+    const clipElement = container.querySelectorAll<HTMLElement>('.studio-track-clip')[1]
+    Object.defineProperty(clipElement, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => ({ left: 300, width: 200, right: 500, top: 0, bottom: 60, height: 60, x: 300, y: 0, toJSON: () => ({}) }),
+    })
+    const files = [new File(['a'], 'first.mov'), new File(['b'], 'second.mp4')]
+
+    const dropAt = (clientX: number) => {
+      const event = new Event('drop', { bubbles: true, cancelable: true })
+      Object.defineProperties(event, {
+        clientX: { value: clientX },
+        dataTransfer: { value: { files, getData: vi.fn(() => ''), types: ['Files'] } },
+      })
+      fireEvent(clipElement, event)
+    }
+    dropAt(320)
+    expect(onDropFiles).toHaveBeenCalledWith(files, 'clip-b')
+    expect(onSplit).not.toHaveBeenCalled()
+
+    dropAt(490)
+    expect(onDropFiles).toHaveBeenLastCalledWith(files, null)
+  })
+
   it('裁切、拆分、删除和排序不会触发 seek', () => {
     const { container, onSeek, onMove, onSplit, onRemove } = renderTimeline('clip-a')
     const track = setTrackRect(container)

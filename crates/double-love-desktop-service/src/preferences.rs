@@ -1,7 +1,7 @@
 //! Tauri-free application preferences, recent-project persistence, and system profile support.
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     ffi::CString,
     fs::{self, OpenOptions},
     io::{self, Write},
@@ -11,7 +11,8 @@ use std::{
 };
 
 use double_love_engine::{
-    Diagnostic, DiagnosticLevel, OperationResult, ProjectSummary, SubtitleStyle,
+    CanvasSpec, Diagnostic, DiagnosticLevel, FrameRate, OperationResult, ProjectStore,
+    ProjectSummary, SubtitleStyle,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -25,9 +26,10 @@ const PRE_ELECTRON_BACKUP_FILE: &str = "preferences.json.pre-electron-backup";
 const STORE_KEY: &str = "app_preferences";
 pub const CURRENT_PREFERENCES_SCHEMA: u32 = 1;
 pub const CURRENT_ONBOARDING_VERSION: u32 = 1;
-const MAX_RECENT_PROJECTS: usize = 20;
-const LOW_MEMORY_MODEL: &str = "qwen3-asr-0.6b";
-const HIGH_MEMORY_MODEL: &str = "qwen3-asr-1.7b";
+const LOW_MEMORY_MODEL: &str = "qwen3-asr-0.6b-4bit";
+const HIGH_MEMORY_MODEL: &str = "qwen3-asr-1.7b-8bit";
+const LEGACY_LOW_MEMORY_MODEL: &str = "qwen3-asr-0.6b";
+const LEGACY_HIGH_MEMORY_MODEL: &str = "qwen3-asr-1.7b";
 const MODEL_ENDPOINT: &str = "https://huggingface.co";
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -45,6 +47,13 @@ pub enum TimecodePrecision {
     Millisecond,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ProjectLibraryView {
+    Grid,
+    List,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RecentProjectRecord {
     pub project_id: Option<String>,
@@ -53,13 +62,17 @@ pub struct RecentProjectRecord {
     pub last_opened_at: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RecentProject {
     pub project_id: Option<String>,
     pub root: String,
     pub display_name: String,
     pub last_opened_at: String,
     pub exists: bool,
+    pub created_at: Option<String>,
+    pub modified_at: Option<String>,
+    pub canvas: Option<CanvasSpec>,
+    pub output_rate: Option<FrameRate>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -68,6 +81,8 @@ pub struct AppPreferencesV1 {
     pub theme: ThemeMode,
     pub restore_last_project: bool,
     pub timecode_precision: TimecodePrecision,
+    pub project_library_view: ProjectLibraryView,
+    pub history_limit: Option<u32>,
     pub transcript_section_tint: bool,
     pub cjk_spacing: bool,
     pub default_subtitle_style: SubtitleStyle,
@@ -84,7 +99,9 @@ pub struct AppPreferencesV1 {
 pub struct PreferencesPatch {
     pub theme: Option<ThemeMode>,
     pub restore_last_project: Option<bool>,
-    pub timecode_precision: Option<TimecodePrecision>,
+    pub project_library_view: Option<ProjectLibraryView>,
+    #[serde(default, deserialize_with = "deserialize_nullable_history_limit")]
+    pub history_limit: Option<Option<u32>>,
     pub transcript_section_tint: Option<bool>,
     pub cjk_spacing: Option<bool>,
     pub default_subtitle_style: Option<SubtitleStyle>,
@@ -100,6 +117,15 @@ pub struct SystemProfile {
     pub os_version: String,
     pub free_model_bytes: u64,
     pub recommended_asr_model: String,
+}
+
+fn deserialize_nullable_history_limit<'de, D>(
+    deserializer: D,
+) -> Result<Option<Option<u32>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(Some(Option::<u32>::deserialize(deserializer)?))
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -152,6 +178,8 @@ pub fn default_preferences_for_root(model_root: impl Into<String>) -> AppPrefere
         theme: ThemeMode::Light,
         restore_last_project: true,
         timecode_precision: TimecodePrecision::Frame,
+        project_library_view: ProjectLibraryView::Grid,
+        history_limit: Some(200),
         transcript_section_tint: true,
         cjk_spacing: true,
         default_subtitle_style: SubtitleStyle::default(),
@@ -245,15 +273,26 @@ fn validate_preferences(value: &AppPreferencesV1) -> Result<(), PreferencesError
         LOW_MEMORY_MODEL | HIGH_MEMORY_MODEL
     ) {
         return Err(PreferencesError::Invalid(
-            "默认 ASR 模型必须是 qwen3-asr-0.6b 或 qwen3-asr-1.7b。".to_string(),
+            "默认 ASR 模型必须是 Qwen3 ASR 的当前 MLX 版本。".to_string(),
         ));
     }
-    if value.recent_projects.len() > MAX_RECENT_PROJECTS {
+    if value
+        .history_limit
+        .is_some_and(|limit| !matches!(limit, 50 | 100 | 200 | 500 | 1000))
+    {
         return Err(PreferencesError::Invalid(
-            "最近项目数量超过 20 条。".to_string(),
+            "回滚上限必须是 50、100、200、500、1000 或不设上限。".to_string(),
         ));
     }
     Ok(())
+}
+
+fn migrate_default_asr_model(value: &str) -> &str {
+    match value {
+        LEGACY_LOW_MEMORY_MODEL => LOW_MEMORY_MODEL,
+        LEGACY_HIGH_MEMORY_MODEL => HIGH_MEMORY_MODEL,
+        _ => value,
+    }
 }
 
 fn decode_preferences(
@@ -293,7 +332,12 @@ fn decode_preferences(
     );
     let mut value: AppPreferencesV1 = serde_json::from_value(merged)
         .map_err(|error| PreferencesError::Decode(error.to_string()))?;
-    value.recent_projects.truncate(MAX_RECENT_PROJECTS);
+    if !object.contains_key("history_limit") {
+        value.history_limit = None;
+    }
+    value.default_asr_model = migrate_default_asr_model(&value.default_asr_model).to_string();
+    value.timecode_precision = TimecodePrecision::Frame;
+    value.recent_projects = normalize_recent_records(value.recent_projects);
     validate_preferences(&value)?;
     Ok(value)
 }
@@ -434,8 +478,11 @@ fn changed_keys_from_patch(patch: &PreferencesPatch) -> Vec<String> {
     if patch.restore_last_project.is_some() {
         changed.push("restore_last_project".to_string());
     }
-    if patch.timecode_precision.is_some() {
-        changed.push("timecode_precision".to_string());
+    if patch.project_library_view.is_some() {
+        changed.push("project_library_view".to_string());
+    }
+    if patch.history_limit.is_some() {
+        changed.push("history_limit".to_string());
     }
     if patch.transcript_section_tint.is_some() {
         changed.push("transcript_section_tint".to_string());
@@ -468,8 +515,11 @@ fn apply_patch(
     if let Some(restore) = patch.restore_last_project {
         value.restore_last_project = restore;
     }
-    if let Some(precision) = patch.timecode_precision {
-        value.timecode_precision = precision;
+    if let Some(view) = patch.project_library_view {
+        value.project_library_view = view;
+    }
+    if let Some(limit) = patch.history_limit {
+        value.history_limit = limit;
     }
     if let Some(tint) = patch.transcript_section_tint {
         value.transcript_section_tint = tint;
@@ -617,8 +667,39 @@ fn canonical_project_root(root: &str) -> Result<String, PreferencesError> {
             .map(|value| value.to_string_lossy().into_owned())
             .map_err(|error| PreferencesError::Io(error.to_string()))
     } else {
-        Ok(absolute.to_string_lossy().into_owned())
+        let mut normalized = PathBuf::new();
+        for component in absolute.components() {
+            match component {
+                std::path::Component::CurDir => {}
+                std::path::Component::ParentDir => {
+                    normalized.pop();
+                }
+                _ => normalized.push(component.as_os_str()),
+            }
+        }
+        Ok(normalized.to_string_lossy().into_owned())
     }
+}
+
+fn normalize_recent_records(mut records: Vec<RecentProjectRecord>) -> Vec<RecentProjectRecord> {
+    records.sort_by(|left, right| right.last_opened_at.cmp(&left.last_opened_at));
+    let mut project_ids = HashSet::new();
+    let mut roots = HashSet::new();
+    records
+        .into_iter()
+        .filter_map(|mut record| {
+            record.root = canonical_project_root(&record.root).unwrap_or(record.root);
+            let duplicate_id = record
+                .project_id
+                .as_ref()
+                .is_some_and(|project_id| !project_ids.insert(project_id.clone()));
+            if duplicate_id || !roots.insert(record.root.clone()) {
+                None
+            } else {
+                Some(record)
+            }
+        })
+        .collect()
 }
 
 fn display_name_for_root(root: &str) -> String {
@@ -636,6 +717,11 @@ fn utc_now() -> Result<String, PreferencesError> {
         .map_err(|error| PreferencesError::Io(error.to_string()))
 }
 
+fn file_created_at(path: &Path) -> Option<String> {
+    let created = path.metadata().ok()?.created().ok()?;
+    OffsetDateTime::from(created).format(&Rfc3339).ok()
+}
+
 fn upsert_recent(
     mut preferences: AppPreferencesV1,
     summary: &ProjectSummary,
@@ -647,9 +733,13 @@ fn upsert_recent(
         display_name: display_name_for_root(&root),
         last_opened_at: utc_now()?,
     };
-    preferences.recent_projects.retain(|item| item.root != root);
+    preferences.recent_projects.retain(|item| {
+        item.root != root && item.project_id.as_deref() != Some(summary.project_id.as_str())
+    });
     preferences.recent_projects.insert(0, record);
-    preferences.recent_projects.truncate(MAX_RECENT_PROJECTS);
+    // The freshly opened project is authoritative even when multiple opens share the same
+    // wall-clock tick (or the system clock moves backwards). Existing records were normalized
+    // when read, so sorting again here can incorrectly move the newest record behind an older one.
     Ok(preferences)
 }
 
@@ -670,19 +760,72 @@ pub fn record_recent_project(
 }
 
 fn recent_projects(preferences: &AppPreferencesV1) -> Vec<RecentProject> {
-    let mut records = preferences.recent_projects.clone();
-    records.sort_by(|left, right| right.last_opened_at.cmp(&left.last_opened_at));
-    records
+    normalize_recent_records(preferences.recent_projects.clone())
         .into_iter()
-        .take(MAX_RECENT_PROJECTS)
-        .map(|record| RecentProject {
-            exists: Path::new(&record.root).exists(),
-            project_id: record.project_id,
-            root: record.root,
-            display_name: record.display_name,
-            last_opened_at: record.last_opened_at,
+        .map(|record| {
+            let exists = Path::new(&record.root).exists();
+            let database = Path::new(&record.root).join(".doublelove/project.sqlite");
+            let metadata = database
+                .is_file()
+                .then(|| ProjectStore::open(&database))
+                .and_then(Result::ok)
+                .and_then(|store| store.project_library_metadata().ok());
+            let created_at = metadata
+                .as_ref()
+                .and_then(|value| value.created_at.clone())
+                .or_else(|| file_created_at(&database));
+            RecentProject {
+                exists,
+                project_id: record.project_id,
+                root: record.root,
+                display_name: record.display_name,
+                last_opened_at: record.last_opened_at,
+                created_at,
+                modified_at: metadata
+                    .as_ref()
+                    .and_then(|value| value.modified_at.clone()),
+                canvas: metadata.as_ref().map(|value| value.canvas.clone()),
+                output_rate: metadata.and_then(|value| value.output_rate),
+            }
         })
         .collect()
+}
+
+pub fn recent_project_path(
+    app_data_dir: &Path,
+    state: &PreferencesState,
+    project_id: &str,
+) -> Result<PathBuf, PreferencesError> {
+    if project_id.trim().is_empty() {
+        return Err(PreferencesError::Invalid("项目标识不能为空。".to_string()));
+    }
+    with_preferences(app_data_dir, state, |preferences, _| {
+        let record = normalize_recent_records(preferences.recent_projects.clone())
+            .into_iter()
+            .find(|record| record.project_id.as_deref() == Some(project_id))
+            .ok_or_else(|| PreferencesError::Invalid("项目不在我的项目列表中。".to_string()))?;
+        let path = PathBuf::from(record.root);
+        if !path.exists() {
+            return Err(PreferencesError::Invalid("项目位置已经丢失。".to_string()));
+        }
+        Ok(path)
+    })
+    .map(|(path, _)| path)
+}
+
+pub fn registered_project_paths(
+    app_data_dir: &Path,
+    state: &PreferencesState,
+) -> Result<Vec<PathBuf>, PreferencesError> {
+    with_preferences(app_data_dir, state, |preferences, _| {
+        Ok(
+            normalize_recent_records(preferences.recent_projects.clone())
+                .into_iter()
+                .map(|record| PathBuf::from(record.root))
+                .collect(),
+        )
+    })
+    .map(|(paths, _)| paths)
 }
 
 pub fn recent_projects_list(
@@ -876,7 +1019,7 @@ pub fn onboarding_complete(
         if let Some(model) = default_asr_model.as_deref() {
             if !matches!(model, LOW_MEMORY_MODEL | HIGH_MEMORY_MODEL) {
                 return Err(PreferencesError::Invalid(
-                    "默认 ASR 模型必须是 qwen3-asr-0.6b 或 qwen3-asr-1.7b。".to_string(),
+                    "默认 ASR 模型必须是 Qwen3 ASR 的当前 MLX 版本。".to_string(),
                 ));
             }
             next.default_asr_model = model.to_string();
@@ -953,7 +1096,31 @@ mod tests {
         assert_eq!(preferences.theme, ThemeMode::Light);
         assert!(preferences.restore_last_project);
         assert_eq!(preferences.default_asr_model, LOW_MEMORY_MODEL);
+        assert_eq!(preferences.history_limit, Some(200));
         assert!(preferences.recent_projects.is_empty());
+    }
+
+    #[test]
+    fn legacy_asr_preference_maps_to_its_mlx_successor() {
+        let defaults = default_preferences_for_root("/tmp/double-love/models");
+        for (legacy, current) in [
+            (LEGACY_LOW_MEMORY_MODEL, LOW_MEMORY_MODEL),
+            (LEGACY_HIGH_MEMORY_MODEL, HIGH_MEMORY_MODEL),
+        ] {
+            let value = serde_json::json!({
+                "app_preferences": {
+                    "schema_version": 1,
+                    "default_asr_model": legacy
+                }
+            });
+            let decoded = decode_store_bytes(
+                &serde_json::to_vec(&value).expect("preferences JSON"),
+                &defaults,
+            )
+            .expect("legacy preference decodes")
+            .expect("preferences");
+            assert_eq!(decoded.default_asr_model, current);
+        }
     }
 
     #[test]
@@ -961,11 +1128,13 @@ mod tests {
         let defaults = default_preferences_for_root("/tmp/double-love/models");
         let patch = PreferencesPatch {
             theme: Some(ThemeMode::Dark),
+            project_library_view: Some(ProjectLibraryView::List),
             model_endpoint: Some("https://mirror.example.test/hub".to_string()),
             ..PreferencesPatch::default()
         };
         let updated = apply_patch(defaults.clone(), &patch).expect("valid patch");
         assert_eq!(updated.theme, ThemeMode::Dark);
+        assert_eq!(updated.project_library_view, ProjectLibraryView::List);
         assert_eq!(updated.model_endpoint, "https://mirror.example.test/hub");
         assert_eq!(updated.restore_last_project, defaults.restore_last_project);
 
@@ -977,6 +1146,21 @@ mod tests {
             apply_patch(defaults, &invalid),
             Err(PreferencesError::Endpoint)
         ));
+
+        let unlimited: PreferencesPatch = serde_json::from_value(serde_json::json!({
+            "history_limit": null
+        }))
+        .expect("nullable history limit patch");
+        assert_eq!(unlimited.history_limit, Some(None));
+        assert_eq!(
+            apply_patch(
+                default_preferences_for_root("/tmp/double-love/models"),
+                &unlimited,
+            )
+            .expect("unlimited applies")
+            .history_limit,
+            None
+        );
     }
 
     #[test]
@@ -986,27 +1170,52 @@ mod tests {
     }
 
     #[test]
-    fn recent_projects_are_deduplicated_and_capped_at_twenty() {
+    fn recent_projects_are_complete_and_deduplicated_by_id_or_path() {
+        let root_base = temp_directory("recent-projects");
         let mut preferences = default_preferences_for_root("/tmp/double-love/models");
         for index in 0..25 {
-            let root = format!("/tmp/double-love/project-{index}");
+            let root = root_base.join(format!("project-{index}"));
+            let root = root.to_string_lossy().into_owned();
             preferences = upsert_recent(preferences, &summary(&root, &index.to_string())).unwrap();
         }
-        assert_eq!(preferences.recent_projects.len(), MAX_RECENT_PROJECTS);
+        assert_eq!(preferences.recent_projects.len(), 25);
         assert_eq!(
             preferences.recent_projects[0].root,
-            "/tmp/double-love/project-24"
+            root_base.join("project-24").to_string_lossy()
         );
 
         preferences = upsert_recent(
             preferences,
-            &summary("/tmp/double-love/project-10", "replacement"),
+            &summary(
+                &root_base.join("project-10").to_string_lossy(),
+                "replacement",
+            ),
         )
         .unwrap();
-        assert_eq!(preferences.recent_projects.len(), MAX_RECENT_PROJECTS);
+        assert_eq!(preferences.recent_projects.len(), 25);
         assert_eq!(
             preferences.recent_projects[0].project_id.as_deref(),
             Some("replacement")
+        );
+
+        preferences = upsert_recent(
+            preferences,
+            &summary(
+                &root_base.join("project-10-relocated").to_string_lossy(),
+                "replacement",
+            ),
+        )
+        .unwrap();
+        assert_eq!(preferences.recent_projects.len(), 25);
+        assert_eq!(
+            preferences.recent_projects[0].root,
+            root_base.join("project-10-relocated").to_string_lossy()
+        );
+        assert!(
+            preferences
+                .recent_projects
+                .iter()
+                .all(|record| record.root != root_base.join("project-10").to_string_lossy())
         );
     }
 
@@ -1015,9 +1224,11 @@ mod tests {
         let bytes = include_bytes!("../tests/fixtures/preferences/v1.json");
         let fixture: HashMap<String, Value> =
             serde_json::from_slice(bytes).expect("v1 fixture json");
-        let expected: AppPreferencesV1 =
+        let mut expected: AppPreferencesV1 =
             serde_json::from_value(fixture.get(STORE_KEY).expect("preferences fixture").clone())
                 .expect("complete v1 preferences fixture");
+        expected.timecode_precision = TimecodePrecision::Frame;
+        expected.default_asr_model = LOW_MEMORY_MODEL.to_string();
         let defaults = default_preferences_for_root("/tmp/double-love/default-models");
         let decoded = decode_store_bytes(bytes, &defaults)
             .expect("v1 store is valid")
@@ -1027,7 +1238,7 @@ mod tests {
         assert_eq!(decoded.schema_version, 1);
         assert_eq!(decoded.theme, ThemeMode::Dark);
         assert!(!decoded.restore_last_project);
-        assert_eq!(decoded.timecode_precision, TimecodePrecision::Millisecond);
+        assert_eq!(decoded.timecode_precision, TimecodePrecision::Frame);
         assert!(decoded.onboarding_completed);
     }
 

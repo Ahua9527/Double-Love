@@ -20,10 +20,12 @@ struct HostProcess {
 }
 
 impl HostProcess {
-    fn spawn(app_data_dir: &Path) -> Self {
+    fn spawn(app_data_dir: &Path, resource_dir: &Path) -> Self {
         let mut child = Command::new(env!("CARGO_BIN_EXE_double-love-desktop-host"))
             .arg("--app-data-dir")
             .arg(app_data_dir)
+            .arg("--resource-dir")
+            .arg(resource_dir)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -164,10 +166,19 @@ fn main_track_timeline_and_project_visual_settings_match_tauri_semantics() {
     let media_a = root.join("a-25.mp4");
     let media_b = root.join("b-30.mp4");
     fs::create_dir_all(&root).expect("temporary root");
+    let bundled_runtime = root.join("runtime");
+    fs::create_dir_all(&bundled_runtime).expect("bundled runtime directory");
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(&tools.ffmpeg, bundled_runtime.join("ffmpeg"))
+            .expect("link bundled ffmpeg fixture");
+        std::os::unix::fs::symlink(&tools.ffprobe, bundled_runtime.join("ffprobe"))
+            .expect("link bundled ffprobe fixture");
+    }
     generate_media(&tools, &media_a, "25", "black");
     generate_media(&tools, &media_b, "30", "blue");
 
-    let mut host = HostProcess::spawn(&app_data);
+    let mut host = HostProcess::spawn(&app_data, &root);
     for (id, command, payload) in [
         ("closed-timeline", "timeline_get", json!({})),
         ("closed-list", "main_track_list", json!({})),

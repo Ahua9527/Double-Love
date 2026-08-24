@@ -127,6 +127,7 @@ fn preferences_onboarding_profile_catalog_and_events_round_trip() {
     assert_eq!(defaults["status"], "success");
     assert_eq!(defaults["data"]["theme"], "light");
     assert_eq!(defaults["data"]["restore_last_project"], true);
+    assert_eq!(defaults["data"]["history_limit"], 200);
     assert_eq!(defaults["data"]["model_endpoint"], "https://huggingface.co");
     assert_eq!(
         defaults["data"]["model_root"],
@@ -169,6 +170,18 @@ fn preferences_onboarding_profile_catalog_and_events_round_trip() {
     assert_eq!(events[0].event, "dl://preferences-changed");
     assert_eq!(events[0].payload, json!({"changed_keys": ["theme"]}));
 
+    let (response, events) = host.invoke(
+        "history-unlimited",
+        "preferences_update",
+        json!({"patch": {"history_limit": null}}),
+    );
+    let unlimited = operation(response);
+    assert_eq!(unlimited["data"]["history_limit"], Value::Null);
+    assert_eq!(
+        events[0].payload,
+        json!({"changed_keys": ["history_limit"]})
+    );
+
     let invalid = operation(
         host.invoke(
             "invalid-endpoint",
@@ -208,7 +221,7 @@ fn preferences_onboarding_profile_catalog_and_events_round_trip() {
         host.invoke(
             "onboarding-complete",
             "onboarding_complete",
-            json!({"defaultAsrModel": "qwen3-asr-0.6b", "step": 3}),
+            json!({"defaultAsrModel": "qwen3-asr-0.6b-4bit", "step": 3}),
         )
         .0,
     );
@@ -239,7 +252,7 @@ fn preferences_onboarding_profile_catalog_and_events_round_trip() {
     assert_eq!(profile["data"]["architecture"], "arm64");
     assert!(matches!(
         profile["data"]["recommended_asr_model"].as_str(),
-        Some("qwen3-asr-0.6b" | "qwen3-asr-1.7b")
+        Some("qwen3-asr-0.6b-4bit" | "qwen3-asr-1.7b-8bit")
     ));
 
     let catalog = operation(host.invoke("catalog", "model_catalog", json!({})).0);
@@ -247,9 +260,10 @@ fn preferences_onboarding_profile_catalog_and_events_round_trip() {
         .as_array()
         .expect("model catalog")
         .iter()
-        .find(|model| model["descriptor"]["id"] == "silero-vad")
-        .expect("bundled silero-vad");
-    assert_eq!(silero["installation"]["state"], "installed");
+        .find(|model| model["descriptor"]["id"] == "silero-vad-v6")
+        .expect("MLX silero-vad");
+    assert_eq!(silero["installation"]["state"], "not_installed");
+    assert_eq!(silero["descriptor"]["ui_role"], "dependency");
 
     let new_model_root = app_data.join("relocated-models");
     let (response, events) = host.invoke(
@@ -274,8 +288,8 @@ fn preferences_onboarding_profile_catalog_and_events_round_trip() {
             .expect("relocated catalog")
             .iter()
             .any(|model| {
-                model["descriptor"]["id"] == "silero-vad"
-                    && model["installation"]["state"] == "installed"
+                model["descriptor"]["id"] == "silero-vad-v6"
+                    && model["installation"]["state"] == "not_installed"
             })
     );
 
@@ -359,7 +373,7 @@ fn corrupt_preferences_recover_with_warning_and_backup() {
 }
 
 #[test]
-fn recent_projects_are_capped_and_missing_forget_is_explicit() {
+fn recent_projects_are_complete_and_missing_forget_is_explicit() {
     let app_data = temp_directory("recent");
     let mut host = HostProcess::spawn(&app_data);
     let defaults = operation(host.invoke("defaults", "preferences_get", json!({})).0);
@@ -393,7 +407,7 @@ fn recent_projects_are_capped_and_missing_forget_is_explicit() {
     assert_eq!(projects["status"], "success");
     assert_eq!(
         projects["data"].as_array().expect("recent projects").len(),
-        20
+        25
     );
 
     let (response, events) = host.invoke(

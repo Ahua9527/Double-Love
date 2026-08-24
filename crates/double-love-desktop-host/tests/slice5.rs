@@ -22,12 +22,12 @@ struct HostProcess {
 }
 
 impl HostProcess {
-    fn spawn(app_data_dir: &Path) -> Self {
+    fn spawn(app_data_dir: &Path, resource_dir: &Path) -> Self {
         let mut child = Command::new(env!("CARGO_BIN_EXE_double-love-desktop-host"))
             .args(["--app-data-dir"])
             .arg(app_data_dir)
             .args(["--resource-dir"])
-            .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."))
+            .arg(resource_dir)
             .arg("--test-transcribe-mock")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -174,9 +174,46 @@ fn generate_media(tools: &FfmpegTools, path: &Path, duration: u32) {
     assert!(status.success(), "ffmpeg fixture generation failed");
 }
 
+fn prepare_bundled_test_runtime(root: &Path, tools: &FfmpegTools) {
+    let media_runtime = root.join("runtime");
+    fs::create_dir_all(&media_runtime).expect("media runtime");
+    let python = Command::new("python3")
+        .arg("-c")
+        .arg("import sys; print(sys.executable)")
+        .output()
+        .expect("python3 for test runtime");
+    assert!(python.status.success(), "python3 test runtime unavailable");
+    let python = String::from_utf8(python.stdout)
+        .expect("python path utf8")
+        .trim()
+        .to_string();
+    let asr_root = root.join("model-runtime/asr");
+    let asr_venv = asr_root.join(".venv/bin");
+    fs::create_dir_all(&asr_venv).expect("asr runtime");
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(&tools.ffmpeg, media_runtime.join("ffmpeg"))
+            .expect("link ffmpeg runtime");
+        std::os::unix::fs::symlink(&tools.ffprobe, media_runtime.join("ffprobe"))
+            .expect("link ffprobe runtime");
+        std::os::unix::fs::symlink(python, asr_venv.join("python")).expect("link python runtime");
+        std::os::unix::fs::symlink(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../sidecars/asr/double_love_asr"),
+            asr_root.join("double_love_asr"),
+        )
+        .expect("link asr package");
+    }
+}
+
 fn seed_installed_transcription_models(app_data: &Path) {
     let model_root = app_data.join("models");
     fs::create_dir_all(&model_root).expect("model root");
+    fs::create_dir_all(
+        model_root
+            .join("qwen3-asr-0.6b-4bit")
+            .join("70ccd0ba0c24b0c78efc313ce81c1c78c64a3dd7"),
+    )
+    .expect("installed model directory");
     let installed = |model_id: &str, revision: &str| {
         json!({
             "model_id": model_id,
@@ -195,13 +232,13 @@ fn seed_installed_transcription_models(app_data: &Path) {
         serde_json::to_vec_pretty(&json!({
             "schema_version": 1,
             "installations": {
-                "qwen3-asr-0.6b": installed(
-                    "qwen3-asr-0.6b",
-                    "5eb144179a02acc5e5ba31e748d22b0cf3e303b0"
+                "qwen3-asr-0.6b-4bit": installed(
+                    "qwen3-asr-0.6b-4bit",
+                    "70ccd0ba0c24b0c78efc313ce81c1c78c64a3dd7"
                 ),
-                "qwen3-forced-aligner-0.6b": installed(
-                    "qwen3-forced-aligner-0.6b",
-                    "c7cbfc2048c462b0d63a45797104fc9db3ad62b7"
+                "qwen3-forced-aligner-0.6b-8bit": installed(
+                    "qwen3-forced-aligner-0.6b-8bit",
+                    "998b617c695f61865d444c62051fe51030acef6f"
                 )
             }
         }))
@@ -240,26 +277,26 @@ fn progress_events_sanitize_project_paths_from_mock_sidecar_errors() {
     let media = root.join("fixture.mp4");
     fs::create_dir_all(&root).expect("temporary root");
     generate_media(&tools, &media, 1);
+    prepare_bundled_test_runtime(&root, &tools);
     seed_installed_transcription_models(&app_data);
 
-    let mut host = HostProcess::spawn(&app_data);
+    let mut host = HostProcess::spawn(&app_data, &root);
     assert_success(&host.invoke("create", "project_create", json!({"path":project})));
     let imported = host.invoke("import", "import_media", json!({"path":media}));
     assert_success(&imported);
     let asset_id = imported["data"]["id"].as_str().expect("asset id");
-    let prepared_wav = ProjectStore::open(&project.join(".doublelove/project.sqlite"))
-        .expect("open project store")
-        .media_asset(asset_id)
-        .expect("read media asset")
-        .expect("media asset")
-        .prepared_wav_path
-        .expect("prepared wav path");
+    let prepared_wav = project.join(".doublelove/prepared/corrupt.wav");
+    fs::create_dir_all(prepared_wav.parent().expect("prepared parent")).expect("prepared dir");
     fs::write(&prepared_wav, b"corrupt wav").expect("corrupt prepared wav");
+    ProjectStore::open(&project.join(".doublelove/project.sqlite"))
+        .expect("open project store")
+        .set_asset_prepared(asset_id, &prepared_wav.to_string_lossy())
+        .expect("prepared state");
 
     let started = host.invoke(
         "transcribe",
         "transcribe_start",
-        json!({"asset_id":asset_id,"model":"qwen3-asr-0.6b","language":"auto"}),
+        json!({"asset_id":asset_id,"model":"qwen3-asr-0.6b-4bit","language":"auto"}),
     );
     assert_success(&started);
     let task_id = started["data"]["task_id"]
@@ -284,7 +321,7 @@ fn progress_events_sanitize_project_paths_from_mock_sidecar_errors() {
         .expect("progress message");
     assert!(message.contains("<PROJECT>"), "{message}");
     assert!(!message.contains(&project.to_string_lossy().into_owned()));
-    assert!(!message.contains(&prepared_wav));
+    assert!(!message.contains(&prepared_wav.to_string_lossy().into_owned()));
     assert!(!message.contains(&root.to_string_lossy().into_owned()));
     assert!(host.events.iter().any(|event| {
         event["event"] == "dl://task-state"
@@ -317,9 +354,10 @@ fn transcription_edits_roughcut_and_model_diagnostics_match_tauri_semantics() {
     let export = root.join("rough-cut.xml");
     fs::create_dir_all(&root).expect("temporary root");
     generate_media(&tools, &media, 61);
+    prepare_bundled_test_runtime(&root, &tools);
     seed_installed_transcription_models(&app_data);
 
-    let mut host = HostProcess::spawn(&app_data);
+    let mut host = HostProcess::spawn(&app_data, &root);
     for command in [
         "transcript_get",
         "roughcut_preview",
@@ -338,24 +376,17 @@ fn transcription_edits_roughcut_and_model_diagnostics_match_tauri_semantics() {
         assert_eq!(diagnostic_code(&result), "PROJECT_NOT_OPEN");
     }
 
-    let reveal_root = host.invoke("reveal-root", "model_reveal", json!({}));
-    assert_success(&reveal_root);
-    assert_eq!(
-        reveal_root["data"]["path"],
-        app_data.join("models").to_string_lossy().as_ref()
-    );
-    assert!(app_data.join("models").is_dir());
     let reveal_model = host.invoke(
         "reveal-model",
         "model_reveal",
-        json!({"model_id":"qwen3-asr-0.6b"}),
+        json!({"model_id":"qwen3-asr-0.6b-4bit"}),
     );
     assert_success(&reveal_model);
     assert!(
         reveal_model["data"]["path"]
             .as_str()
             .expect("path")
-            .ends_with("qwen3-asr-0.6b/5eb144179a02acc5e5ba31e748d22b0cf3e303b0")
+            .ends_with("qwen3-asr-0.6b-4bit/70ccd0ba0c24b0c78efc313ce81c1c78c64a3dd7")
     );
     let logs = host.invoke("logs", "diagnostics_reveal_logs", json!({}));
     assert_success(&logs);
@@ -384,7 +415,7 @@ fn transcription_edits_roughcut_and_model_diagnostics_match_tauri_semantics() {
     let started = host.invoke(
         "transcribe",
         "transcribe_start",
-        json!({"asset_id":asset_id,"model":"qwen3-asr-0.6b","language":"auto"}),
+        json!({"asset_id":asset_id,"model":"qwen3-asr-0.6b-4bit","language":"auto"}),
     );
     assert_success(&started);
     let task_id = started["data"]["task_id"]
@@ -517,7 +548,7 @@ fn transcription_edits_roughcut_and_model_diagnostics_match_tauri_semantics() {
     let cancel_started = host.invoke(
         "cancel-start",
         "transcribe_start",
-        json!({"asset_id":asset_id,"model":"qwen3-asr-0.6b","language":"auto"}),
+        json!({"asset_id":asset_id,"model":"qwen3-asr-0.6b-4bit","language":"auto"}),
     );
     assert_success(&cancel_started);
     let cancel_task = cancel_started["data"]["task_id"]
@@ -543,7 +574,7 @@ fn transcription_edits_roughcut_and_model_diagnostics_match_tauri_semantics() {
     let verify = host.invoke(
         "verify",
         "model_verify",
-        json!({"model_id":"qwen3-asr-0.6b"}),
+        json!({"model_id":"qwen3-asr-0.6b-4bit"}),
     );
     assert_eq!(verify["status"], "failed");
     assert_eq!(diagnostic_code(&verify), "MODEL_VERIFY_FAILED");
@@ -552,7 +583,7 @@ fn transcription_edits_roughcut_and_model_diagnostics_match_tauri_semantics() {
             .as_array()
             .expect("catalog")
             .iter()
-            .find(|item| item["descriptor"]["id"] == "qwen3-asr-0.6b")
+            .find(|item| item["descriptor"]["id"] == "qwen3-asr-0.6b-4bit")
             .expect("asr")["installation"]["state"],
         "corrupt"
     );

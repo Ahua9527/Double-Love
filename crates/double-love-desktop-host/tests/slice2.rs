@@ -174,7 +174,7 @@ fn existing_project_is_backed_up_before_service_open_and_create() {
             row.get(0)
         })
         .expect("source schema version");
-    assert_eq!(source_schema, 10);
+    assert_eq!(source_schema, 11);
     drop(source_read_only);
 
     let backup_read_only = Connection::open_with_flags(&backup, OpenFlags::SQLITE_OPEN_READ_ONLY)
@@ -192,7 +192,7 @@ fn existing_project_is_backed_up_before_service_open_and_create() {
             row.get(0)
         })
         .expect("backup schema version");
-    assert_eq!(backup_schema, 10);
+    assert_eq!(backup_schema, 11);
     let backup_revision: u64 = backup_read_only
         .query_row(
             "SELECT COALESCE(MAX(revision), 0) FROM revisions",
@@ -352,16 +352,67 @@ fn project_lifecycle_history_restore_and_recent_project_round_trip() {
     assert_eq!(recent["status"], "success");
     assert_eq!(recent["data"].as_array().expect("recent projects").len(), 1);
     assert_eq!(recent["data"][0]["project_id"], project_id);
+    assert!(recent["data"][0]["created_at"].is_string());
+    assert!(recent["data"][0]["modified_at"].is_string());
+    assert_eq!(recent["data"][0]["canvas"]["width"], 1920);
+    assert_eq!(recent["data"][0]["canvas"]["height"], 1080);
+    let empty_thumbnail = host.invoke(
+        "thumbnail-empty",
+        "resolve_project_thumbnail",
+        json!({"project_id": project_id}),
+    );
+    assert_eq!(diagnostic_code(&empty_thumbnail), "PROJECT_THUMBNAIL_EMPTY");
+    let forbidden_thumbnail = host.invoke(
+        "thumbnail-forbidden",
+        "resolve_project_thumbnail",
+        json!({"project_id": "not-registered"}),
+    );
+    assert_eq!(
+        diagnostic_code(&forbidden_thumbnail),
+        "PROJECT_THUMBNAIL_FORBIDDEN"
+    );
 
     host.stop();
     let mut restarted = HostProcess::spawn(&app_data);
     let opened_after_restart = restarted.invoke(
         "open-after-restart",
-        "project_open",
-        json!({"path": project}),
+        "recent_project_open",
+        json!({"projectId": project_id}),
     );
     assert_eq!(opened_after_restart["data"]["project_id"], project_id);
     assert_eq!(opened_after_restart["data"]["revision"], 5);
+    let unknown_recent = restarted.invoke(
+        "open-unknown-recent",
+        "recent_project_open",
+        json!({"projectId": "not-registered"}),
+    );
+    assert_eq!(diagnostic_code(&unknown_recent), "RECENT_PROJECT_NOT_FOUND");
+    assert_eq!(
+        restarted.invoke("checkpoint", "project_checkpoint", json!({}))["data"],
+        5
+    );
+    let prepared_trash = restarted.invoke(
+        "prepare-trash",
+        "prepare_project_trash",
+        json!({"project_id": project_id}),
+    );
+    assert_eq!(prepared_trash["status"], "success");
+    assert_eq!(
+        prepared_trash["data"]["path"],
+        project
+            .canonicalize()
+            .expect("canonical project")
+            .to_string_lossy()
+            .as_ref()
+    );
+    assert_eq!(
+        restarted.invoke("close-project", "project_close", json!({}))["status"],
+        "success"
+    );
+    assert_eq!(
+        diagnostic_code(&restarted.invoke("closed", "project_revision", json!({}))),
+        "PROJECT_NOT_OPEN"
+    );
     restarted.stop();
     fs::remove_dir_all(root).expect("remove temporary root");
 }

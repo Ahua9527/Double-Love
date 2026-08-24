@@ -25,26 +25,21 @@ struct HostProcess {
 }
 
 impl HostProcess {
-    fn spawn(app_data_dir: &Path) -> Self {
-        Self::spawn_with_tools(app_data_dir, None)
+    fn spawn(app_data_dir: &Path, resource_dir: &Path) -> Self {
+        Self::spawn_with_tools(app_data_dir, resource_dir)
     }
 
-    fn spawn_with_tools(app_data_dir: &Path, tools: Option<(&Path, &Path)>) -> Self {
+    fn spawn_with_tools(app_data_dir: &Path, resource_dir: &Path) -> Self {
         let mut command = Command::new(env!("CARGO_BIN_EXE_double-love-desktop-host"));
         command
             .args(["--app-data-dir"])
             .arg(app_data_dir)
             .args(["--resource-dir"])
-            .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."))
+            .arg(resource_dir)
             .arg("--test-transcribe-mock")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        if let Some((ffmpeg, ffprobe)) = tools {
-            command
-                .env("DOUBLELOVE_FFMPEG", ffmpeg)
-                .env("DOUBLELOVE_FFPROBE", ffprobe);
-        }
         let mut child = command.spawn().expect("spawn desktop host");
         Self {
             stdin: child.stdin.take().expect("host stdin"),
@@ -190,6 +185,18 @@ fn generate_media(tools: &FfmpegTools, path: &Path, fps: &str, color: &str, freq
     );
 }
 
+fn prepare_bundled_media_runtime(resource_dir: &Path, tools: &FfmpegTools) {
+    let runtime = resource_dir.join("runtime");
+    fs::create_dir_all(&runtime).expect("bundled media runtime");
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(&tools.ffmpeg, runtime.join("ffmpeg"))
+            .expect("link bundled ffmpeg");
+        std::os::unix::fs::symlink(&tools.ffprobe, runtime.join("ffprobe"))
+            .expect("link bundled ffprobe");
+    }
+}
+
 fn seed_installed_transcription_models(app_data: &Path) {
     let model_root = app_data.join("models");
     fs::create_dir_all(&model_root).expect("model root");
@@ -212,13 +219,13 @@ fn seed_installed_transcription_models(app_data: &Path) {
         serde_json::to_vec_pretty(&json!({
             "schema_version": 1,
             "installations": {
-                "qwen3-asr-0.6b": installed(
-                    "qwen3-asr-0.6b",
-                    "5eb144179a02acc5e5ba31e748d22b0cf3e303b0"
+                "qwen3-asr-0.6b-4bit": installed(
+                    "qwen3-asr-0.6b-4bit",
+                    "70ccd0ba0c24b0c78efc313ce81c1c78c64a3dd7"
                 ),
-                "qwen3-forced-aligner-0.6b": installed(
-                    "qwen3-forced-aligner-0.6b",
-                    "c7cbfc2048c462b0d63a45797104fc9db3ad62b7"
+                "qwen3-forced-aligner-0.6b-8bit": installed(
+                    "qwen3-forced-aligner-0.6b-8bit",
+                    "998b617c695f61865d444c62051fe51030acef6f"
                 )
             }
         }))
@@ -243,7 +250,7 @@ fn start_and_wait_transcription(host: &mut HostProcess, id: &str, asset_id: &str
         "transcribe_start",
         json!({
             "asset_id": asset_id,
-            "model": "qwen3-asr-0.6b",
+            "model": "qwen3-asr-0.6b-4bit",
             "language": "auto"
         }),
     );
@@ -358,6 +365,7 @@ fn project_exports_match_tauri_semantics_and_sanitize_failure_diagnostics() {
     fs::create_dir_all(&root).expect("temporary root");
     generate_media(&tools, &first_media, "25", "steelblue", 440);
     generate_media(&tools, &second_media, "30000/1001", "seagreen", 660);
+    prepare_bundled_media_runtime(&root, &tools);
     let canonical_first_media = first_media
         .canonicalize()
         .expect("canonical first media")
@@ -370,7 +378,7 @@ fn project_exports_match_tauri_semantics_and_sanitize_failure_diagnostics() {
         .into_owned();
     seed_installed_transcription_models(&app_data);
 
-    let mut host = HostProcess::spawn(&app_data);
+    let mut host = HostProcess::spawn(&app_data, &root);
     for (id, command, payload) in [
         ("closed-preview", "project_export_preview", json!({})),
         (
@@ -717,6 +725,12 @@ fn project_render_reports_the_tauri_libass_diagnostic() {
         .permissions();
     permissions.set_mode(0o755);
     fs::set_permissions(&fake_ffmpeg, permissions).expect("fake ffmpeg executable");
+    let runtime = root.join("runtime");
+    fs::create_dir_all(&runtime).expect("fake bundled runtime");
+    std::os::unix::fs::symlink(&fake_ffmpeg, runtime.join("ffmpeg"))
+        .expect("link fake bundled ffmpeg");
+    std::os::unix::fs::symlink(&tools.ffprobe, runtime.join("ffprobe"))
+        .expect("link bundled ffprobe");
 
     let summary = create_project(&project).expect("create libass fixture project");
     let store = ProjectStore::open(Path::new(&summary.database)).expect("open fixture store");
@@ -745,8 +759,7 @@ fn project_render_reports_the_tauri_libass_diagnostic() {
         .expect("append fixture clip");
     drop(store);
 
-    let mut host =
-        HostProcess::spawn_with_tools(&app_data, Some((&fake_ffmpeg, tools.ffprobe.as_path())));
+    let mut host = HostProcess::spawn_with_tools(&app_data, &root);
     assert_success(&host.invoke("open", "project_open", json!({"path": project})));
     let result = host.invoke(
         "render",

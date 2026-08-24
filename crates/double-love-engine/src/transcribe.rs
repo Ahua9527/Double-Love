@@ -3,7 +3,7 @@
 //! - 完整成功后才原子切换活动版本；取消/失败保留旧文本与删改
 //! - 取消/失败/协议异常都经 ProgressEvent 与终态上报，不静默
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -12,12 +12,12 @@ use uuid::Uuid;
 use crate::sidecar::{Sidecar, SidecarCommand, SidecarEvent, SidecarPoll, resolve_python};
 use crate::storage::{NewTranscriptWord, ProjectStore};
 use crate::task::{SharedSink, TaskRegistry};
-use crate::{ProgressEvent, TaskState};
+use crate::{FfmpegTools, ProgressEvent, TaskState, prepare_media_wav};
 
 /// 转录任务配置。
 pub struct TranscribeConfig {
     pub asset_id: String,
-    /// qwen3-asr-1.7b（默认）/ qwen3-asr-0.6b
+    /// qwen3-asr-1.7b-8bit（默认）/ qwen3-asr-0.6b-4bit
     pub model: String,
     /// 模型管理器解析出的本地绝对 ASR 权重目录。
     pub model_dir: PathBuf,
@@ -27,17 +27,19 @@ pub struct TranscribeConfig {
     pub language: String,
     /// 测试与开发自举用 mock 引擎
     pub mock: bool,
-    /// 显式 python 路径；None 时按 venv → PATH 发现
+    /// 仅供测试显式注入；产品运行时只使用 App 随附的 venv。
     pub python: Option<PathBuf>,
     /// double_love_asr 包目录（sidecars/asr）
     pub package_dir: PathBuf,
     /// sidecar stderr 日志目录
     pub log_dir: PathBuf,
+    pub prepared_dir: PathBuf,
+    pub media_tools: FfmpegTools,
     /// 切块秒数，默认 30
     pub chunk_seconds: i64,
 }
 
-const SUPPORTED_MODELS: [&str; 2] = ["qwen3-asr-1.7b", "qwen3-asr-0.6b"];
+const SUPPORTED_MODELS: [&str; 2] = ["qwen3-asr-1.7b-8bit", "qwen3-asr-0.6b-4bit"];
 /// sidecar 事件静默上限：模型加载+长 chunk 推理可能较慢，给足 2 分钟
 const EVENT_SILENCE_LIMIT: Duration = Duration::from_secs(120);
 
@@ -57,18 +59,18 @@ pub fn start_transcription(
         ));
     }
 
-    // 前置校验（同步）：资产存在、已抽取准备音频
-    let (wav_path, source_sample_rate) = {
+    // 前置校验（同步）：资产存在。准备音频延迟到异步任务内部。
+    let (source_path, existing_wav, source_sample_rate) = {
         let guard = store.lock().map_err(|_| "存储锁不可用".to_string())?;
         let asset = guard
-            .media_asset(&config.asset_id)
+            .active_media_asset(&config.asset_id)
             .map_err(|error| error.to_string())?
             .ok_or_else(|| format!("资产不存在：{}", config.asset_id))?;
-        let wav = asset
-            .prepared_wav_path
-            .clone()
-            .ok_or_else(|| "资产尚未抽取准备音频（请先 import-media）".to_string())?;
-        (wav, asset.audio_sample_rate)
+        (
+            asset.original_path,
+            asset.prepared_wav_path,
+            asset.audio_sample_rate,
+        )
     };
 
     let python = resolve_python(
@@ -76,7 +78,7 @@ pub fn start_transcription(
         &config.package_dir.join(".venv/bin/python"),
     )
     .ok_or_else(|| {
-        "找不到 python 解释器（请运行 scripts/prepare-asr.sh 或确认 python3 可用）".to_string()
+        "找不到 App 随附的 ASR Python 运行时，请重新安装完整的 Double Love Studio。".to_string()
     })?;
 
     let task_id = Uuid::new_v4().to_string();
@@ -89,7 +91,8 @@ pub fn start_transcription(
             &sink,
             &config,
             &python,
-            &wav_path,
+            &source_path,
+            existing_wav.as_deref(),
             source_sample_rate,
             &token,
         )
@@ -104,7 +107,8 @@ fn run_transcription(
     sink: &SharedSink,
     config: &TranscribeConfig,
     python: &std::path::Path,
-    wav_path: &str,
+    source_path: &str,
+    existing_wav: Option<&str>,
     source_sample_rate: i64,
     token: &crate::task::CancellationToken,
 ) -> TaskState {
@@ -118,6 +122,39 @@ fn run_transcription(
         });
     };
 
+    let wav_path = if let Some(existing) = existing_wav.filter(|path| Path::new(path).is_file()) {
+        existing.to_string()
+    } else {
+        report("prepare_audio", "正在准备 16kHz 转录音频…".to_string());
+        if let Err(error) = std::fs::create_dir_all(&config.prepared_dir) {
+            report("error", format!("无法创建准备音频目录：{error}"));
+            return TaskState::Failed;
+        }
+        let destination = config.prepared_dir.join(format!("{}.wav", config.asset_id));
+        if let Err(error) =
+            prepare_media_wav(&config.media_tools, Path::new(source_path), &destination)
+        {
+            report("error", error.cause.clone());
+            return TaskState::Failed;
+        }
+        if let Err(error) = store
+            .lock()
+            .map_err(|_| "存储锁不可用".to_string())
+            .and_then(|guard| {
+                guard
+                    .set_asset_prepared(&config.asset_id, &destination.to_string_lossy())
+                    .map_err(|error| error.to_string())
+            })
+        {
+            report("error", format!("准备音频状态没有保存：{error}"));
+            return TaskState::Failed;
+        }
+        destination.to_string_lossy().into_owned()
+    };
+    if token.is_cancelled() {
+        return TaskState::Cancelled;
+    }
+
     let log_path = config.log_dir.join(format!("asr-{task_id}.log"));
     let mut sidecar = match Sidecar::spawn(python, &config.package_dir, config.mock, &log_path) {
         Ok(sidecar) => sidecar,
@@ -128,7 +165,7 @@ fn run_transcription(
     };
     if let Err(error) = sidecar.send(&SidecarCommand::Transcribe {
         task_id: task_id.to_string(),
-        wav_path: wav_path.to_string(),
+        wav_path,
         model: config.model.clone(),
         model_dir: config.model_dir.to_string_lossy().into_owned(),
         aligner_dir: config.aligner_dir.to_string_lossy().into_owned(),
@@ -408,9 +445,9 @@ mod tests {
     fn test_config(dir: &Path, mock: bool) -> TranscribeConfig {
         TranscribeConfig {
             asset_id: "asset-1".to_string(),
-            model: "qwen3-asr-1.7b".to_string(),
-            model_dir: dir.join("models/qwen3-asr-1.7b"),
-            aligner_dir: dir.join("models/qwen3-forced-aligner-0.6b"),
+            model: "qwen3-asr-1.7b-8bit".to_string(),
+            model_dir: dir.join("models/qwen3-asr-1.7b-8bit"),
+            aligner_dir: dir.join("models/qwen3-forced-aligner-0.6b-8bit"),
             language: "auto".to_string(),
             mock,
             python: None,
@@ -419,6 +456,11 @@ mod tests {
                 .canonicalize()
                 .expect("package dir"),
             log_dir: dir.join("logs"),
+            prepared_dir: dir.join("prepared"),
+            media_tools: FfmpegTools {
+                ffprobe: PathBuf::from("ffprobe"),
+                ffmpeg: PathBuf::from("ffmpeg"),
+            },
             chunk_seconds: 1,
         }
     }

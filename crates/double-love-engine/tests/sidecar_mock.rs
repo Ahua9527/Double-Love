@@ -55,7 +55,7 @@ fn transcribe_cmd(task_id: &str, wav: &Path, chunk_seconds: i64) -> SidecarComma
     SidecarCommand::Transcribe {
         task_id: task_id.to_string(),
         wav_path: wav.to_string_lossy().into_owned(),
-        model: "qwen3-asr-1.7b".to_string(),
+        model: "qwen3-asr-1.7b-8bit".to_string(),
         model_dir: "/tmp/double-love-test-asr".to_string(),
         aligner_dir: "/tmp/double-love-test-aligner".to_string(),
         language: "auto".to_string(),

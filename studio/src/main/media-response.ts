@@ -12,6 +12,9 @@ const MIME_TYPES: Readonly<Record<string, string>> = Object.freeze({
   '.wav': 'audio/wav',
   '.m4a': 'audio/mp4',
   '.aac': 'audio/aac',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.png': 'image/png',
 })
 
 const U64_MAX = 0xffff_ffff_ffff_ffffn

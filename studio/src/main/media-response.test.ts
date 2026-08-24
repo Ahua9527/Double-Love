@@ -111,6 +111,7 @@ describe('mediaResponse', () => {
   it('maps supported audio/video MIME types and defaults safely', () => {
     expect(mimeForPath('clip.MOV')).toBe('video/quicktime')
     expect(mimeForPath('voice.wav')).toBe('audio/wav')
+    expect(mimeForPath('thumbnail.JPG')).toBe('image/jpeg')
     expect(mimeForPath('unknown.bin')).toBe('application/octet-stream')
   })
 })

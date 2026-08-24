@@ -14,3 +14,16 @@
   opacity: 0;
   pointer-events: none;
 }
+
+.studio-preview-status {
+  position: absolute;
+  z-index: 4;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: rgb(24 26 31 / 72%);
+  color: white;
+  font-size: 12px;
+}
+
+.studio-preview-status.is-error { color: #ffd6d6; }

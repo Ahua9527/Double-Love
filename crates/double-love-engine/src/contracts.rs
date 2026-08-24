@@ -523,6 +523,14 @@ pub struct MediaAssetSummary {
     pub height: Option<i64>,
     pub audio_channels: Option<i64>,
     pub status: AssetStatus,
+    pub prepared_available: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct MediaAssetRemoval {
+    pub asset_id: String,
+    pub removed_clips: u64,
 }
 
 #[cfg(test)]

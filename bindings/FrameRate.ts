@@ -4,4 +4,4 @@
  * 帧率白名单：切片只支持这些；ffprobe 探测结果必须精确命中其一。
  * serde 名显式固定（外部契约，会存进 SQLite），不依赖 rename_all 的分词行为。
  */
-export type FrameRate = "fps_24" | "fps_24_ntsc" | "fps_25" | "fps_30" | "fps_30_ntsc" | "fps_50" | "fps_60" | "fps_60_ntsc";
+export type FrameRate = "fps_24" | "fps_24_ntsc" | "fps_25" | "fps_30" | "fps_30_ntsc" | "fps_50" | "fps_60" | "fps_60_ntsc" | "fps_120" | "fps_120_ntsc";

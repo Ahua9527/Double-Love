@@ -3,14 +3,13 @@
 #   1. 建 sidecars/asr/.venv（不进 git）
 #   2. 安装 pin 的依赖（mlx-qwen3-asr）
 #   3. mock 协议自检（不下载模型，秒级）
-#   4. 预下载 Qwen3-ASR-1.7B 与逐词 ForcedAligner 权重（可 --skip-model）
-# 运行时保持离线：引擎只从本地 HF 缓存读权重。
+#   4. 验证 ModelScope SDK 下载模块（不在构建机隐式下载用户模型）
+# 运行时保持离线：引擎只从设置页已校验的本地模型目录读取权重。
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 ASR_DIR="$ROOT/sidecars/asr"
 VENV="$ASR_DIR/.venv"
-export HF_HOME="${DOUBLELOVE_MODELS_DIR:-$HOME/.cache/double-love/models}"
 
 # mlx-qwen3-asr 需要 Python ≥ 3.10。寻找顺序：
 #   $DOUBLELOVE_ASR_PYTHON → python3.13…3.10 → python3（若够新）→ uv 安装的用户级 3.12
@@ -53,15 +52,16 @@ case "$READY" in
 esac
 
 if [[ "${1:-}" == "--skip-model" ]]; then
-  echo "==> 跳过模型下载（--skip-model）；首次真实转录时会自动下载"
+  echo "==> 未下载模型；这是正常的。模型只能由桌面应用通过 ModelScope 受管安装。"
   exit 0
 fi
 
-echo "==> 预下载 Qwen3-ASR-1.7B 与 Qwen3-ForcedAligner-0.6B 到 ${HF_HOME}（仅需一次）"
+echo "==> 验证受管 ModelScope 下载模块（不下载权重）"
 (cd "$ASR_DIR" && "$VENV/bin/python" -c "
-from mlx_qwen3_asr import ForcedAligner, Session
-Session(model='Qwen/Qwen3-ASR-1.7B')
-ForcedAligner(model_path='Qwen/Qwen3-ForcedAligner-0.6B')
-print('models ready')
+import modelscope, modelscope_hub
+import double_love_asr.modelscope_download
+assert modelscope.__version__ == '1.39.1'
+assert modelscope_hub.__version__ == '0.2.0'
+print('ModelScope downloader ready')
 ")
-echo "==> 完成。运行时引擎离线使用本地缓存。"
+echo "==> 完成。模型由桌面应用下载、校验并以本地绝对目录离线加载。"

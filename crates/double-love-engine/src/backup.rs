@@ -150,7 +150,7 @@ mod tests {
                 row.get(0)
             })
             .expect("backup schema version");
-        assert_eq!(schema_version, 10);
+        assert_eq!(schema_version, 11);
         let project_id: String = read_only
             .query_row(
                 "SELECT value FROM project_meta WHERE key = 'project_id'",

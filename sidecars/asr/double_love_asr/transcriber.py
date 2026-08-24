@@ -76,7 +76,7 @@ def transcribe_chunk(
     cancel,
 ) -> list[dict]:
     del cancel  # MLX 推理不可中断；取消点在 chunk 边界（pipeline 检查）
-    if model not in {"qwen3-asr-1.7b", "qwen3-asr-0.6b"}:
+    if model not in {"qwen3-asr-1.7b-8bit", "qwen3-asr-0.6b-4bit"}:
         raise AsrError("ASR_MODEL_UNKNOWN", f"未知模型：{model}")
     session = _session(model_dir)
     aligner = _forced_aligner(aligner_dir)

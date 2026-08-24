@@ -29,7 +29,7 @@ pub struct DiarizeConfig {
     pub python: Option<PathBuf>,
     pub package_dir: PathBuf,
     pub log_dir: PathBuf,
-    /// 模型管理器解析出的 bundled Silero VAD 目录或运行时标识。
+    /// 模型管理器解析出的已校验 MLX Silero VAD v6 本地目录。
     pub vad_model_dir: PathBuf,
     /// 模型管理器解析出的本地 WeSpeaker 权重目录。
     pub speaker_model_dir: PathBuf,
@@ -45,7 +45,7 @@ pub fn start_speaker_diarization(
     let (wav_path, source_sample_rate, word_count) = {
         let guard = store.lock().map_err(|_| "存储锁不可用".to_string())?;
         let asset = guard
-            .media_asset(&config.asset_id)
+            .active_media_asset(&config.asset_id)
             .map_err(|error| error.to_string())?
             .ok_or_else(|| format!("素材不存在：{}", config.asset_id))?;
         let wav = asset
@@ -65,7 +65,7 @@ pub fn start_speaker_diarization(
         &config.package_dir.join(".venv/bin/python"),
     )
     .ok_or_else(|| {
-        "找不到说话人模型 Python 环境（请运行 scripts/prepare-speaker.sh）。".to_string()
+        "找不到 App 随附的 Speaker Python 运行时，请重新安装完整的 Double Love Studio。".to_string()
     })?;
     let task_id = Uuid::new_v4().to_string();
     let worker_id = task_id.clone();
@@ -460,8 +460,8 @@ mod tests {
                 .canonicalize()
                 .expect("speaker sidecar"),
             log_dir: dir.join("logs"),
-            vad_model_dir: dir.join("models/silero-vad"),
-            speaker_model_dir: dir.join("models/wespeaker-zh"),
+            vad_model_dir: dir.join("models/silero-vad-v6"),
+            speaker_model_dir: dir.join("models/wespeaker-voxceleb-resnet34-lm"),
         };
         let task_id =
             start_speaker_diarization(Arc::clone(&store), &registry, Arc::new(Sink), config)

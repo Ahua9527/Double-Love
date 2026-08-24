@@ -62,3 +62,4 @@ docs/design/reference-visual.png
 
 # 迁移基线原始运行证据（本机保留，仓库只提交脱敏摘要）
 evidence/migration-baseline/
+.pi/

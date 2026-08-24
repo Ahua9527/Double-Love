@@ -116,6 +116,14 @@ impl TaskRegistry {
             .map(TaskHandle::state)
     }
 
+    pub fn has_active(&self) -> bool {
+        self.tasks
+            .lock()
+            .expect("registry lock")
+            .values()
+            .any(|handle| !handle.is_terminal())
+    }
+
     /// 请求取消：任务在运行则置位返回 true；不存在或已终态返回 false。
     pub fn cancel(&self, task_id: &str) -> bool {
         let tasks = self.tasks.lock().expect("registry lock");

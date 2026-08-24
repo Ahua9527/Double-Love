@@ -1,31 +1,47 @@
-import * as electronAdapter from './electron'
-import * as previewAdapter from './preview'
+import * as electronAdapter from "./electron";
+import * as previewAdapter from "./preview";
 
-export * from './normalize'
+export * from "./normalize";
 
-type PlatformAdapter = Omit<typeof electronAdapter, 'isDesktop' | 'platformKind'> & {
-  readonly isDesktop: boolean
-  readonly platformKind: 'electron' | 'preview'
+type PlatformAdapter = Omit<
+  typeof electronAdapter,
+  "isDesktop" | "platformKind"
+> & {
+  readonly isDesktop: boolean;
+  readonly platformKind: "electron" | "preview";
+};
+
+const hasElectronBridge = "doubleLove" in window;
+
+if (["file:", "dl-app:"].includes(location.protocol) && !hasElectronBridge) {
+  throw new Error(
+    "Double Love Studio packaged renderer started without a desktop bridge",
+  );
 }
 
-const hasElectronBridge = 'doubleLove' in window
-
-if (['file:', 'dl-app:'].includes(location.protocol) && !hasElectronBridge) {
-  throw new Error('Double Love Studio packaged renderer started without a desktop bridge')
-}
-
-const electronPlatform: PlatformAdapter = electronAdapter
-const previewPlatform: PlatformAdapter = { ...electronAdapter, ...previewAdapter }
-const adapter: PlatformAdapter = hasElectronBridge ? electronPlatform : previewPlatform
+const electronPlatform: PlatformAdapter = electronAdapter;
+const previewPlatform: PlatformAdapter = {
+  ...electronAdapter,
+  ...previewAdapter,
+};
+const adapter: PlatformAdapter = hasElectronBridge
+  ? electronPlatform
+  : previewPlatform;
 
 export const {
   isDesktop,
   platformKind,
   listen,
   projectOpen,
-  projectCreate,
+  createProject,
+  recentProjectOpen,
+  trashProject,
+  projectCheckpoint,
+  projectClose,
+  onPrepareQuit,
   assetsList,
   importMedia,
+  removeMediaAsset,
   transcriptGet,
   transcribeStart,
   taskCancel,
@@ -39,6 +55,7 @@ export const {
   timelineGet,
   mainTrackList,
   mainTrackAppendFull,
+  mainTrackInsertAssets,
   mainTrackMove,
   mainTrackTrim,
   mainTrackSplit,
@@ -63,6 +80,16 @@ export const {
   projectRenderMp4Apply,
   pickDirectory,
   pickMediaFile,
+  grantDroppedMedia,
+  playerSetBounds,
+  playerLoadTimeline,
+  playerSetSubtitle,
+  playerSetPresentation,
+  playerPlay,
+  playerPause,
+  playerSeek,
+  playerDispose,
+  onPlayerState,
   pickSavePath,
   pickProjectExportPath,
   settingsOpen,
@@ -72,16 +99,21 @@ export const {
   updateInstall,
   preferencesGet,
   preferencesUpdate,
+  historyLimitPreview,
   recentProjectsList,
   recentProjectForget,
   systemProfile,
   modelCatalog,
+  modelQueueGet,
   modelInstall,
   modelPause,
   modelResume,
   modelCancel,
   modelVerify,
   modelRemove,
+  modelLegacyCleanupPreview,
+  modelLegacyCleanupApply,
+  modelImportFolder,
   modelReveal,
   doctorRun,
   diagnosticsRevealLogs,
@@ -90,4 +122,4 @@ export const {
   onboardingReset,
   editUndo,
   editRedo,
-} = adapter
+} = adapter;

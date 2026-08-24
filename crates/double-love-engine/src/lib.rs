@@ -24,8 +24,8 @@ pub use backup::{DatabaseBackupError, backup_sqlite_database};
 pub use compile::{CompileOptions, compile_rough_cut, output_to_source, source_to_output};
 pub use contracts::{
     AssetStatus, CanvasFit, CanvasSpec, CompatibilityReport, EditBehavior, EditOperation, EditType,
-    IrClip, MainTrackClip, MapSegment, MediaAssetSummary, OutputMapSegment, ProjectExportPreview,
-    ResolvedTimelineClip, RevisionHistoryEntry, SourceCut, SpeakerAssignment,
+    IrClip, MainTrackClip, MapSegment, MediaAssetRemoval, MediaAssetSummary, OutputMapSegment,
+    ProjectExportPreview, ResolvedTimelineClip, RevisionHistoryEntry, SourceCut, SpeakerAssignment,
     SpeakerDiarizationResult, SpeakerIdentity, SpeakerMergeProposal, SpeakerNameAgentPayload,
     SpeakerNameProposal, SpeakerSegment, SubtitleCue, SubtitleStyle, TIMELINE_IR_SCHEMA_VERSION,
     TIMELINE_IR_V2_SCHEMA_VERSION, TimelineIR, TimelineIRv2, TimelineSource, TranscriptSegment,
@@ -38,15 +38,21 @@ pub use export::render::{ffmpeg_filter_graph, ffmpeg_supports_ass_filter, render
 pub use export::roughcut::{ExportOutcome, export_rough_cut, export_rough_cut_to};
 pub use main_track::{
     append_full_main_track_asset, append_main_track_clip, compile_project_timeline,
-    move_main_track_clip, remove_main_track_clip, split_main_track_clip, trim_main_track_clip,
+    insert_full_main_track_assets, move_main_track_clip, remove_main_track_clip,
+    split_main_track_clip, trim_main_track_clip,
 };
-pub use media::{FfmpegTools, PREPARED_SAMPLE_RATE, import_media, list_media_assets};
+pub use media::{
+    FfmpegTools, PREPARED_SAMPLE_RATE, import_media, list_media_assets, prepare_media_wav,
+    probe_media,
+};
 pub use model::{
-    DoctorEnvironment, DoctorModelCheck, DoctorReport, FetchResponse, FetchStatus,
-    MODEL_CATALOG_SCHEMA_VERSION, MODEL_INSTALLATIONS_SCHEMA_VERSION, ModelCatalog, ModelComponent,
-    ModelDependency, ModelDescriptor, ModelDescriptorWithInstallation, ModelDownloadProgress,
-    ModelError, ModelFetcher, ModelFile, ModelInstallState, ModelInstallation, ModelManager,
-    write_fetch_response,
+    DoctorCapabilityCheck, DoctorCapabilityStatus, DoctorEnvironment, DoctorModelCheck,
+    DoctorReport, FetchResponse, FetchStatus, LegacyModelCleanupItem, LegacyModelCleanupPreview,
+    MODEL_CATALOG_SCHEMA_VERSION, MODEL_INSTALLATIONS_SCHEMA_VERSION, ModelArchive, ModelCatalog,
+    ModelComponent, ModelDependency, ModelDescriptor, ModelDescriptorWithInstallation,
+    ModelDownloadProgress, ModelDownloadSource, ModelError, ModelFetcher, ModelFile,
+    ModelInstallState, ModelInstallation, ModelManager, ModelQueueEntry, ModelQueueSnapshot,
+    ModelQueueState, ModelUiRole, write_fetch_response,
 };
 pub use project::{ProjectError, ProjectSummary, create_project, open_project};
 pub use rational::{
@@ -61,7 +67,10 @@ pub use speaker::{
     agent_name_payload_preview, assign_words_to_speakers, local_name_proposals,
     merge_proposals_from_embeddings,
 };
-pub use storage::{MediaAssetRow, NewMediaAsset, NewTranscriptWord, ProjectStore, StorageError};
+pub use storage::{
+    MediaAssetRow, NewMediaAsset, NewTranscriptWord, ProjectLibraryMetadata, ProjectStore,
+    ProjectThumbnailSource, StorageError,
+};
 pub use subtitle::{apply_speaker_names, build_subtitle_cues, export_ass};
 pub use task::{CancellationToken, ProgressSink, SharedSink, TaskRegistry};
 pub use timeline::compile_main_track;

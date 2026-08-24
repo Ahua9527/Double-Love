@@ -75,15 +75,18 @@ fn import_media_end_to_end_with_synthetic_mp4() {
     assert_eq!(result["data"]["audio_sample_rate"], 48_000);
     // 2 秒 @ 48kHz：时长必须精确落在采样整数上
     assert_eq!(result["data"]["duration_samples"], 96_000);
-    assert_eq!(result["data"]["status"], "prepared");
+    assert_eq!(result["data"]["status"], "imported");
+    assert_eq!(result["data"]["prepared_available"], false);
 
-    // 准备音频已落盘且唯一
-    let prepared: Vec<_> = std::fs::read_dir(project.join(".doublelove/prepared"))
-        .expect("prepared dir exists")
-        .filter_map(Result::ok)
-        .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "wav"))
-        .collect();
-    assert_eq!(prepared.len(), 1, "exactly one prepared wav");
+    // 导入只探测并入库；16k 音频延迟到首次转录。
+    let prepared_dir = project.join(".doublelove/prepared");
+    assert!(
+        !prepared_dir.exists()
+            || std::fs::read_dir(prepared_dir)
+                .expect("prepared directory")
+                .next()
+                .is_none()
+    );
 
     // 重复导入：复用资产 + info 诊断，不报错
     let (ok, again) = run_cli(&[

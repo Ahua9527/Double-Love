@@ -80,8 +80,8 @@ enum Command {
         /// import-media 返回的资产 id
         #[arg(long)]
         asset: String,
-        /// qwen3-asr-1.7b（默认）/ qwen3-asr-0.6b
-        #[arg(long, default_value = "qwen3-asr-1.7b")]
+        /// qwen3-asr-1.7b-8bit（默认）/ qwen3-asr-0.6b-4bit
+        #[arg(long, default_value = "qwen3-asr-1.7b-8bit")]
         model: String,
         /// auto / zh / en
         #[arg(long, default_value = "auto")]
@@ -570,12 +570,12 @@ fn model_verify(
         ModelComponent::Asr => (
             "asr",
             asr_dir,
-            "from mlx_qwen3_asr import ForcedAligner, Session\nSession(model='Qwen/Qwen3-ASR-1.7B')\nForcedAligner(model_path='Qwen/Qwen3-ForcedAligner-0.6B')\nprint('asr model verified')",
+            "import mlx_qwen3_asr, modelscope, modelscope_hub\nimport double_love_asr.modelscope_download\nprint('MLX ASR runtime verified')",
         ),
         ModelComponent::Speaker => (
             "speaker",
             speaker_dir,
-            "import wespeaker\nwespeaker.load_model('chinese')\nprint('speaker model verified')",
+            "import mlx, mlx_audio\nimport double_love_speaker.engine, double_love_speaker.mlx_resnet\nprint('MLX speaker runtime verified')",
         ),
     };
     let python = match sidecar_python(package_dir) {
@@ -742,6 +742,10 @@ fn transcribe_command(
         Ok(path) => path,
         Err(error) => return OperationResult::failed("MODEL_NOT_READY", error.to_string()),
     };
+    let media_tools = match FfmpegTools::discover() {
+        Ok(tools) => tools,
+        Err(error) => return OperationResult::failed(&error.code, &error.cause),
+    };
     let config = TranscribeConfig {
         asset_id: asset.to_string(),
         model: model.to_string(),
@@ -752,6 +756,8 @@ fn transcribe_command(
         python: None,
         package_dir: sidecar_dir.to_path_buf(),
         log_dir: std::path::Path::new(&summary.root).join(".doublelove/logs"),
+        prepared_dir: std::path::Path::new(&summary.root).join(".doublelove/prepared"),
+        media_tools,
         chunk_seconds,
     };
     let registry = TaskRegistry::new();

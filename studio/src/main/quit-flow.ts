@@ -26,6 +26,7 @@ export function handleBeforeQuit(
   state: QuitFlowState,
   host: QuitFlowHost | null,
   quit: () => void,
+  prepare?: () => Promise<void>,
 ): void {
   if (state.allowQuit) return
 
@@ -38,7 +39,9 @@ export function handleBeforeQuit(
   event.preventDefault()
   if (state.quitInProgress) return
   state.quitInProgress = true
-  const shutdown = host ? host.stop() : Promise.resolve()
+  const shutdown = (prepare ? prepare() : Promise.resolve()).then(() =>
+    host ? host.stop() : Promise.resolve(),
+  )
   const finishQuit = () => {
     state.allowQuit = true
     quit()

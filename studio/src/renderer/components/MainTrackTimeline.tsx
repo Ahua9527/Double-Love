@@ -1,11 +1,12 @@
-import { GripVertical, Scissors, Trash2 } from 'lucide-react'
+import { GripVertical, Plus, Scissors, Trash2 } from 'lucide-react'
 import { useMemo, useRef, useState } from 'react'
 import './main-track-timeline.css'
 import type { FrameRate } from '../../../../bindings/FrameRate'
 import type { MainTrackClip } from '../../../../bindings/MainTrackClip'
 import type { MediaAssetSummary } from '../../../../bindings/MediaAssetSummary'
 import type { TimelineIRv2 } from '../../../../bindings/TimelineIRv2'
-import { clampSeconds, formatClock, frameRateFps, num, seekFractionFromClientX } from '../utils'
+import { clampSeconds, formatTimecodeSeconds, frameRateFps, num, seekFractionFromClientX } from '../utils'
+import { Tooltip } from './Tooltip'
 
 interface MainTrackTimelineProps {
   clips: MainTrackClip[]
@@ -21,6 +22,7 @@ interface MainTrackTimelineProps {
   onSplit: (clip: MainTrackClip) => void
   onRemove: (clip: MainTrackClip) => void
   onAdd: () => void
+  onDropFiles: (files: File[], beforeClipId: string | null) => void
 }
 
 type TrimEdge = 'left' | 'right'
@@ -62,6 +64,7 @@ export function MainTrackTimeline({
   onSplit,
   onRemove,
   onAdd,
+  onDropFiles,
 }: MainTrackTimelineProps) {
   const trackRef = useRef<HTMLDivElement>(null)
   const scrubRef = useRef<{ element: HTMLElement; pointerId: number } | null>(null)
@@ -93,6 +96,7 @@ export function MainTrackTimeline({
   const total = Math.max(1, timeline ? num(timeline.output_duration_frames) / frameRateFps(timeline.rate) : [...timings.values()].reduce((sum, timing) => sum + timing.seconds, 0))
   const clampedPlayheadSec = clampSeconds(playheadSec, total)
   const playheadPercent = (clampedPlayheadSec / total) * 100
+  const displayRate = timeline?.rate ?? outputRate ?? assets[0]?.rate ?? 'fps_25'
 
   const frameRateLabel = outputRate ? `${frameRateFps(outputRate).toFixed(3).replace(/\.000$/, '')} fps` : '跟随首段素材'
 
@@ -190,7 +194,7 @@ export function MainTrackTimeline({
           <strong>主轨</strong>
           <span>{clips.length ? `${clips.length} 段 · ${frameRateLabel}` : '还没有素材'}</span>
         </div>
-        <button type="button" className="studio-text-action" onClick={onAdd}>添加素材</button>
+        <Tooltip label="添加素材"><button type="button" className="studio-icon-button" aria-label="添加素材" onClick={onAdd}><Plus size={15} /></button></Tooltip>
       </header>
       {clips.length === 0 ? (
         <div className="studio-timeline-empty">
@@ -208,7 +212,7 @@ export function MainTrackTimeline({
             aria-valuemin={0}
             aria-valuemax={total}
             aria-valuenow={clampedPlayheadSec}
-            aria-valuetext={`${formatClock(clampedPlayheadSec)} / ${formatClock(total)}`}
+            aria-valuetext={`${formatTimecodeSeconds(clampedPlayheadSec, displayRate)} / ${formatTimecodeSeconds(total, displayRate)}`}
             onPointerDown={beginScrub}
             onPointerMove={moveScrub}
             onPointerUp={endScrub}
@@ -216,7 +220,7 @@ export function MainTrackTimeline({
             onLostPointerCapture={loseScrub}
             onKeyDown={handleRulerKeyDown}
           >
-            <span>00:00</span><span>{formatClock(total / 3)}</span><span>{formatClock((total * 2) / 3)}</span><span>{formatClock(total)}</span>
+            <span>{formatTimecodeSeconds(0, displayRate)}</span><span>{formatTimecodeSeconds(total / 3, displayRate)}</span><span>{formatTimecodeSeconds((total * 2) / 3, displayRate)}</span><span>{formatTimecodeSeconds(total, displayRate)}</span>
           </div>
           <div className="studio-track-layer">
             <div
@@ -228,6 +232,15 @@ export function MainTrackTimeline({
               onPointerUp={endScrub}
               onPointerCancel={endScrub}
               onLostPointerCapture={loseScrub}
+              onDragOver={(event) => {
+                if (event.dataTransfer.types.includes('Files')) event.preventDefault()
+              }}
+              onDrop={(event) => {
+                const files = Array.from(event.dataTransfer.files ?? [])
+                if (files.length === 0) return
+                event.preventDefault()
+                onDropFiles(files, null)
+              }}
             >
             <div className="studio-track-playhead" aria-hidden="true" style={{ left: `${playheadPercent}%` }} />
             {clips.map((clip) => {
@@ -266,6 +279,17 @@ export function MainTrackTimeline({
                     event.preventDefault()
                     event.stopPropagation()
                     draggedRef.current = true
+                    const files = Array.from(event.dataTransfer.files ?? [])
+                    if (files.length > 0) {
+                      const rect = event.currentTarget.getBoundingClientRect()
+                      const index = clips.findIndex((candidate) => candidate.id === clip.id)
+                      const before = event.clientX <= rect.left + rect.width / 2
+                        ? clip.id
+                        : (clips[index + 1]?.id ?? null)
+                      onDropFiles(files, before)
+                      setDragId(null)
+                      return
+                    }
                     const moved = event.dataTransfer.getData('text/plain')
                     if (moved && moved !== clip.id) onMove(moved, clip.id)
                     setDragId(null)
@@ -290,7 +314,7 @@ export function MainTrackTimeline({
                   <div className="studio-track-clip-inner">
                     <span className="studio-track-grip"><GripVertical size={13} /></span>
                     <span className="studio-track-name">{clipName(clip, assets)}</span>
-                    <span className="studio-track-duration">{formatClock(seconds)}</span>
+                    <span className="studio-track-duration">{formatTimecodeSeconds(seconds, displayRate)}</span>
                   </div>
                   <button
                     type="button"
@@ -310,8 +334,8 @@ export function MainTrackTimeline({
                   />
                   {selected && (
                     <div className="studio-track-actions" data-timeline-control onPointerDown={(event) => event.stopPropagation()} onClick={(event) => event.stopPropagation()}>
-                      <button type="button" aria-label="在播放头拆分" title="在播放头拆分" onClick={() => onSplit(clip)}><Scissors size={13} /></button>
-                      <button type="button" aria-label="移除片段" title="移除片段" onClick={() => onRemove(clip)}><Trash2 size={13} /></button>
+                      <Tooltip label="在播放头拆分"><button type="button" aria-label="在播放头拆分" onClick={() => onSplit(clip)}><Scissors size={13} /></button></Tooltip>
+                      <Tooltip label="移除片段"><button type="button" aria-label="移除片段" onClick={() => onRemove(clip)}><Trash2 size={13} /></button></Tooltip>
                     </div>
                   )}
                 </article>

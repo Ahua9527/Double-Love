@@ -15,6 +15,23 @@ need_uv() {
   fi
 }
 
+assert_no_legacy_backend_files() {
+  local root="$1" name="$2" found site_packages module
+  site_packages="$("$root/bin/python" -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')"
+  for module in torch torchaudio wespeaker silero_vad onnxruntime; do
+    if [[ -e "$site_packages/$module" ]]; then
+      echo "$name runtime contains a forbidden legacy backend module: $site_packages/$module" >&2
+      exit 2
+    fi
+  done
+  found="$(find "$root" -type f \
+    \( -name 'libtorch*.dylib' -o -name 'libonnxruntime*.dylib' \) -print -quit)"
+  if [[ -n "$found" ]]; then
+    echo "$name runtime contains a forbidden legacy backend artifact: $found" >&2
+    exit 2
+  fi
+}
+
 build_one() {
   local name="$1" package="$2" requirements="$3"
   local target="$OUT/$name"
@@ -42,6 +59,35 @@ build_one() {
 
   "$target/.venv/bin/python" -m pip install --quiet --break-system-packages -r "$requirements"
   "$target/.venv/bin/python" -c "import $package" >/dev/null
+
+  if [[ "$name" == "asr" ]]; then
+    "$target/.venv/bin/python" -c '
+import importlib.metadata as metadata
+import modelscope, modelscope_hub, double_love_asr.modelscope_download
+assert metadata.version("modelscope") == "1.39.1"
+assert metadata.version("modelscope-hub") == "0.2.0"
+for forbidden in ("torch", "torchaudio", "wespeaker", "silero-vad", "onnxruntime"):
+    try:
+        metadata.version(forbidden)
+    except metadata.PackageNotFoundError:
+        continue
+    raise SystemExit(f"ASR runtime must not contain {forbidden}")
+'
+  elif [[ "$name" == "speaker" ]]; then
+    "$target/.venv/bin/python" -c '
+import importlib.metadata as metadata
+import mlx, mlx_audio, double_love_speaker.engine, double_love_speaker.mlx_resnet
+assert metadata.version("mlx") == "0.31.1"
+assert metadata.version("mlx-audio") == "0.5.0"
+for forbidden in ("torch", "torchaudio", "wespeaker", "silero-vad", "onnxruntime"):
+    try:
+        metadata.version(forbidden)
+    except metadata.PackageNotFoundError:
+        continue
+    raise SystemExit(f"Speaker runtime must not contain {forbidden}")
+'
+  fi
+  assert_no_legacy_backend_files "$target/.venv" "$name"
 
   # Gate contract: no pyvenv.cfg with a home= entry.
   if [[ -f "$target/.venv/pyvenv.cfg" ]] && grep -q '^home = ' "$target/.venv/pyvenv.cfg"; then

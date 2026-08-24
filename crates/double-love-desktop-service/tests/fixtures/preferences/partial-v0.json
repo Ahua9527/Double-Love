@@ -8,6 +8,8 @@
     "theme": "dark",
     "restore_last_project": true,
     "timecode_precision": "frame",
+    "project_library_view": "grid",
+    "history_limit": null,
     "transcript_section_tint": true,
     "cjk_spacing": true,
     "default_subtitle_style": {
@@ -35,7 +37,7 @@
     },
     "model_root": "/tmp/double-love/default-models",
     "model_endpoint": "https://huggingface.co",
-    "default_asr_model": "qwen3-asr-0.6b",
+    "default_asr_model": "qwen3-asr-0.6b-4bit",
     "onboarding_version": 1,
     "onboarding_completed": false,
     "recent_projects": []

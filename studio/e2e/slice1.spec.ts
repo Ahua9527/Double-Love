@@ -151,5 +151,5 @@ test('persists preferences across restart and covers recovery and validation pat
   const profile = await invoke<{ architecture: string; recommended_asr_model: string }>('system_profile')
   expect(profile.status).toBe('success')
   expect(profile.data?.architecture).toBe('arm64')
-  expect(['qwen3-asr-0.6b', 'qwen3-asr-1.7b']).toContain(profile.data?.recommended_asr_model)
+  expect(['qwen3-asr-0.6b-4bit', 'qwen3-asr-1.7b-8bit']).toContain(profile.data?.recommended_asr_model)
 })

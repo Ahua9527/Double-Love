@@ -15,6 +15,7 @@ serde_json.workspace = true
 thiserror.workspace = true
 ts-rs.workspace = true
 uuid.workspace = true
+zip = { version = "2.4.1", default-features = false, features = ["deflate"] }
 
 # sidecar 终止升级链（SIGTERM/SIGKILL/killpg）只在 unix 可用
 [target.'cfg(unix)'.dependencies]

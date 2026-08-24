@@ -59,7 +59,7 @@ def _to_source_samples(samples_16k: int, source_rate: int) -> int:
 
 def run(cmd: dict, cancel, emit, transcribe_chunk) -> None:
     task_id = cmd.get("task_id", "")
-    model = cmd.get("model", "qwen3-asr-1.7b")
+    model = cmd.get("model", "qwen3-asr-1.7b-8bit")
     model_dir = cmd.get("model_dir", "")
     aligner_dir = cmd.get("aligner_dir", "")
     language = cmd.get("language", "auto")

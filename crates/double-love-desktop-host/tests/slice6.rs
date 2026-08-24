@@ -24,10 +24,10 @@ struct HostProcess {
 }
 
 impl HostProcess {
-    fn spawn(app_data_dir: &Path) -> Self {
+    fn spawn(app_data_dir: &Path, resource_dir: &Path) -> Self {
         Self::spawn_with(
             app_data_dir,
-            &Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."),
+            resource_dir,
             &["--test-transcribe-mock", "--test-speaker-mock"],
             false,
         )
@@ -198,6 +198,52 @@ fn generate_media(tools: &FfmpegTools, path: &Path, frequency: u32) {
     assert!(status.success(), "ffmpeg fixture generation failed");
 }
 
+fn test_python_path() -> PathBuf {
+    let output = Command::new("python3")
+        .arg("-c")
+        .arg("import sys; print(sys.executable)")
+        .output()
+        .expect("python3 for test runtime");
+    assert!(output.status.success(), "python3 test runtime unavailable");
+    PathBuf::from(
+        String::from_utf8(output.stdout)
+            .expect("python path utf8")
+            .trim(),
+    )
+}
+
+fn prepare_bundled_runtime(resource_dir: &Path, tools: &FfmpegTools) {
+    let python = test_python_path();
+    let media_runtime = resource_dir.join("runtime");
+    let asr_root = resource_dir.join("model-runtime/asr");
+    let speaker_root = resource_dir.join("model-runtime/speaker");
+    fs::create_dir_all(&media_runtime).expect("media runtime");
+    fs::create_dir_all(asr_root.join(".venv/bin")).expect("asr runtime");
+    fs::create_dir_all(speaker_root.join(".venv/bin")).expect("speaker runtime");
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(&tools.ffmpeg, media_runtime.join("ffmpeg"))
+            .expect("link ffmpeg runtime");
+        std::os::unix::fs::symlink(&tools.ffprobe, media_runtime.join("ffprobe"))
+            .expect("link ffprobe runtime");
+        std::os::unix::fs::symlink(&python, asr_root.join(".venv/bin/python"))
+            .expect("link asr python runtime");
+        std::os::unix::fs::symlink(&python, speaker_root.join(".venv/bin/python"))
+            .expect("link speaker python runtime");
+        std::os::unix::fs::symlink(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../sidecars/asr/double_love_asr"),
+            asr_root.join("double_love_asr"),
+        )
+        .expect("link asr package");
+        std::os::unix::fs::symlink(
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../sidecars/speaker/double_love_speaker"),
+            speaker_root.join("double_love_speaker"),
+        )
+        .expect("link speaker package");
+    }
+}
+
 fn seed_installed_models(app_data: &Path) {
     let model_root = app_data.join("models");
     fs::create_dir_all(&model_root).expect("model root");
@@ -220,21 +266,21 @@ fn seed_installed_models(app_data: &Path) {
         serde_json::to_vec_pretty(&json!({
             "schema_version": 1,
             "installations": {
-                "qwen3-asr-0.6b": installed(
-                    "qwen3-asr-0.6b",
-                    "5eb144179a02acc5e5ba31e748d22b0cf3e303b0"
+                "qwen3-asr-0.6b-4bit": installed(
+                    "qwen3-asr-0.6b-4bit",
+                    "70ccd0ba0c24b0c78efc313ce81c1c78c64a3dd7"
                 ),
-                "qwen3-forced-aligner-0.6b": installed(
-                    "qwen3-forced-aligner-0.6b",
-                    "c7cbfc2048c462b0d63a45797104fc9db3ad62b7"
+                "qwen3-forced-aligner-0.6b-8bit": installed(
+                    "qwen3-forced-aligner-0.6b-8bit",
+                    "998b617c695f61865d444c62051fe51030acef6f"
                 ),
-                "silero-vad": installed(
-                    "silero-vad",
-                    "806dcba3f0b5d95282d0889a074954a2f8c6397b"
+                "silero-vad-v6": installed(
+                    "silero-vad-v6",
+                    "c34917caf1d6fc01b763a4ab0345ff1724fdb9c2"
                 ),
-                "wespeaker-zh": installed(
-                    "wespeaker-zh",
-                    "f5a201849aa7cae741ec75cd02a0bc9dd5712ca2"
+                "wespeaker-voxceleb-resnet34-lm": installed(
+                    "wespeaker-voxceleb-resnet34-lm",
+                    "d34f9e11f648c7e83d077bf6e10da94ba56f7b72"
                 )
             }
         }))
@@ -247,6 +293,10 @@ fn write_boundary_speaker_sidecar(resource_dir: &Path) -> PathBuf {
     let package_root = resource_dir.join("model-runtime/speaker");
     let package = package_root.join("double_love_speaker");
     fs::create_dir_all(&package).expect("boundary speaker package");
+    fs::create_dir_all(package_root.join(".venv/bin")).expect("boundary speaker runtime");
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(test_python_path(), package_root.join(".venv/bin/python"))
+        .expect("link boundary speaker python");
     fs::write(package.join("__init__.py"), "").expect("boundary speaker package init");
     fs::write(
         package.join("__main__.py"),
@@ -562,8 +612,9 @@ fn speaker_commands_match_tauri_and_keep_embeddings_inside_the_project_database(
     fs::create_dir_all(&root).expect("temporary root");
     generate_media(&tools, &first_media, 440);
     generate_media(&tools, &second_media, 660);
+    prepare_bundled_runtime(&root, &tools);
 
-    let mut unready_host = HostProcess::spawn(&app_data);
+    let mut unready_host = HostProcess::spawn(&app_data, &root);
     let model_not_ready = unready_host.invoke(
         "model-not-ready",
         "speaker_diarize_start",
@@ -574,7 +625,7 @@ fn speaker_commands_match_tauri_and_keep_embeddings_inside_the_project_database(
     unready_host.stop();
 
     seed_installed_models(&app_data);
-    let mut host = HostProcess::spawn(&app_data);
+    let mut host = HostProcess::spawn(&app_data, &root);
     for (command, payload) in [
         ("speaker_list", json!({})),
         ("speaker_name_proposals", json!({"asset_id":"missing"})),
@@ -633,7 +684,7 @@ fn speaker_commands_match_tauri_and_keep_embeddings_inside_the_project_database(
             &mut host,
             &format!("transcribe-{index}"),
             "transcribe_start",
-            json!({"asset_id":asset_id,"model":"qwen3-asr-0.6b","language":"auto"}),
+            json!({"asset_id":asset_id,"model":"qwen3-asr-0.6b-4bit","language":"auto"}),
         );
     }
 

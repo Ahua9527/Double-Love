@@ -4,6 +4,8 @@
     "theme": "dark",
     "restore_last_project": false,
     "timecode_precision": "millisecond",
+    "project_library_view": "grid",
+    "history_limit": null,
     "transcript_section_tint": false,
     "cjk_spacing": true,
     "default_subtitle_style": {

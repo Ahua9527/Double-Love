@@ -1,71 +1,87 @@
-import { randomUUID } from 'node:crypto'
-import { basename } from 'node:path'
+import { randomUUID } from "node:crypto";
+import { basename } from "node:path";
 
 export const GRANT_KINDS = [
-  'project-open',
-  'import-media',
-  'export-save',
-  'model-root',
-] as const
+  "project-open",
+  "project-parent",
+  "import-media",
+  "export-save",
+  "model-root",
+  "model-import",
+] as const;
 
-export type GrantKind = (typeof GRANT_KINDS)[number]
+export type GrantKind = (typeof GRANT_KINDS)[number];
 
 export interface GrantToken {
-  token: string
-  displayName?: string
+  token: string;
+  displayName?: string;
 }
 
 export interface InvalidGrant {
-  code: 'INVALID_GRANT'
-  message: string
+  code: "INVALID_GRANT";
+  message: string;
 }
 
 interface StoredGrant {
-  path: string
-  kind: GrantKind
-  expiresAt: number
+  path: string;
+  kind: GrantKind;
+  expiresAt: number;
 }
 
-const DEFAULT_TTL_MS = 60_000
+const DEFAULT_TTL_MS = 60_000;
 
 export function invalidGrant(): InvalidGrant {
-  return { code: 'INVALID_GRANT', message: 'Path grant is missing, expired, or invalid' }
+  return {
+    code: "INVALID_GRANT",
+    message: "Path grant is missing, expired, or invalid",
+  };
 }
 
-export function isInvalidGrant(value: string | InvalidGrant): value is InvalidGrant {
-  return typeof value !== 'string'
+export function isInvalidGrant(
+  value: string | InvalidGrant,
+): value is InvalidGrant {
+  return typeof value !== "string";
 }
 
 export class PathGrants {
-  private readonly grants = new Map<string, StoredGrant>()
+  private readonly grants = new Map<string, StoredGrant>();
 
   constructor(
     private readonly ttlMs = DEFAULT_TTL_MS,
     private readonly now: () => number = Date.now,
   ) {}
 
-  create(path: string, kind: GrantKind, includeDisplayName = false): GrantToken {
-    this.purgeExpired()
-    const token = randomUUID()
-    this.grants.set(token, { path, kind, expiresAt: this.now() + this.ttlMs })
-    return includeDisplayName ? { token, displayName: basename(path) } : { token }
+  create(
+    path: string,
+    kind: GrantKind,
+    includeDisplayName = false,
+  ): GrantToken {
+    this.purgeExpired();
+    const token = randomUUID();
+    this.grants.set(token, { path, kind, expiresAt: this.now() + this.ttlMs });
+    return includeDisplayName
+      ? { token, displayName: basename(path) }
+      : { token };
+  }
+
+  resolve(token: unknown, expectedKind: GrantKind): string | InvalidGrant {
+    this.purgeExpired();
+    if (typeof token !== "string" || token.length === 0) return invalidGrant();
+    const grant = this.grants.get(token);
+    return grant && grant.kind === expectedKind ? grant.path : invalidGrant();
   }
 
   consume(token: unknown, expectedKind: GrantKind): string | InvalidGrant {
-    this.purgeExpired()
-    if (typeof token !== 'string' || token.length === 0) return invalidGrant()
-
-    const grant = this.grants.get(token)
-    if (!grant || grant.kind !== expectedKind) return invalidGrant()
-
-    this.grants.delete(token)
-    return grant.path
+    const path = this.resolve(token, expectedKind);
+    if (isInvalidGrant(path)) return path;
+    this.grants.delete(token as string);
+    return path;
   }
 
   private purgeExpired(): void {
-    const now = this.now()
+    const now = this.now();
     for (const [token, grant] of this.grants) {
-      if (grant.expiresAt <= now) this.grants.delete(token)
+      if (grant.expiresAt <= now) this.grants.delete(token);
     }
   }
 }

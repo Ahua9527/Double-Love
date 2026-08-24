@@ -45,7 +45,7 @@ fn require_source(
     store: &ProjectStore,
     asset_id: &str,
 ) -> Result<TimelineSource, Box<OperationResult<MainTrackClip>>> {
-    let row = match store.media_asset(asset_id) {
+    let row = match store.active_media_asset(asset_id) {
         Ok(Some(row)) => row,
         Ok(None) => {
             return Err(Box::new(OperationResult::failed(
@@ -113,6 +113,44 @@ pub fn append_full_main_track_asset(
         Err(result) => return *result,
     };
     append_main_track_clip(store, asset_id, 0, source.source_duration_frames)
+}
+
+pub fn insert_full_main_track_assets(
+    store: &ProjectStore,
+    asset_ids: &[String],
+    before_id: Option<&str>,
+) -> OperationResult<Vec<MainTrackClip>> {
+    let mut clips = Vec::with_capacity(asset_ids.len());
+    for asset_id in asset_ids {
+        let source = match require_source(store, asset_id) {
+            Ok(source) => source,
+            Err(result) => {
+                return OperationResult::failed(
+                    "MEDIA_ASSET_MISSING",
+                    result
+                        .diagnostics
+                        .first()
+                        .map(|item| item.cause.clone())
+                        .unwrap_or_else(|| format!("素材不存在：{asset_id}")),
+                );
+            }
+        };
+        clips.push(MainTrackClip {
+            id: Uuid::new_v4().to_string(),
+            source_asset_id: asset_id.clone(),
+            source_in_frame: 0,
+            source_out_frame: source.source_duration_frames,
+            order_index: 0,
+        });
+    }
+    match store.insert_main_track_clips(&clips, before_id) {
+        Ok(inserted) => {
+            let mut result = OperationResult::success(inserted);
+            result.revision = store.revision().ok();
+            result
+        }
+        Err(error) => storage_failure(error),
+    }
 }
 
 pub fn move_main_track_clip(

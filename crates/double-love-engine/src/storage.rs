@@ -249,6 +249,12 @@ const MIGRATION_V10: &str = "
     CREATE INDEX speaker_identity_archived_idx ON speaker_identity(archived, merged_into);
 ";
 
+/// v11：素材删除只影响项目引用；原始文件保持只读，历史快照可恢复可见状态。
+const MIGRATION_V11: &str = "
+    ALTER TABLE media_asset ADD COLUMN removed_at TEXT;
+    CREATE INDEX media_asset_removed_idx ON media_asset(removed_at, imported_at, id);
+";
+
 const MIGRATIONS: &[(u32, &str)] = &[
     (1, MIGRATION_V1),
     (2, MIGRATION_V2),
@@ -260,6 +266,7 @@ const MIGRATIONS: &[(u32, &str)] = &[
     (8, MIGRATION_V8),
     (9, MIGRATION_V9),
     (10, MIGRATION_V10),
+    (11, MIGRATION_V11),
 ];
 
 pub struct ProjectStore {
@@ -306,6 +313,22 @@ pub struct MediaAssetRow {
     pub source_tc_is_drop_frame: bool,
     pub prepared_wav_path: Option<String>,
     pub status: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ProjectLibraryMetadata {
+    pub created_at: Option<String>,
+    pub modified_at: Option<String>,
+    pub canvas: crate::contracts::CanvasSpec,
+    pub output_rate: Option<crate::rational::FrameRate>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProjectThumbnailSource {
+    pub asset_id: String,
+    pub original_path: String,
+    pub source_frame: i64,
+    pub rate: crate::rational::FrameRate,
 }
 
 /// 新转录词（写入用；synthetic 恒 0，source_word_ids 恒 NULL——切片不产合成词）。
@@ -367,6 +390,8 @@ struct ProjectSpeakerSnapshot {
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 struct ProjectSnapshot {
     main_track: Vec<crate::contracts::MainTrackClip>,
+    #[serde(default)]
+    active_asset_ids: Option<Vec<String>>,
     canvas: crate::contracts::CanvasSpec,
     subtitle_style: crate::contracts::SubtitleStyle,
     active_omits: Vec<crate::contracts::EditOperation>,
@@ -460,6 +485,135 @@ impl ProjectStore {
             params![project_id],
         )?;
         Ok(())
+    }
+
+    pub fn ensure_project_created_at(&self) -> Result<(), StorageError> {
+        self.connection.execute(
+            "INSERT INTO project_meta(key, value)
+             SELECT 'created_at', strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+             WHERE NOT EXISTS(SELECT 1 FROM project_meta WHERE key = 'created_at')",
+            [],
+        )?;
+        Ok(())
+    }
+
+    fn normalized_timestamp(value: Option<String>) -> Option<String> {
+        value.map(|value| {
+            if value.contains('T') || value.ends_with('Z') {
+                value
+            } else {
+                format!("{}Z", value.replace(' ', "T"))
+            }
+        })
+    }
+
+    pub fn project_library_metadata(&self) -> Result<ProjectLibraryMetadata, StorageError> {
+        let created_at = self
+            .connection
+            .query_row(
+                "SELECT MIN(value) FROM (
+                    SELECT value FROM project_meta WHERE key = 'created_at'
+                    UNION ALL SELECT MIN(committed_at) FROM revisions
+                    UNION ALL SELECT MIN(imported_at) FROM media_asset
+                 ) WHERE value IS NOT NULL",
+                [],
+                |row| row.get::<_, Option<String>>(0),
+            )
+            .map(Self::normalized_timestamp)?;
+        let modified_at = self
+            .connection
+            .query_row(
+                "SELECT MAX(value) FROM (
+                    SELECT MAX(committed_at) AS value FROM revisions
+                    UNION ALL SELECT MAX(imported_at) FROM media_asset
+                 ) WHERE value IS NOT NULL",
+                [],
+                |row| row.get::<_, Option<String>>(0),
+            )
+            .map(Self::normalized_timestamp)?
+            .or_else(|| created_at.clone());
+        let output_rate = match self.output_rate()? {
+            Some(rate) => Some(rate),
+            None => self
+                .connection
+                .query_row(
+                    "SELECT a.fps_num, a.fps_den
+                     FROM main_track_clip c
+                     JOIN media_asset a ON a.id = c.asset_id
+                     ORDER BY c.order_index, c.id LIMIT 1",
+                    [],
+                    |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+                )
+                .optional()?
+                .and_then(|(num, den)| (den != 0).then_some((num, den)))
+                .and_then(|(num, den)| {
+                    crate::rational::FrameRate::from_rational(&crate::rational::Rational::new(
+                        num, den,
+                    ))
+                }),
+        };
+        Ok(ProjectLibraryMetadata {
+            created_at,
+            modified_at,
+            canvas: self.canvas_spec()?,
+            output_rate,
+        })
+    }
+
+    pub fn project_thumbnail_source(&self) -> Result<Option<ProjectThumbnailSource>, StorageError> {
+        let source = self
+            .connection
+            .query_row(
+                "SELECT a.id, a.original_path, c.source_in_frame, a.fps_num, a.fps_den
+                 FROM main_track_clip c
+                 JOIN media_asset a ON a.id = c.asset_id
+                 ORDER BY c.order_index, c.id LIMIT 1",
+                [],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, i64>(2)?,
+                        row.get::<_, i64>(3)?,
+                        row.get::<_, i64>(4)?,
+                    ))
+                },
+            )
+            .optional()?;
+        let source = match source {
+            Some(source) => Some(source),
+            None => self
+                .connection
+                .query_row(
+                    "SELECT id, original_path, 0, fps_num, fps_den
+                     FROM media_asset ORDER BY imported_at, id LIMIT 1",
+                    [],
+                    |row| {
+                        Ok((
+                            row.get::<_, String>(0)?,
+                            row.get::<_, String>(1)?,
+                            row.get::<_, i64>(2)?,
+                            row.get::<_, i64>(3)?,
+                            row.get::<_, i64>(4)?,
+                        ))
+                    },
+                )
+                .optional()?,
+        };
+        Ok(
+            source.and_then(|(asset_id, original_path, source_frame, num, den)| {
+                if den == 0 {
+                    return None;
+                }
+                crate::rational::FrameRate::from_rational(&crate::rational::Rational::new(num, den))
+                    .map(|rate| ProjectThumbnailSource {
+                        asset_id,
+                        original_path,
+                        source_frame,
+                        rate,
+                    })
+            }),
+        )
     }
 
     fn project_meta_value(&self, key: &str) -> Result<Option<String>, StorageError> {
@@ -591,6 +745,14 @@ impl ProjectStore {
             )?;
             statement
                 .query_map([], Self::map_main_track_clip)?
+                .collect::<Result<Vec<_>, _>>()?
+        };
+        let active_asset_ids = {
+            let mut statement = tx.prepare(
+                "SELECT id FROM media_asset WHERE removed_at IS NULL ORDER BY imported_at, id",
+            )?;
+            statement
+                .query_map([], |row| row.get::<_, String>(0))?
                 .collect::<Result<Vec<_>, _>>()?
         };
         let meta_value = |key: &str| -> Result<Option<String>, StorageError> {
@@ -736,6 +898,7 @@ impl ProjectStore {
         };
         Ok(ProjectSnapshot {
             main_track,
+            active_asset_ids: Some(active_asset_ids),
             canvas,
             subtitle_style,
             active_omits,
@@ -812,6 +975,36 @@ impl ProjectStore {
             .map_err(StorageError::from)
     }
 
+    pub fn restorable_snapshot_count(&self) -> Result<u64, StorageError> {
+        self.connection
+            .query_row("SELECT COUNT(*) FROM project_snapshot", [], |row| {
+                row.get(0)
+            })
+            .map_err(StorageError::from)
+    }
+
+    pub fn prune_project_snapshots(&self, limit: Option<usize>) -> Result<u64, StorageError> {
+        let Some(limit) = limit else {
+            return Ok(0);
+        };
+        let tx = self.connection.unchecked_transaction()?;
+        let deleted = tx.execute(
+            "DELETE FROM project_snapshot
+             WHERE revision NOT IN (
+                 SELECT revision FROM project_snapshot ORDER BY revision DESC LIMIT ?1
+             )",
+            params![limit as i64],
+        )? as u64;
+        tx.commit()?;
+        Ok(deleted)
+    }
+
+    pub fn checkpoint(&self) -> Result<(), StorageError> {
+        self.connection
+            .execute_batch("PRAGMA wal_checkpoint(FULL);")?;
+        Ok(())
+    }
+
     /// 恢复历史快照中的主轨、画布、输出帧率、字幕样式、说话人展示状态和仍可匹配
     /// 当前转录版本的文字删减。声纹向量不属于快照，始终只留在本地存储层。
     /// 恢复动作自身会写入新的 revision，历史从不被改写。
@@ -845,6 +1038,18 @@ impl ProjectStore {
             .transpose()?;
         let tx = self.connection.unchecked_transaction()?;
         let revision = Self::insert_revision_in(&tx, "history_restore")?;
+        if let Some(active_asset_ids) = &snapshot.active_asset_ids {
+            tx.execute(
+                "UPDATE media_asset SET removed_at = CURRENT_TIMESTAMP WHERE removed_at IS NULL",
+                [],
+            )?;
+            let mut restore_asset =
+                tx.prepare("UPDATE media_asset SET removed_at = NULL WHERE id = ?1")?;
+            for asset_id in active_asset_ids {
+                restore_asset.execute(params![asset_id])?;
+            }
+            drop(restore_asset);
+        }
         tx.execute("DELETE FROM main_track_clip", [])?;
         let mut clips = tx.prepare(
             "INSERT INTO main_track_clip(id, asset_id, source_in_frame, source_out_frame, order_index)
@@ -1102,15 +1307,69 @@ impl ProjectStore {
             .map_err(StorageError::from)
     }
 
+    pub fn active_media_asset(&self, id: &str) -> Result<Option<MediaAssetRow>, StorageError> {
+        self.connection
+            .query_row(
+                &format!(
+                    "SELECT {MEDIA_ASSET_COLUMNS} FROM media_asset WHERE id = ?1 AND removed_at IS NULL"
+                ),
+                params![id],
+                map_media_asset,
+            )
+            .optional()
+            .map_err(StorageError::from)
+    }
+
     /// 全部媒体资产（导入时间升序，同事按 id 稳定）。
     pub fn media_assets(&self) -> Result<Vec<MediaAssetRow>, StorageError> {
         let mut statement = self.connection.prepare(&format!(
-            "SELECT {MEDIA_ASSET_COLUMNS} FROM media_asset ORDER BY imported_at, id"
+            "SELECT {MEDIA_ASSET_COLUMNS} FROM media_asset
+             WHERE removed_at IS NULL ORDER BY imported_at, id"
         ))?;
         let rows = statement
             .query_map([], map_media_asset)?
             .collect::<Result<Vec<_>, _>>()?;
         Ok(rows)
+    }
+
+    pub fn reactivate_media_asset(&self, id: &str) -> Result<(), StorageError> {
+        self.connection.execute(
+            "UPDATE media_asset SET removed_at = NULL WHERE id = ?1",
+            params![id],
+        )?;
+        Ok(())
+    }
+
+    pub fn remove_media_asset(&self, id: &str) -> Result<(u64, u64, Option<String>), StorageError> {
+        let tx = self.connection.unchecked_transaction()?;
+        let prepared_wav_path: Option<String> = tx
+            .query_row(
+                "SELECT prepared_wav_path FROM media_asset WHERE id = ?1 AND removed_at IS NULL",
+                params![id],
+                |row| row.get(0),
+            )
+            .optional()?
+            .ok_or_else(|| StorageError::MissingRow(format!("media_asset:{id}")))?;
+        let revision = Self::insert_revision_in(&tx, "media_asset_remove")?;
+        let removed_clips = tx.execute(
+            "DELETE FROM main_track_clip WHERE asset_id = ?1",
+            params![id],
+        )? as u64;
+        tx.execute(
+            "UPDATE media_asset
+             SET removed_at = CURRENT_TIMESTAMP, prepared_wav_path = NULL
+             WHERE id = ?1",
+            params![id],
+        )?;
+        Self::log_operation_in(
+            &tx,
+            revision,
+            "media_asset_remove",
+            &serde_json::json!({ "asset_id": id, "removed_clips": removed_clips }),
+        )?;
+        Self::capture_snapshot_in(&tx, revision)?;
+        tx.commit()?;
+        Ok((revision, removed_clips, prepared_wav_path))
     }
 
     pub fn set_asset_prepared(&self, id: &str, wav_path: &str) -> Result<(), StorageError> {
@@ -1779,6 +2038,54 @@ impl ProjectStore {
         tx.commit()?;
         self.main_track_clip(id)?
             .ok_or_else(|| StorageError::MissingRow(id.to_string()))
+    }
+
+    pub fn insert_main_track_clips(
+        &self,
+        clips: &[crate::contracts::MainTrackClip],
+        before_id: Option<&str>,
+    ) -> Result<Vec<crate::contracts::MainTrackClip>, StorageError> {
+        let mut ordered = self.main_track_clips()?;
+        let insert_at = before_id
+            .and_then(|id| ordered.iter().position(|clip| clip.id == id))
+            .unwrap_or(ordered.len());
+        for (offset, clip) in clips.iter().cloned().enumerate() {
+            ordered.insert(insert_at + offset, clip);
+        }
+        let tx = self.connection.unchecked_transaction()?;
+        let revision = Self::insert_revision_in(&tx, "main_track_insert_assets")?;
+        for clip in clips {
+            tx.execute(
+                "INSERT INTO main_track_clip(id, asset_id, source_in_frame, source_out_frame, order_index)
+                 VALUES (?1, ?2, ?3, ?4, -1)",
+                params![clip.id, clip.source_asset_id, clip.source_in_frame, clip.source_out_frame],
+            )?;
+        }
+        for (index, clip) in ordered.iter().enumerate() {
+            tx.execute(
+                "UPDATE main_track_clip SET order_index = ?2 WHERE id = ?1",
+                params![clip.id, index as i64],
+            )?;
+        }
+        Self::log_operation_in(
+            &tx,
+            revision,
+            "main_track_insert_assets",
+            &serde_json::json!({
+                "clip_ids": clips.iter().map(|clip| &clip.id).collect::<Vec<_>>(),
+                "before_id": before_id,
+            }),
+        )?;
+        Self::capture_snapshot_in(&tx, revision)?;
+        tx.commit()?;
+        let inserted = clips
+            .iter()
+            .map(|clip| clip.id.as_str())
+            .collect::<std::collections::BTreeSet<_>>();
+        Ok(ordered
+            .into_iter()
+            .filter(|clip| inserted.contains(clip.id.as_str()))
+            .collect())
     }
 
     /// 将片段移动到某片段之前；None 代表主轨末尾。
@@ -2520,6 +2827,10 @@ mod tests {
             10,
             "78f893e53a207c48fbb138dad088b03cac4ccbddae2bc166774254f071a26ab7",
         ),
+        (
+            11,
+            "789f344aaf3861f753cbc6bbbb8003861279eba9ad039dccea37b0a980befaf4",
+        ),
     ];
 
     fn assert_historical_migration_fingerprints() {
@@ -2573,13 +2884,13 @@ mod tests {
     }
 
     #[test]
-    fn every_historical_schema_constructs_and_migrates_idempotently_to_v10() {
+    fn every_historical_schema_constructs_and_migrates_idempotently_to_v11() {
         assert_historical_migration_fingerprints();
 
         let root = temp_db_path("schema-history").with_extension("");
-        let expected_versions: Vec<u32> = (1..=10).collect();
+        let expected_versions: Vec<u32> = (1..=11).collect();
 
-        for source_version in 1..=10 {
+        for source_version in 1..=11 {
             let path = root
                 .join(format!("schema-v{source_version}"))
                 .join(".doublelove/project.sqlite");
@@ -2605,7 +2916,7 @@ mod tests {
                     row.get(0)
                 })
                 .expect("current version");
-            assert_eq!(current, 10, "source schema {source_version}");
+            assert_eq!(current, 11, "source schema {source_version}");
         }
 
         fs::remove_dir_all(root).expect("historical fixtures are removed");
@@ -2666,7 +2977,7 @@ mod tests {
                 .collect::<Result<Vec<u32>, _>>()
                 .expect("versions decode")
         };
-        assert_eq!(versions, vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+        assert_eq!(versions, vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
         for table in [
             "media_asset",
             "transcript_word",
@@ -2912,6 +3223,124 @@ mod tests {
         assert_eq!(
             store.revision_history(1).expect("history")[0].operation,
             "history_restore"
+        );
+        drop(store);
+        fs::remove_file(path).ok();
+    }
+
+    #[test]
+    fn batch_track_insert_uses_one_revision_and_preserves_requested_order() {
+        let path = temp_db_path("batch-track-insert");
+        let store = ProjectStore::open(&path).expect("store opens");
+        for id in ["a", "b", "c"] {
+            store
+                .connection
+                .execute(
+                    "INSERT INTO media_asset(
+                        id, kind, original_path, display_name, duration_samples,
+                        audio_sample_rate, fps_num, fps_den, video_timebase, is_ntsc, ffprobe_json
+                     ) VALUES (?1, 'video', ?2, ?3, 480000, 48000, 25, 1, 25, 0, '{}')",
+                    params![id, format!("/tmp/{id}-batch.mov"), format!("{id}.mov")],
+                )
+                .expect("asset inserts");
+        }
+        store
+            .append_main_track_clip("existing", "c", 0, 25)
+            .expect("existing clip");
+        let before = store.revision().expect("revision before batch");
+        let inserted = store
+            .insert_main_track_clips(
+                &[
+                    crate::contracts::MainTrackClip {
+                        id: "first".to_string(),
+                        source_asset_id: "a".to_string(),
+                        source_in_frame: 0,
+                        source_out_frame: 25,
+                        order_index: 0,
+                    },
+                    crate::contracts::MainTrackClip {
+                        id: "second".to_string(),
+                        source_asset_id: "b".to_string(),
+                        source_in_frame: 0,
+                        source_out_frame: 25,
+                        order_index: 0,
+                    },
+                ],
+                Some("existing"),
+            )
+            .expect("batch insert");
+        assert_eq!(store.revision().expect("revision after batch"), before + 1);
+        assert_eq!(
+            inserted
+                .iter()
+                .map(|clip| clip.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["first", "second"]
+        );
+        assert_eq!(
+            store
+                .main_track_clips()
+                .expect("ordered clips")
+                .iter()
+                .map(|clip| clip.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["first", "second", "existing"]
+        );
+        drop(store);
+        fs::remove_file(path).ok();
+    }
+
+    #[test]
+    fn media_soft_delete_removes_track_references_and_history_restores_visibility() {
+        let path = temp_db_path("media-soft-delete");
+        let store = ProjectStore::open(&path).expect("store opens");
+        store
+            .connection
+            .execute(
+                "INSERT INTO media_asset(
+                    id, kind, original_path, display_name, duration_samples,
+                    audio_sample_rate, fps_num, fps_den, video_timebase, is_ntsc, ffprobe_json
+                 ) VALUES ('asset', 'video', '/tmp/original-stays.mov', 'asset.mov', 480000, 48000, 25, 1, 25, 0, '{}')",
+                [],
+            )
+            .expect("asset inserts");
+        store
+            .append_main_track_clip("clip", "asset", 0, 25)
+            .expect("clip inserts");
+        let restorable_revision = store.revision().expect("pre-delete revision");
+        store
+            .set_asset_prepared("asset", "/tmp/recreatable.wav")
+            .expect("prepared cache records");
+
+        let (_, removed_clips, prepared_path) = store
+            .remove_media_asset("asset")
+            .expect("asset soft deletes");
+        assert_eq!(removed_clips, 1);
+        assert_eq!(prepared_path.as_deref(), Some("/tmp/recreatable.wav"));
+        assert!(store.media_assets().expect("visible assets").is_empty());
+        assert!(store.main_track_clips().expect("visible clips").is_empty());
+        assert_eq!(
+            store
+                .media_asset("asset")
+                .expect("retained asset row")
+                .expect("asset retained")
+                .original_path,
+            "/tmp/original-stays.mov"
+        );
+
+        store
+            .restore_revision(restorable_revision)
+            .expect("history restores asset");
+        assert_eq!(store.media_assets().expect("restored assets").len(), 1);
+        assert_eq!(store.main_track_clips().expect("restored clips").len(), 1);
+        assert!(
+            store
+                .media_asset("asset")
+                .expect("restored row")
+                .expect("restored asset")
+                .prepared_wav_path
+                .is_none(),
+            "regenerable cache stays cleared after restore"
         );
         drop(store);
         fs::remove_file(path).ok();
@@ -3247,6 +3676,87 @@ mod tests {
                 .len(),
             1
         );
+        drop(store);
+        fs::remove_file(path).ok();
+    }
+
+    #[test]
+    fn project_library_metadata_and_thumbnail_follow_the_project_timeline() {
+        let path = temp_db_path("project-library");
+        let store = ProjectStore::open(&path).expect("store");
+        store.ensure_project_created_at().expect("created at");
+        store
+            .insert_media_asset(&super::NewMediaAsset {
+                id: "asset".to_string(),
+                kind: "video".to_string(),
+                original_path: "/tmp/project-library.mov".to_string(),
+                display_name: "project-library.mov".to_string(),
+                duration_samples: 48_000,
+                audio_sample_rate: 48_000,
+                fps_num: 30_000,
+                fps_den: 1_001,
+                video_timebase: 30,
+                is_ntsc: true,
+                width: Some(1920),
+                height: Some(1080),
+                audio_channels: Some(2),
+                source_tc_start_frame: None,
+                source_tc_is_drop_frame: false,
+                ffprobe_json: "{}".to_string(),
+            })
+            .expect("asset");
+
+        let fallback = store
+            .project_thumbnail_source()
+            .expect("fallback")
+            .expect("source");
+        assert_eq!(fallback.source_frame, 0);
+        assert_eq!(fallback.rate, crate::rational::FrameRate::Fps30Ntsc);
+
+        store
+            .append_main_track_clip("clip", "asset", 42, 120)
+            .expect("main track");
+        let metadata = store.project_library_metadata().expect("metadata");
+        assert!(metadata.created_at.is_some());
+        assert!(metadata.modified_at.is_some());
+        assert_eq!(metadata.canvas, crate::contracts::CanvasSpec::default());
+        assert_eq!(
+            metadata.output_rate,
+            Some(crate::rational::FrameRate::Fps30Ntsc)
+        );
+        assert_eq!(
+            store
+                .project_thumbnail_source()
+                .expect("thumbnail")
+                .expect("source")
+                .source_frame,
+            42
+        );
+        drop(store);
+        fs::remove_file(path).ok();
+    }
+
+    #[test]
+    fn history_limit_prunes_only_old_snapshots_and_keeps_the_audit_ledger() {
+        let path = temp_db_path("history-limit");
+        let store = ProjectStore::open(&path).expect("store");
+        for width in [1280, 1440, 1600, 1920, 2048] {
+            store
+                .set_canvas_spec(&crate::contracts::CanvasSpec {
+                    width,
+                    ..Default::default()
+                })
+                .expect("canvas revision");
+        }
+        assert_eq!(store.revision().expect("revision"), 5);
+        assert_eq!(store.restorable_snapshot_count().expect("count"), 5);
+        assert_eq!(store.prune_project_snapshots(Some(2)).expect("prune"), 3);
+        let history = store.revision_history(10).expect("history");
+        assert_eq!(history.len(), 5);
+        assert_eq!(history.iter().filter(|entry| entry.restorable).count(), 2);
+        assert_eq!(store.revision().expect("audit revision survives"), 5);
+        assert_eq!(store.prune_project_snapshots(None).expect("unlimited"), 0);
+        store.checkpoint().expect("checkpoint");
         drop(store);
         fs::remove_file(path).ok();
     }
