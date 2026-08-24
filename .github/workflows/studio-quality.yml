@@ -44,6 +44,9 @@ jobs:
       - uses: pnpm/action-setup@v4
         with:
           version: 10.33.0
+          # action-setup 没有已装检测，每次都会在 dest 里自安装 pnpm；
+          # 默认 dest 是 ~/setup-pnpm，会污染 runner 家目录，指到 RUNNER_TEMP（每 job 自动清理）。
+          dest: ${{ runner.temp }}/setup-pnpm
       - uses: actions/setup-node@v4
         with:
           node-version: 24.14.1
