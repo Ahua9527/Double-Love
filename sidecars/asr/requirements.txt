@@ -1,8 +1,6 @@
 # Qwen3-ASR MLX 运行时（含 ForcedAligner 逐词时间戳）。
 # 2026-08-16 联网验证：mlx_qwen3_asr.transcribe(..., return_timestamps=True)
 # 返回 result.segments = [{"text", "start", "end"}]，Session(model=...) 复用模型。
+mlx==0.32.1
 mlx-qwen3-asr==0.3.5
-# 仅使用 Hub 下载接口；不安装 audio/cv/all extras，因此不会把 PyTorch 或 ONNX
-# 拉进发布运行时。ModelScope SDK 的 CLI 不参与产品协议。
-modelscope==1.39.1
-modelscope-hub==0.2.0
+numpy==2.5.2

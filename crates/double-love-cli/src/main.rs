@@ -570,12 +570,12 @@ fn model_verify(
         ModelComponent::Asr => (
             "asr",
             asr_dir,
-            "import mlx_qwen3_asr, modelscope, modelscope_hub\nimport double_love_asr.modelscope_download\nprint('MLX ASR runtime verified')",
+            "import huggingface_hub, mlx_qwen3_asr, double_love_asr\nprint('MLX ASR runtime verified')",
         ),
         ModelComponent::Speaker => (
             "speaker",
             speaker_dir,
-            "import mlx, mlx_audio\nimport double_love_speaker.engine, double_love_speaker.mlx_resnet\nprint('MLX speaker runtime verified')",
+            "import mlx, numpy\nimport double_love_speaker.engine, double_love_speaker.mlx_resnet, double_love_speaker.silero_mlx\nprint('MLX speaker runtime verified')",
         ),
     };
     let python = match sidecar_python(package_dir) {

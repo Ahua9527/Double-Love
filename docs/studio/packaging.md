@@ -16,8 +16,9 @@ Double Love Studio.app/Contents/Resources/
 │   ├── ffmpeg                       # 必须包含 ass/libass filter
 │   └── ffprobe
 └── model-runtime/
-    ├── asr/{double_love_asr,.venv/}
-    └── speaker/{double_love_speaker,.venv/}
+    ├── .venv/bin/python             # ASR 与 Speaker 共用
+    ├── double_love_asr/
+    └── double_love_speaker/
 ```
 
 图标源为 `studio/build/icon.png`；builder 转换后写入应用资源。
@@ -25,12 +26,12 @@ Double Love Studio.app/Contents/Resources/
 
 ## 准备与硬门禁
 
-发布机从受控的本机路径准备资源。四个源路径由环境变量提供：
+发布机从受控的本机路径准备资源。媒体使用两个源路径，模型使用一个共享
+runtime root：
 
 - `DOUBLELOVE_FFMPEG_SOURCE`
 - `DOUBLELOVE_FFPROBE_SOURCE`
-- `DOUBLELOVE_ASR_RUNTIME_SOURCE`
-- `DOUBLELOVE_SPEAKER_RUNTIME_SOURCE`
+- `DOUBLELOVE_MODEL_RUNTIME_SOURCE`
 
 ```bash
 scripts/prepare-media-runtime.sh
@@ -38,8 +39,27 @@ scripts/prepare-model-runtime.sh
 scripts/verify-release-runtime.sh
 ```
 
+如需从 sidecar 依赖声明构建共享 runtime 源目录，可运行：
+
+```bash
+scripts/migration/build-model-runtime.sh build/model-runtime-sources-shared
+```
+
+该脚本只要求 uv 支持 `uv python install` 和 `uv pip compile`，不固定 uv 版本；每次构建前会用当前 uv 将
+`sidecars/model-runtime-requirements.in` 编译到临时文件，去掉 uv 自动生成的输出路径头部后，和仓库内 lockfile
+正文严格比较。发生漂移时必须先更新 lockfile。依赖安装仍使用哈希校验，构建需要网络。
+
 验证脚本必须在 `electron-builder` 前通过。它会拒绝缺少 libass 的 ffmpeg、
-缺少 Python 的模型运行时，以及仍引用构建机 Python 的普通 virtualenv。
+缺少共享 Python 或任一 sidecar 包的模型运行时、禁用依赖，以及仍引用构建机
+Python 的普通 virtualenv。发布资源不再接受 `model-runtime/asr` 或
+`model-runtime/speaker` 旧布局。
+模型 runtime 先按 lockfile 完整安装并做 import/version 验证，再执行显式路径裁剪：
+移除 pip、setuptools、wheel 及其对应 dist-info、`_distutils_hack`、
+`pkg_resources`、标准库 `ensurepip`、锁定依赖中已知的 tests/test data/examples/docs，
+以及所有 `__pycache__`/`.pyc`/`.pyo`。不会按泛化业务目录名删除；其他 dist-info、
+LICENSE、METADATA、模型 assets、tokenizer 配置和 dylib/metallib/so 均保留。构建、
+prepare、release verify 与 package smoke 共用同一组 import/version、禁用包、旧布局、
+字节码和 ASR/Speaker mock hello 门禁。
 模型权重不放入应用包；用户仍通过模型管理器安装权重。
 
 ## 未签名本地包

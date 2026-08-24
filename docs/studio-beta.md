@@ -52,8 +52,7 @@ model-verify 会强制离线加载本地权重。缺少权重时它只报错，�
 测试版发布包必须随 App 带上：
 
 - 含 libass 的 ffmpeg / ffprobe；
-- 可重定位的 ASR Python 运行时；
-- 可重定位的 Speaker Python 运行时。
+- 一个供 ASR 与 Speaker 共用的可重定位 Python 运行时，含两个 sidecar 包。
 
 发布机器先准备并检查这些资源：
 

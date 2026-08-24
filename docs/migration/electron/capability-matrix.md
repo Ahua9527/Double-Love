@@ -137,14 +137,14 @@
 | Store（tauri-plugin-store）：`preferences.json` 于 app_data_dir，key=`app_preferences` | preferences.rs:23-24,251-256；lib.rs:990 | Electron 侧直接复用同一文件结构与 schema（service 层读写） |
 | 对话框（tauri-plugin-dialog）：`pickDirectory` / `pickMediaFile` / `pickProjectExportPath` 在 UI 使用；`pickSavePath` 仅定义、UI 未用 | tauri.ts:443-469；App.tsx:329-374,694；capabilities/default.json:9 | Electron dialog + 一次性 path grant；不把 `pickSavePath` 当用户行为 |
 | 自定义协议 `media://localhost/<asset_id>`：GET/HEAD/单 Range，200/206/404/416/501 | lib.rs:985-1010；media_protocol.rs:1-4；renderer 用法 TimelinePreview.tsx:121,164 | `dl-media://asset/<asset_id>`，`protocol.handle`，纯函数迁移 |
-| 资源定位：runtime（ffmpeg/ffprobe）、model-runtime/asr|speaker、`DOUBLELOVE_ASR_DIR`/`DOUBLELOVE_SPEAKER_DIR` 覆盖 | lib.rs:148-210；tauri.conf.json:29 | main 侧 resourcesPath + env 覆盖 |
+| 资源定位：runtime（ffmpeg/ffprobe）、共享 `model-runtime/.venv` + `double_love_asr/` + `double_love_speaker/`、`DOUBLELOVE_ASR_DIR`/`DOUBLELOVE_SPEAKER_DIR` 开发覆盖 | desktop-service `resolve_*_sidecar_dir`；`studio/electron-builder.yml` | main 侧 resourcesPath 注入一个共享 root；开发环境仍可分别覆盖 ASR/Speaker |
 | app_data_dir / app_log_dir 路径 | preferences.rs:170,245；models.rs:703 | Electron `userData` 明确设为 `$HOME/Library/Application Support/space.ahua.doublelove.studio` 并把同一路径传给 host；见 ADR-0001 |
 
 ## 4. 资源与脚本 / CI
 
 | 项 | 证据 | 说明 |
 | --- | --- | --- |
-| `studio/build/runtime/*`、`model-runtime/**/*` 打包资源 | `studio/electron-builder.yml`；`src-tauri/tauri.conf.json` | 仓库内仅 README 占位；发布机由 prepare 脚本填充；5A 起 Electron/Tauri 共用该资源树 |
+| `studio/build/runtime/*`、整个共享 `studio/build/model-runtime/` 打包资源 | `studio/electron-builder.yml`；`scripts/prepare-model-runtime.sh` | 发布机由 prepare 脚本整体替换并填充一个 `.venv` 与两个包；不复制重复资源、不接受旧 `model-runtime/asr|speaker` 布局 |
 | `model-catalog-v1.json` 事实源 | engine `model.rs` `include_str!("../resources/model-catalog-v1.json")` | 5A 已归属 `crates/double-love-engine/resources/`，不再反向依赖 `src-tauri` |
 | `scripts/prepare-media-runtime.sh` / `prepare-model-runtime.sh` / `prepare-asr.sh` / `prepare-speaker.sh` | scripts/ | 媒体/模型运行时准备（发布机） |
 | `scripts/verify-release-runtime.sh` | scripts/ | 硬门禁：libass、可重定位 Python |

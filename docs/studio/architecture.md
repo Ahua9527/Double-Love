@@ -88,5 +88,6 @@ payload、token、媒体文字、声纹或绝对路径。
 ```
 
 原媒体仍是只读引用。打包资源位于应用的 `Contents/Resources/`：ASAR、host、
-协议 schema、`runtime/` 与 `model-runtime/`。布局细节见
+协议 schema、`runtime/` 与共享的 `model-runtime/`（一个 `.venv/bin/python`、
+`double_love_asr/`、`double_love_speaker/`）。布局细节见
 [Studio 打包](packaging.md)，运行问题见[排障指南](troubleshooting.md)。

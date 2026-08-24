@@ -53,6 +53,11 @@ marker 只含时间、exit code 与 signal；下一次 host 握手成功会清�
 
 ## 模型未就绪
 
+正式包的 ASR 与 Speaker 使用同一个 `Contents/Resources/model-runtime/`：
+`.venv/bin/python`、`double_love_asr/` 和 `double_love_speaker/` 必须同时存在。
+正式包不会回退到 `model-runtime/asr`、`model-runtime/speaker`、PATH、Homebrew
+或系统 Python；重新安装完整 Release 后再运行诊断。
+
 `MODEL_NOT_READY`、校验失败或暂停状态通常表示权重未完整安装，而不是项目
 损坏：
 

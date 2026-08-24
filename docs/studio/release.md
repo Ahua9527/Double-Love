@@ -48,8 +48,7 @@ studio-v${studio/package.json version}
 
 Apple ID 三项与 keychain profile 二选一。运行时源路径不是凭据，放在同一
 protected environment 的 variables：`DOUBLELOVE_FFMPEG_SOURCE`、
-`DOUBLELOVE_FFPROBE_SOURCE`、`DOUBLELOVE_ASR_RUNTIME_SOURCE`、
-`DOUBLELOVE_SPEAKER_RUNTIME_SOURCE`。
+`DOUBLELOVE_FFPROBE_SOURCE`、`DOUBLELOVE_MODEL_RUNTIME_SOURCE`。
 
 ## 候选验证
 

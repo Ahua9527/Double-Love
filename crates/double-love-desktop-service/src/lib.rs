@@ -860,33 +860,17 @@ impl ProgressSink for ServiceProgressSink {
     }
 }
 
-fn resolve_bundled_model_runtime_dir(
-    state: &DesktopState,
-    component: &str,
-) -> Result<PathBuf, String> {
-    let resource_dir = state.runtime.resource_dir.as_deref().ok_or_else(|| {
-        "App 内置模型运行时不可用，请重新安装完整的 Double Love Studio。".to_string()
-    })?;
-    for candidate in [
-        resource_dir.join(format!("model-runtime/{component}")),
-        resource_dir.join(format!("resources/model-runtime/{component}")),
-    ] {
-        if candidate.is_dir() {
-            return Ok(candidate);
-        }
+fn resolve_bundled_model_runtime_dir(state: &DesktopState) -> Result<PathBuf, String> {
+    let resource_dir = state
+        .runtime
+        .resource_dir
+        .as_deref()
+        .ok_or_else(|| "App 内置模型运行时不可用，请重新安装完整的 Double Love Studio。".to_string())?;
+    let root = resource_dir.join("model-runtime");
+    if root.is_dir() {
+        return Ok(root);
     }
-    Err(format!(
-        "App 内置 {component} 运行时不可用，请重新安装完整的 Double Love Studio。"
-    ))
-}
-
-fn resolve_model_download_runtime(state: &DesktopState) -> Option<models::ModelDownloadRuntime> {
-    let package_dir = resolve_bundled_model_runtime_dir(state, "asr").ok()?;
-    let python = package_dir.join(".venv/bin/python");
-    (python.is_file() && package_dir.is_dir()).then_some(models::ModelDownloadRuntime {
-        python,
-        package_dir,
-    })
+    Err("App 内置模型运行时不可用，请重新安装完整的 Double Love Studio。".to_string())
 }
 
 fn mlx_supported() -> bool {
@@ -901,12 +885,47 @@ fn mlx_unsupported_message() -> &'static str {
     "本机模型仅支持 Apple Silicon（M 系列芯片）的 macOS。"
 }
 
+fn resolve_sidecar_dir(
+    state: &DesktopState,
+    override_name: &str,
+    package_name: &str,
+    development_dir: &str,
+) -> Result<PathBuf, String> {
+    let candidate = if let Some(dir) = std::env::var_os(override_name) {
+        PathBuf::from(dir)
+    } else if state.runtime.resource_dir.is_some() {
+        resolve_bundled_model_runtime_dir(state)?
+    } else {
+        let manifest_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        [
+            manifest_root.join(development_dir),
+            PathBuf::from(development_dir),
+            PathBuf::from("..").join(development_dir),
+        ]
+        .into_iter()
+        .find(|path| path.is_dir())
+        .ok_or_else(|| format!("开发环境 sidecar 目录不可用：{development_dir}"))?
+    };
+    if !candidate.join(".venv/bin/python").is_file() {
+        return Err(format!("{package_name} 运行时 Python 不可用。"));
+    }
+    if !candidate.join(package_name).is_dir() {
+        return Err(format!("{package_name} sidecar 包不可用。"));
+    }
+    Ok(candidate)
+}
+
 fn resolve_asr_sidecar_dir(state: &DesktopState) -> Result<PathBuf, String> {
-    resolve_bundled_model_runtime_dir(state, "asr")
+    resolve_sidecar_dir(state, "DOUBLELOVE_ASR_DIR", "double_love_asr", "sidecars/asr")
 }
 
 fn resolve_speaker_sidecar_dir(state: &DesktopState) -> Result<PathBuf, String> {
-    resolve_bundled_model_runtime_dir(state, "speaker")
+    resolve_sidecar_dir(
+        state,
+        "DOUBLELOVE_SPEAKER_DIR",
+        "double_love_speaker",
+        "sidecars/speaker",
+    )
 }
 
 /// The desktop product accepts only the media runtime shipped inside the App.
@@ -1129,13 +1148,13 @@ fn probe_bundled_runtime(state: &DesktopState) -> DoctorRuntimeProbe {
     let (asr_check, asr_runtime_ready) = probe_python_runtime(
         resolve_asr_sidecar_dir(state),
         "ASR",
-        "import importlib.metadata as m\nimport double_love_asr, modelscope, modelscope_hub\nassert m.version('mlx-qwen3-asr') == '0.3.5'\nassert m.version('modelscope') == '1.39.1'\nassert m.version('modelscope-hub') == '0.2.0'\nfor name in ('torch', 'torchaudio', 'wespeaker', 'silero-vad', 'onnxruntime'):\n    try: m.version(name)\n    except m.PackageNotFoundError: continue\n    raise SystemExit(name)",
+        "import importlib.metadata as m\nimport double_love_asr, huggingface_hub, mlx, mlx_qwen3_asr, numpy\nassert m.version('mlx') == '0.32.1'\nassert m.version('mlx-qwen3-asr') == '0.3.5'\nassert m.version('numpy') == '2.5.2'\nfor name in ('modelscope', 'mlx-audio', 'transformers', 'scipy', 'miniaudio', 'sounddevice', 'tokenizers', 'torch', 'torchaudio', 'wespeaker', 'silero-vad', 'onnxruntime'):\n    try: m.version(name)\n    except m.PackageNotFoundError: continue\n    raise SystemExit(name)",
         "runtime.asr",
     );
     let (speaker_check, speaker_runtime_ready) = probe_python_runtime(
         resolve_speaker_sidecar_dir(state),
         "Speaker",
-        "import importlib.metadata as m\nimport mlx, mlx_audio, numpy, double_love_speaker.engine, double_love_speaker.mlx_resnet\nassert m.version('mlx') == '0.31.1'\nassert m.version('mlx-audio') == '0.5.0'\nassert m.version('numpy') == '2.3.5'\nfor name in ('torch', 'torchaudio', 'wespeaker', 'silero-vad', 'onnxruntime'):\n    try: m.version(name)\n    except m.PackageNotFoundError: continue\n    raise SystemExit(name)",
+        "import importlib.metadata as m\nimport double_love_speaker.engine, double_love_speaker.mlx_resnet, double_love_speaker.silero_mlx, mlx, numpy\nassert m.version('mlx') == '0.32.1'\nassert m.version('numpy') == '2.5.2'\nfor name in ('modelscope', 'mlx-audio', 'transformers', 'scipy', 'miniaudio', 'sounddevice', 'tokenizers', 'torch', 'torchaudio', 'wespeaker', 'silero-vad', 'onnxruntime'):\n    try: m.version(name)\n    except m.PackageNotFoundError: continue\n    raise SystemExit(name)",
         "runtime.speaker",
     );
     checks.push(asr_check);
@@ -2544,10 +2563,8 @@ pub fn register_commands(registry: &mut CommandRegistry) {
                     >(error, true));
                 }
             };
-        let result = match state.models().begin_install_with_runtime(
+        let result = match state.models().begin_install(
             PathBuf::from(preferences.model_root),
-            preferences.model_endpoint,
-            resolve_model_download_runtime(state),
             &params.model_id,
             params.accept_noncommercial_license,
             normalize_app_version(params.app_version),
@@ -2604,10 +2621,8 @@ pub fn register_commands(registry: &mut CommandRegistry) {
                     >(error, true));
                 }
             };
-        let result = match state.models().begin_install_with_runtime(
+        let result = match state.models().begin_install(
             PathBuf::from(preferences.model_root),
-            preferences.model_endpoint,
-            resolve_model_download_runtime(state),
             &params.model_id,
             true,
             normalize_app_version(params.app_version),
@@ -3632,15 +3647,18 @@ mod tests {
 
     #[test]
     fn product_runtime_resolution_never_falls_back_to_external_tools() {
+        let root = temp_directory("runtime-no-fallback");
         let state = DesktopState::new(
-            temp_directory("runtime-no-fallback"),
-            DesktopRuntimeConfig::default(),
+            root.join("app-data"),
+            DesktopRuntimeConfig {
+                resource_dir: Some(root.clone()),
+                ..DesktopRuntimeConfig::default()
+            },
         );
 
         assert!(resolve_media_tools(&state).is_err());
         assert!(resolve_asr_sidecar_dir(&state).is_err());
         assert!(resolve_speaker_sidecar_dir(&state).is_err());
-        assert!(resolve_model_download_runtime(&state).is_none());
 
         let probe = probe_bundled_runtime(&state);
         assert!(!probe.ffmpeg_available);
@@ -3651,6 +3669,7 @@ mod tests {
         assert!(probe.checks.iter().any(|check| {
             check.id == "runtime.asr" && check.status == DoctorCapabilityStatus::Blocked
         }));
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]

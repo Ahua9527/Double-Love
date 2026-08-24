@@ -124,10 +124,8 @@ jobs:
             ${{ vars.DOUBLELOVE_FFMPEG_SOURCE }}
           DOUBLELOVE_FFPROBE_SOURCE: >-
             ${{ vars.DOUBLELOVE_FFPROBE_SOURCE }}
-          DOUBLELOVE_ASR_RUNTIME_SOURCE: >-
-            ${{ vars.DOUBLELOVE_ASR_RUNTIME_SOURCE }}
-          DOUBLELOVE_SPEAKER_RUNTIME_SOURCE: >-
-            ${{ vars.DOUBLELOVE_SPEAKER_RUNTIME_SOURCE }}
+          DOUBLELOVE_MODEL_RUNTIME_SOURCE: >-
+            ${{ vars.DOUBLELOVE_MODEL_RUNTIME_SOURCE }}
         shell: bash
         run: |
           set -euo pipefail
@@ -150,18 +148,17 @@ jobs:
             fi
           fi
           scripts/prepare-media-runtime.sh
-          if [[ -n "$DOUBLELOVE_ASR_RUNTIME_SOURCE" \
-            && ! -x "$DOUBLELOVE_ASR_RUNTIME_SOURCE/.venv/bin/python" ]]; then
+          if [[ -n "$DOUBLELOVE_MODEL_RUNTIME_SOURCE" \
+            && ( ! -x "$DOUBLELOVE_MODEL_RUNTIME_SOURCE/.venv/bin/python" \
+              || ! -d "$DOUBLELOVE_MODEL_RUNTIME_SOURCE/double_love_asr" \
+              || ! -d "$DOUBLELOVE_MODEL_RUNTIME_SOURCE/double_love_speaker" ) ]]; then
             echo "Configured model sources missing on this runner; rebuild." >&2
-            DOUBLELOVE_ASR_RUNTIME_SOURCE=""
-            DOUBLELOVE_SPEAKER_RUNTIME_SOURCE=""
+            DOUBLELOVE_MODEL_RUNTIME_SOURCE=""
           fi
-          if [[ -z "$DOUBLELOVE_ASR_RUNTIME_SOURCE" \
-            || -z "$DOUBLELOVE_SPEAKER_RUNTIME_SOURCE" ]]; then
+          if [[ -z "$DOUBLELOVE_MODEL_RUNTIME_SOURCE" ]]; then
             built_root="$RUNNER_TEMP/model-runtime-sources"
             scripts/migration/build-model-runtime.sh "$built_root"
-            export DOUBLELOVE_ASR_RUNTIME_SOURCE="$built_root/asr"
-            export DOUBLELOVE_SPEAKER_RUNTIME_SOURCE="$built_root/speaker"
+            export DOUBLELOVE_MODEL_RUNTIME_SOURCE="$built_root"
           fi
           scripts/prepare-model-runtime.sh
 
