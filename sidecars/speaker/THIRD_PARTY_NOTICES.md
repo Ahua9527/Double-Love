@@ -1,7 +1,9 @@
 # Double Love Speaker sidecar notices
 
 - MLX — MIT License — <https://github.com/ml-explore/mlx>
-- MLX Audio 0.5.0 — MIT License — <https://github.com/Blaizzy/mlx-audio>
+- The minimal in-app 16 kHz Silero VAD implementation is based on the 16 kHz
+  implementation and model layout from MLX Audio 0.5.0 — MIT License —
+  <https://github.com/Blaizzy/mlx-audio>. The complete `mlx-audio` package is not bundled.
 - MLX WeSpeaker ResNet34 weights — MIT License —
   `mlx-community/wespeaker-voxceleb-resnet34-LM` at
   `d34f9e11f648c7e83d077bf6e10da94ba56f7b72` —

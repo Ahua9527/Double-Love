@@ -28,6 +28,35 @@ class _FakeVAD:
         return [[next(self.probabilities, self.probability)]], state
 
 
+class _FakeSamples:
+    def __init__(self, size: int):
+        self.size = size
+
+    def __len__(self):
+        return self.size
+
+    def __getitem__(self, value):
+        if isinstance(value, slice):
+            start, stop, step = value.indices(self.size)
+            return _FakeSamples(max(0, (stop - start + (step - 1)) // step))
+        return 0.0
+
+    def astype(self, _dtype):
+        return self
+
+    def __truediv__(self, _value):
+        return self
+
+
+def _fake_numpy():
+    module = types.ModuleType("numpy")
+    module.int16 = object()
+    module.float32 = object()
+    module.frombuffer = lambda value, dtype: _FakeSamples(len(value) // 2)
+    module.pad = lambda value, widths: _FakeSamples(value.size + widths[1])
+    return module
+
+
 class SpeakerMLXTests(unittest.TestCase):
     def setUp(self):
         engine._VAD_MODELS.clear()
@@ -37,19 +66,13 @@ class SpeakerMLXTests(unittest.TestCase):
         engine._VAD_MODELS.clear()
         engine._SPEAKER_MODELS.clear()
 
-    @unittest.skipUnless(importlib.util.find_spec("numpy"), "runtime NumPy is not installed")
     def test_vad_uses_local_directory_and_256ms_batches(self):
         fake_vad = _FakeVAD()
         calls = []
-        fake_audio = types.ModuleType("mlx_audio")
-        fake_audio_vad = types.ModuleType("mlx_audio.vad")
-        fake_audio_vad.load = lambda path, strict: calls.append((path, strict)) or fake_vad
-        previous_audio = sys.modules.get("mlx_audio")
-        previous_vad = sys.modules.get("mlx_audio.vad")
-        original_validate = engine._validate_vad_weights
-        engine._validate_vad_weights = lambda _path: None
-        sys.modules["mlx_audio"] = fake_audio
-        sys.modules["mlx_audio.vad"] = fake_audio_vad
+        original_load = engine.load
+        previous_numpy = sys.modules.get("numpy")
+        engine.load = lambda path: calls.append(path) or fake_vad
+        sys.modules["numpy"] = _fake_numpy()
         try:
             with tempfile.TemporaryDirectory() as temp:
                 model_dir = Path(temp)
@@ -67,27 +90,20 @@ class SpeakerMLXTests(unittest.TestCase):
                 (model_dir / "model.safetensors").write_bytes(b"weights")
                 pcm = (b"\x00\x00" * (engine.VAD_BLOCK_SAMPLES * 2))
                 segments = engine._vad_segments(pcm, str(model_dir))
-                self.assertEqual(calls, [(model_dir, False)])
+                self.assertEqual(calls, [model_dir])
                 self.assertEqual(fake_vad.calls[0], ("initial", 16_000))
                 self.assertEqual(len(fake_vad.calls) - 1, 16)
                 self.assertEqual(segments, [(0, engine.VAD_BLOCK_SAMPLES * 2)])
                 self.assertEqual(engine.os.environ["HF_HUB_OFFLINE"], "1")
                 self.assertEqual(engine.os.environ["TRANSFORMERS_OFFLINE"], "1")
         finally:
-            if previous_audio is None:
-                sys.modules.pop("mlx_audio", None)
+            engine.load = original_load
+            if previous_numpy is None:
+                sys.modules.pop("numpy", None)
             else:
-                sys.modules["mlx_audio"] = previous_audio
-            if previous_vad is None:
-                sys.modules.pop("mlx_audio.vad", None)
-            else:
-                sys.modules["mlx_audio.vad"] = previous_vad
-            engine._validate_vad_weights = original_validate
+                sys.modules["numpy"] = previous_numpy
 
-    @unittest.skipUnless(importlib.util.find_spec("numpy"), "runtime NumPy is not installed")
     def test_vad_256ms_handles_silence_and_separate_speech_regions(self):
-        import numpy as np
-
         config = {
             "threshold": 0.5,
             "min_speech_duration_ms": 250,
@@ -96,14 +112,14 @@ class SpeakerMLXTests(unittest.TestCase):
         }
         silence = engine._vad_256ms_segments(
             _FakeVAD(0.01),
-            np.zeros(engine.VAD_BLOCK_SAMPLES, dtype=np.float32),
+            _FakeSamples(engine.VAD_BLOCK_SAMPLES),
             config,
         )
         self.assertEqual(silence, [])
         probabilities = [0.9] * 8 + [0.01] * 8 + [0.9] * 8
         regions = engine._vad_256ms_segments(
             _FakeVAD(probabilities=probabilities),
-            np.zeros(engine.VAD_BLOCK_SAMPLES * 3, dtype=np.float32),
+            _FakeSamples(engine.VAD_BLOCK_SAMPLES * 3),
             config,
         )
         self.assertEqual(
@@ -146,6 +162,8 @@ class SpeakerMLXTests(unittest.TestCase):
         source = (ROOT / "sidecars" / "speaker" / "double_love_speaker" / "engine.py").read_text(
             encoding="utf-8"
         )
+        self.assertIn("from .silero_mlx import load", source)
+        self.assertNotIn("mlx_audio", source)
         for forbidden in ("import torch", "import torchaudio", "import wespeaker", "silero_vad", "onnxruntime"):
             self.assertNotIn(forbidden, source)
 
@@ -153,9 +171,21 @@ class SpeakerMLXTests(unittest.TestCase):
         requirements = (ROOT / "sidecars" / "speaker" / "requirements.txt").read_text(
             encoding="utf-8"
         )
-        self.assertIn("mlx==0.31.1", requirements)
-        self.assertIn("mlx-audio==0.5.0", requirements)
-        for forbidden in ("torch", "torchaudio", "wespeaker", "silero-vad", "onnxruntime"):
+        self.assertIn("mlx==0.32.1", requirements)
+        self.assertIn("numpy==2.5.2", requirements)
+        for forbidden in (
+            "mlx-audio",
+            "transformers",
+            "scipy",
+            "miniaudio",
+            "sounddevice",
+            "tokenizers",
+            "torch",
+            "torchaudio",
+            "wespeaker",
+            "silero-vad",
+            "onnxruntime",
+        ):
             self.assertNotIn(forbidden, requirements)
 
     @unittest.skipUnless(importlib.util.find_spec("numpy"), "runtime NumPy is not installed")

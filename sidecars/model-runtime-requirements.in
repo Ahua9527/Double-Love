@@ -1,0 +1,4 @@
+# Shared release runtime direct requirements for ASR and Speaker.
+mlx==0.32.1
+mlx-qwen3-asr==0.3.5
+numpy==2.5.2

@@ -201,6 +201,8 @@ impl Sidecar {
             .arg("-m")
             .arg(module)
             .current_dir(package_dir)
+            .env("PYTHONDONTWRITEBYTECODE", "1")
+            .env("PYTHONNOUSERSITE", "1")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());

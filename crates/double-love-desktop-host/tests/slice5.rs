@@ -187,7 +187,7 @@ fn prepare_bundled_test_runtime(root: &Path, tools: &FfmpegTools) {
         .expect("python path utf8")
         .trim()
         .to_string();
-    let asr_root = root.join("model-runtime/asr");
+    let asr_root = root.join("model-runtime");
     let asr_venv = asr_root.join(".venv/bin");
     fs::create_dir_all(&asr_venv).expect("asr runtime");
     #[cfg(unix)]

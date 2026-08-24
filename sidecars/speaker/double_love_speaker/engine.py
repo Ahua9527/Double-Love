@@ -14,28 +14,15 @@ import tempfile
 import wave
 from pathlib import Path
 
+from .silero_mlx import SileroDependencyError
+from .silero_mlx import load
+
 
 PREPARED_RATE = 16_000
 VAD_CHUNK_SAMPLES = 512
 VAD_BLOCK_SAMPLES = VAD_CHUNK_SAMPLES * 8
 _VAD_MODELS: dict[str, object] = {}
 _SPEAKER_MODELS: dict[str, object] = {}
-_SILERO_16K_WEIGHTS = {
-    "vad_16k.conv1.bias",
-    "vad_16k.conv1.weight",
-    "vad_16k.conv2.bias",
-    "vad_16k.conv2.weight",
-    "vad_16k.conv3.bias",
-    "vad_16k.conv3.weight",
-    "vad_16k.conv4.bias",
-    "vad_16k.conv4.weight",
-    "vad_16k.final_conv.bias",
-    "vad_16k.final_conv.weight",
-    "vad_16k.lstm.Wh",
-    "vad_16k.lstm.Wx",
-    "vad_16k.lstm.bias",
-    "vad_16k.stft_conv.weight",
-}
 
 
 class SpeakerError(Exception):
@@ -110,38 +97,20 @@ def _vad_scalar(value) -> float:
     return float(value)
 
 
-def _validate_vad_weights(path: Path) -> None:
-    """Require the exact v6 16 kHz tensor layout before using non-strict loading.
-
-    mlx-audio builds both the 8 kHz and 16 kHz branches, while the selected v6
-    checkpoint intentionally ships only the 16 kHz branch.  Our media pipeline is
-    fixed at 16 kHz, so the absent 8 kHz parameters are expected; every 16 kHz
-    parameter must still be present and no unknown tensor is accepted.
-    """
-    try:
-        import mlx.core as mx
-
-        keys = set(mx.load(str(path)).keys())
-    except Exception as error:
-        raise SpeakerError("SPEAKER_MODEL_MISSING", "本地 Silero VAD 权重不可读取。") from error
-    if keys != _SILERO_16K_WEIGHTS:
-        raise SpeakerError("SPEAKER_MODEL_MISSING", "本地 Silero VAD 权重结构不匹配。")
-
-
 def _vad_256ms_segments(model, samples, config: dict) -> list[tuple[int, int]]:
     """Run Silero in 8×32ms batches and aggregate each 256ms block with noisy-OR.
 
-    `mlx_audio.vad.Model.feed` performs the MLX forward pass and carries its LSTM state.
+    The local Silero model performs the MLX forward pass and carries its LSTM state.
     The grouping here reduces synchronization overhead for offline editor media while keeping
     all time values as 16 kHz integer samples.
     """
-    import numpy as np
-
     original_length = int(samples.size)
     if original_length == 0:
         return []
     padding = (-original_length) % VAD_BLOCK_SAMPLES
     if padding:
+        import numpy as np
+
         samples = np.pad(samples, (0, padding))
     state = model.initial_state(sample_rate=PREPARED_RATE)
     probabilities: list[float] = []
@@ -211,7 +180,6 @@ def _vad_segments(pcm: bytes, vad_model_dir: str) -> list[tuple[int, int]]:
     key = str(model_dir)
     try:
         import numpy as np
-        from mlx_audio.vad import load as load_vad
     except Exception as error:
         raise SpeakerError(
             "SPEAKER_DEPENDENCY_MISSING",
@@ -221,10 +189,12 @@ def _vad_segments(pcm: bytes, vad_model_dir: str) -> list[tuple[int, int]]:
         os.environ["HF_HUB_OFFLINE"] = "1"
         os.environ["TRANSFORMERS_OFFLINE"] = "1"
         try:
-            _validate_vad_weights(model_dir / "model.safetensors")
-            # The v6 checkpoint contains only the verified 16 kHz branch.  The
-            # loader's optional 8 kHz branch therefore has to remain unfilled.
-            _VAD_MODELS[key] = load_vad(model_dir, strict=False)
+            _VAD_MODELS[key] = load(model_dir)
+        except SileroDependencyError as error:
+            raise SpeakerError(
+                "SPEAKER_DEPENDENCY_MISSING",
+                "MLX Silero VAD 依赖不可用；请重新安装本机模型运行时。",
+            ) from error
         except Exception as error:
             raise SpeakerError("SPEAKER_MODEL_MISSING", "本地 Silero VAD 模型不可用。") from error
     try:

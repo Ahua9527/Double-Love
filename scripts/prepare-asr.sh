@@ -3,7 +3,7 @@
 #   1. 建 sidecars/asr/.venv（不进 git）
 #   2. 安装 pin 的依赖（mlx-qwen3-asr）
 #   3. mock 协议自检（不下载模型，秒级）
-#   4. 验证 ModelScope SDK 下载模块（不在构建机隐式下载用户模型）
+#   4. 不下载模型；模型由桌面应用受管下载并校验
 # 运行时保持离线：引擎只从设置页已校验的本地模型目录读取权重。
 set -euo pipefail
 
@@ -51,17 +51,4 @@ case "$READY" in
   *) echo "自检失败：未收到 ready 事件（输出：$READY）" >&2; exit 1 ;;
 esac
 
-if [[ "${1:-}" == "--skip-model" ]]; then
-  echo "==> 未下载模型；这是正常的。模型只能由桌面应用通过 ModelScope 受管安装。"
-  exit 0
-fi
-
-echo "==> 验证受管 ModelScope 下载模块（不下载权重）"
-(cd "$ASR_DIR" && "$VENV/bin/python" -c "
-import modelscope, modelscope_hub
-import double_love_asr.modelscope_download
-assert modelscope.__version__ == '1.39.1'
-assert modelscope_hub.__version__ == '0.2.0'
-print('ModelScope downloader ready')
-")
 echo "==> 完成。模型由桌面应用下载、校验并以本地绝对目录离线加载。"

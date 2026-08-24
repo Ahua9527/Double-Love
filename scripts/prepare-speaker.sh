@@ -50,11 +50,14 @@ fi
 echo "==> 验证本地 MLX Speaker/VAD 运行时（不下载权重）"
 (cd "$SPEAKER_DIR" && "$VENV/bin/python" -c "
 import importlib.metadata as metadata
-import mlx, mlx_audio, numpy
-import double_love_speaker.engine, double_love_speaker.mlx_resnet
-assert metadata.version('mlx') == '0.31.1'
-assert metadata.version('mlx-audio') == '0.5.0'
-for forbidden in ('torch', 'torchaudio', 'wespeaker', 'silero-vad', 'onnxruntime'):
+import mlx, numpy
+import double_love_speaker.engine, double_love_speaker.mlx_resnet, double_love_speaker.silero_mlx
+assert metadata.version('mlx') == '0.32.1'
+assert metadata.version('numpy') == '2.5.2'
+for forbidden in (
+    'mlx-audio', 'transformers', 'scipy', 'miniaudio', 'sounddevice', 'tokenizers',
+    'torch', 'torchaudio', 'wespeaker', 'silero-vad', 'onnxruntime',
+):
     try:
         metadata.version(forbidden)
     except metadata.PackageNotFoundError:

@@ -20,7 +20,7 @@
 | 项目字幕设置 | `SubtitleStyle` 与 `subtitle_style_get/set` 已存在，默认样式在引擎中定义；`ProjectSettings` 当前同时混合了外观、画布、输出帧率、历史和字幕。 | 保留项目级命令；全局默认字幕样式只在创建新项目时复制，不能隐式改写已有项目。 |
 | 转录版本 | `ProjectStore` 有候选 `transcript_run`，只有成功 run 才原子切成 active；取消/失败保留旧版本。 | 模型缺失拦截在启动转录前发生，不改变项目和旧转录。 |
 | 侧车 | `sidecar.rs` 已有 JSONL 握手、事件、stderr 日志和取消终止链；`resolve_python` 当前顺序为显式路径 → `.venv/bin/python` → PATH 的 `python3`。 | 发布/用户路径必须禁用 PATH 回退；开发期回退只能保留在开发配置。 |
-| 模型运行时 | `scripts/prepare-model-runtime.sh` 将 ASR/Speaker 可重定位运行时复制到 `studio/build/model-runtime`；`verify-release-runtime.sh` 只检查 Python 可执行文件和 import。 | 运行时随 App 分发，模型权重不进 App；模型管理器只管理权重和校验。 |
+| 模型运行时 | `scripts/prepare-model-runtime.sh` 将一个共享 `.venv`、`double_love_asr/` 与 `double_love_speaker/` 复制到 `studio/build/model-runtime`；`verify-release-runtime.sh` 检查共享 Python、两个包、固定版本和禁用依赖。 | 运行时随 App 分发，模型权重不进 App；模型管理器只管理权重和校验。 |
 | 现有诊断 | CLI 有 `doctor`、`model-verify`、`model-test`；`model_verify` 已设置 `HF_HUB_OFFLINE=1` 和 `TRANSFORMERS_OFFLINE=1`，但 Tauri 转录路径没有设置。 | 把检查逻辑抽到可被 Tauri 和 CLI 复用的 Rust 服务；报告必须脱敏。 |
 | 前端事件 | 当前只有 `dl://progress`、`dl://task-state`；React 在 `studio/src/App.tsx` 里监听。 | 新增事件广播给所有窗口；设置窗口关闭后模型任务继续运行。 |
 

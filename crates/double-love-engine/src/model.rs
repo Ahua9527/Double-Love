@@ -101,7 +101,7 @@ pub struct ModelDescriptor {
     #[serde(default)]
     pub download_source: ModelDownloadSource,
     // 本地安装 revision 保持 40 位不可变提交，确保既有安装目录和离线加载兼容。
-    // ModelScope SDK 也只能接收这个固定提交；每文件 size + SHA-256 是第二道边界。
+    // ModelScope 下载也只能接收这个固定提交；每文件 size + SHA-256 是第二道边界。
     pub revision: String,
     pub files: Vec<ModelFile>,
     pub license: String,

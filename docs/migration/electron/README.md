@@ -131,7 +131,7 @@ Slice 2 未修改旧容器目录、Web/PWA、SQLite schema/migration、manifest 
 
 host-neutral service 已按 Tauri 参考实现注册 `model_install/pause/resume/cancel/verify/remove/reveal`、`doctor_run`、`diagnostics_reveal_logs`、`transcribe_start`、`task_cancel`、`transcript_get`、`edit_omit/restore`、`roughcut_preview` 与 `export_roughcut_apply`。模型下载继续使用 reqwest blocking 客户端、依赖优先单队列、同一下载锁、安全相对路径、`.part`/staging、Range 恢复及 206 `Content-Range` 校验、清单字节上限、SHA-256、原子安装和原状态机；进度与状态分别广播 `dl://model-progress` / `dl://model-state`，事件不含绝对路径。共享依赖仍被已安装模型使用时删除返回 `MODEL_DEPENDENCY_IN_USE`。
 
-Electron 的 reveal 命令只让 service 返回其自身解析的模型目录或日志目录；main 从 host 响应提取路径后调用 `shell.openPath`，从不接受 renderer 路径，并只向 renderer 返回保留 status/diagnostics、`data:null` 且不含路径的操作结果。main 启动 host 时显式注入 bundled resource 根；service 仍优先遵循 `DOUBLELOVE_ASR_DIR`，开发期回落到仓库 `sidecars/asr`。正式 `transcribe_start` 保持 `mock=false`、30 秒切块、模型状态门禁和项目内日志；service 事件边界把进度自由文本中的项目目录替换为 `<PROJECT>`、模型/对齐器及 sidecar 目录替换为 `<MODEL>`，不改 task id、计数或 `dl://task-state`；只有 debug host 的显式 `--test-transcribe-mock` 集成配置可在自动化测试启用 mock sidecar。
+Electron 的 reveal 命令只让 service 返回其自身解析的模型目录或日志目录；main 从 host 响应提取路径后调用 `shell.openPath`，从不接受 renderer 路径，并只向 renderer 返回保留 status/diagnostics、`data:null` 且不含路径的操作结果。main 启动 host 时显式注入 bundled resource 根；发布资源解析同一个 `model-runtime` root，并确认 `double_love_asr/` 存在；开发期仍优先遵循 `DOUBLELOVE_ASR_DIR`，再回落到仓库 `sidecars/asr`。正式 `transcribe_start` 保持 `mock=false`、30 秒切块、模型状态门禁和项目内日志；service 事件边界把进度自由文本中的项目目录替换为 `<PROJECT>`、模型/对齐器及 sidecar 目录替换为 `<MODEL>`，不改 task id、计数或 `dl://task-state`；只有 debug host 的显式 `--test-transcribe-mock` 集成配置可在自动化测试启用 mock sidecar。
 
 Rust service 的本机 HTTP fixture 使用临时合成清单数据（不下载真实权重、无外网），覆盖依赖顺序安装、进度/状态事件、暂停保留 staging、零字节取消、Range 续传、恢复安装、哈希损坏转 corrupt、verify、依赖删除保护和 doctor。host Slice 5 集成测试另覆盖模型/日志路径返回、合成媒体导入、mock 转录进度与终态、路径型 sidecar 错误脱敏、默认 120ms omit、restore、preview 不写、apply 写 XMEML/SHA-256/outputs/export history、`ROUGH_CUT_EMPTY` 阻断，以及取消候选不切换 active transcript。Electron Playwright 使用预置的合成 installed 状态（不含权重）和 test-only mock host 配置，覆盖 reveal 返回值不含路径，以及同一转录、脱敏事件、编辑、export grant、文件/SHA-256、空剪阻断与取消路径；因生产 host 的偏好 endpoint 校验按设计不允许非测试编译的 HTTP，Electron E2E 不伪造本地下载，完整下载生命周期由 Rust fixture 覆盖。
 
@@ -141,7 +141,7 @@ Slice 5 未修改旧容器目录、Web/PWA、模型清单 JSON、偏好 endpoint
 
 host-neutral service 已按 Tauri 参考实现注册 `speaker_list`、`speaker_name_proposals`、`speaker_agent_payload_preview`、`speaker_name_confirm`、`speaker_merge_confirm`、`speaker_diarize_start` 与 `speaker_diarization_get`。列表、名称候选、显式确认错误码、姓名/合并 revision、合并后旧身份的 `merged_into` 归档语义和分离结果均直接复用 engine；姓名与合并在 `confirmed:false` 时统一返回 `SPEAKER_CONFIRM_REQUIRED`，不会写项目。
 
-`speaker_diarize_start` 从当前偏好的模型根优先解析已安装的 `wespeaker-multilingual`，仅在它不可用时回退 `wespeaker-zh`；两者都未就绪时返回 `MODEL_NOT_READY`。VAD 仍使用 bundled Silero 标识。speaker sidecar 定位顺序为 `DOUBLELOVE_SPEAKER_DIR` → 注入的 resource 根 → 开发仓库 `sidecars/speaker`，日志只写当前项目 `.doublelove/logs`。生产 runtime 默认且始终使用 `mock:false`；host 在无显式 `--test-transcribe-mock` 时会在启动阶段清除继承的 `DOUBLELOVE_ASR_MOCK` 与 `DOUBLELOVE_SPEAKER_MOCK`，避免 Electron main 环境绕过 runtime 配置。只有 debug host 的显式 `--test-speaker-mock`（Electron E2E 对应 `--double-love-e2e-speaker-mock`）可由 speaker 配置重新启用既有确定性 mock，不改变 engine/CLI 或 sidecar 协议。
+`speaker_diarize_start` 从当前偏好的模型根优先解析已安装的 `wespeaker-multilingual`，仅在它不可用时回退 `wespeaker-zh`；两者都未就绪时返回 `MODEL_NOT_READY`。VAD 仍使用 bundled Silero 标识。发布资源与 ASR 共用同一个 `model-runtime/.venv/bin/python` root，并确认 `double_love_speaker/` 存在；开发期 speaker sidecar 定位顺序为 `DOUBLELOVE_SPEAKER_DIR` → 开发仓库 `sidecars/speaker`，日志只写当前项目 `.doublelove/logs`。生产 runtime 默认且始终使用 `mock:false`；host 在无显式 `--test-transcribe-mock` 时会在启动阶段清除继承的 `DOUBLELOVE_ASR_MOCK` 与 `DOUBLELOVE_SPEAKER_MOCK`，避免 Electron main 环境绕过 runtime 配置。只有 debug host 的显式 `--test-speaker-mock`（Electron E2E 对应 `--double-love-e2e-speaker-mock`）可由 speaker 配置重新启用既有确定性 mock，不改变 engine/CLI 或 sidecar 协议。
 
 Electron 的 Agent 预览边界会在返回前仅替换 payload 字符串中当前项目根和当前项目全部媒体源路径（含可解析的 canonical 形式）为 `<PROJECT>` / `<MEDIA>`；speaker id、发言选择、条数/字符上限和 instruction 除路径替换外保持 engine 原样。预览仍只包含请求的匿名说话人发言，不会附加音频、其他说话人的文字、项目上下文或任何外部调用。
 
@@ -163,7 +163,7 @@ Slice 7 未修改旧容器目录、Web/PWA、SQLite schema/migration、TimelineI
 
 ## Phase 5A 已交付打包基础设施与资源归属
 
-模型清单已逐字节移动到 `crates/double-love-engine/resources/model-catalog-v1.json`，偏好 fixture 已归属 desktop service，512×512 图标与媒体/模型运行时占位树已归属 `studio/build/`；搬移前后 SHA-256 一致。三个 runtime 脚本已改写到 Studio 资源树，Tauri 配置通过 source→target 映射继续生成相同的 `runtime/` 与 `model-runtime/` 包内布局，debug `.app` 仍可构建；旧容器目录及其行为未删除。
+模型清单已逐字节移动到 `crates/double-love-engine/resources/model-catalog-v1.json`，偏好 fixture 已归属 desktop service，512×512 图标与媒体/模型运行时占位树已归属 `studio/build/`；搬移前后 SHA-256 一致。三个 runtime 脚本已改写到 Studio 资源树，模型运行时由一个 `.venv` 与两个 sidecar 包组成，`electron-builder` 只复制整个 `build/model-runtime`，debug `.app` 仍可构建；旧容器目录及其行为未删除。
 
 `electron-builder` v26 配置现固定 macOS 15+ arm64 的 DMG/ZIP、ASAR、应用身份、视频分类、GitHub publish 元数据与四组 `extraResources`。本次本地证明与 CI 目录包显式关闭证书自动发现，`notarize:false`，本阶段未做发布签名或公证。afterPack 为 Electron 43 配齐全部九项 Fuse V1；浏览器专用 V8 snapshot 随包生成，renderer 改由受限 `dl-app://app` 协议加载，因此 `GrantFileProtocolExtraPrivileges:false` 与 `OnlyLoadAppFromAsar:true` 下仍可启动。
 

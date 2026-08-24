@@ -1,5 +1,4 @@
 # Apple Silicon-only speaker runtime.  MLX performs all model inference; NumPy is used
 # solely for deterministic 16 kHz / 80-bin feature preparation.
-mlx==0.31.1
-mlx-audio==0.5.0
-numpy==2.3.5
+mlx==0.32.1
+numpy==2.5.2

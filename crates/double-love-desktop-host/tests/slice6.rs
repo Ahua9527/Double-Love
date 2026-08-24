@@ -215,11 +215,11 @@ fn test_python_path() -> PathBuf {
 fn prepare_bundled_runtime(resource_dir: &Path, tools: &FfmpegTools) {
     let python = test_python_path();
     let media_runtime = resource_dir.join("runtime");
-    let asr_root = resource_dir.join("model-runtime/asr");
-    let speaker_root = resource_dir.join("model-runtime/speaker");
+    let model_runtime = resource_dir.join("model-runtime");
+    let asr_root = &model_runtime;
+    let speaker_root = &model_runtime;
     fs::create_dir_all(&media_runtime).expect("media runtime");
     fs::create_dir_all(asr_root.join(".venv/bin")).expect("asr runtime");
-    fs::create_dir_all(speaker_root.join(".venv/bin")).expect("speaker runtime");
     #[cfg(unix)]
     {
         std::os::unix::fs::symlink(&tools.ffmpeg, media_runtime.join("ffmpeg"))
@@ -228,8 +228,6 @@ fn prepare_bundled_runtime(resource_dir: &Path, tools: &FfmpegTools) {
             .expect("link ffprobe runtime");
         std::os::unix::fs::symlink(&python, asr_root.join(".venv/bin/python"))
             .expect("link asr python runtime");
-        std::os::unix::fs::symlink(&python, speaker_root.join(".venv/bin/python"))
-            .expect("link speaker python runtime");
         std::os::unix::fs::symlink(
             Path::new(env!("CARGO_MANIFEST_DIR")).join("../../sidecars/asr/double_love_asr"),
             asr_root.join("double_love_asr"),
@@ -290,7 +288,7 @@ fn seed_installed_models(app_data: &Path) {
 }
 
 fn write_boundary_speaker_sidecar(resource_dir: &Path) -> PathBuf {
-    let package_root = resource_dir.join("model-runtime/speaker");
+    let package_root = resource_dir.join("model-runtime");
     let package = package_root.join("double_love_speaker");
     fs::create_dir_all(&package).expect("boundary speaker package");
     fs::create_dir_all(package_root.join(".venv/bin")).expect("boundary speaker runtime");

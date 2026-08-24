@@ -1,16 +1,12 @@
 //! Model catalogue, download queue, verification, reveal paths, and diagnostics support.
 
 use std::collections::{HashMap, VecDeque};
-use std::fs;
-#[cfg(test)]
-use std::fs::OpenOptions;
-use std::io::{BufRead, BufReader, Read, Write};
+use std::fs::{self, OpenOptions};
+use std::io::{Read, Write};
 use std::path::{Component, Path, PathBuf};
-use std::process::{Command, Stdio};
 use std::sync::{
     Arc, Mutex,
     atomic::{AtomicBool, Ordering},
-    mpsc,
 };
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -20,9 +16,8 @@ use double_love_engine::{
     ModelInstallation, ModelManager, ModelQueueEntry, ModelQueueSnapshot, ModelQueueState,
     ModelUiRole,
 };
-#[cfg(test)]
+use reqwest::StatusCode;
 use reqwest::blocking::Client;
-#[cfg(test)]
 use reqwest::header::{CONTENT_RANGE, RANGE};
 
 use crate::{DesktopEventSink, DesktopServiceError};
@@ -35,14 +30,6 @@ pub struct ModelState {
     current_request: Arc<Mutex<Option<String>>>,
     download_lock: Arc<Mutex<()>>,
     catalog: Option<ModelCatalog>,
-}
-
-/// 随应用打包的 ASR Python runtime。下载器与 ASR 共享它，确保 ModelScope SDK
-/// 不会落入系统 Python，也不会变成 Renderer 可控的命令或路径。
-#[derive(Debug, Clone)]
-pub struct ModelDownloadRuntime {
-    pub python: PathBuf,
-    pub package_dir: PathBuf,
 }
 
 impl Default for ModelState {
@@ -410,73 +397,70 @@ impl ModelState {
         Ok(())
     }
 
-    /// Compatibility entrypoint used by synthetic Rust downloader tests. Production callers
-    /// must use `begin_install_with_runtime`, which routes ModelScope models through the
-    /// bundled Python SDK instead of the old direct URL downloader.
     pub fn begin_install(
         &self,
         root: PathBuf,
-        endpoint: String,
         model_id: &str,
         accepted_noncommercial_license: bool,
         app_version: String,
         events: Arc<dyn DesktopEventSink>,
     ) -> Result<ModelInstallation, String> {
-        self.begin_install_with_runtime(
+        self.begin_install_inner(
             root,
-            endpoint,
-            None,
             model_id,
             accepted_noncommercial_license,
             app_version,
             events,
+            None,
         )
     }
 
-    pub fn begin_install_with_runtime(
+    #[cfg(test)]
+    fn begin_install_fixture(
         &self,
         root: PathBuf,
         endpoint: String,
-        runtime: Option<ModelDownloadRuntime>,
         model_id: &str,
         accepted_noncommercial_license: bool,
         app_version: String,
         events: Arc<dyn DesktopEventSink>,
     ) -> Result<ModelInstallation, String> {
-        let (_order, needs_modelscope_runtime) = self
-            .with_manager(&root, |manager| {
-                let descriptor = manager.descriptor(model_id)?;
-                if descriptor.ui_role == ModelUiRole::Legacy {
-                    return Err(ModelError::InvalidState(
-                        "旧版模型只能清理，不能重新安装或用于推理。".to_string(),
-                    ));
-                }
-                if descriptor.requires_noncommercial_confirmation()
-                    && !accepted_noncommercial_license
-                {
-                    return Err(ModelError::InvalidState(
-                        "该模型仅限非商业使用，请先确认 CC BY-NC-SA 4.0 许可。".to_string(),
-                    ));
-                }
-                let order = manager.dependency_order(model_id)?;
-                let needs_runtime = order.iter().any(|id| {
-                    manager.descriptor(id).is_ok_and(|descriptor| {
-                        descriptor.download_source == ModelDownloadSource::Modelscope
-                            && manager.installation(id).is_ok_and(|installation| {
-                                installation.state != ModelInstallState::Installed
-                            })
-                    })
-                });
-                Ok((order, needs_runtime))
-            })
-            .map_err(|error| error.to_string())?;
-        if needs_modelscope_runtime
-            && runtime
-                .as_ref()
-                .is_none_or(|runtime| !runtime.python.is_file() || !runtime.package_dir.is_dir())
-        {
-            return Err("本机 ModelScope 下载运行时不可用；请重新安装桌面应用。".to_string());
-        }
+        self.begin_install_inner(
+            root,
+            model_id,
+            accepted_noncommercial_license,
+            app_version,
+            events,
+            Some(endpoint),
+        )
+    }
+
+    fn begin_install_inner(
+        &self,
+        root: PathBuf,
+        model_id: &str,
+        accepted_noncommercial_license: bool,
+        app_version: String,
+        events: Arc<dyn DesktopEventSink>,
+        fixture_endpoint: Option<String>,
+    ) -> Result<ModelInstallation, String> {
+        self.with_manager(&root, |manager| {
+            let descriptor = manager.descriptor(model_id)?;
+            if descriptor.ui_role == ModelUiRole::Legacy {
+                return Err(ModelError::InvalidState(
+                    "旧版模型只能清理，不能重新安装或用于推理。".to_string(),
+                ));
+            }
+            if descriptor.requires_noncommercial_confirmation()
+                && !accepted_noncommercial_license
+            {
+                return Err(ModelError::InvalidState(
+                    "该模型仅限非商业使用，请先确认 CC BY-NC-SA 4.0 许可。".to_string(),
+                ));
+            }
+            manager.dependency_order(model_id)
+        })
+        .map_err(|error| error.to_string())?;
         let flag = Arc::new(AtomicBool::new(false));
         {
             let mut active = self
@@ -507,9 +491,19 @@ impl ModelState {
         let state = self.clone();
         let requested_id = model_id.to_string();
         let user_agent = format!("double-love-studio/{app_version}");
+        let client = Client::builder()
+            .user_agent(&user_agent)
+            .build()
+            .map_err(|_| "无法建立模型下载连接。".to_string())?;
         self.emit_queue(events.as_ref());
         std::thread::spawn(move || {
-            state.run_install_batch(events, requested_id, endpoint, runtime, root, user_agent);
+            state.run_install_batch(
+                events,
+                requested_id,
+                root,
+                client,
+                fixture_endpoint,
+            );
         });
         Ok(requested)
     }
@@ -653,10 +647,9 @@ impl ModelState {
         &self,
         events: Arc<dyn DesktopEventSink>,
         requested: String,
-        endpoint: String,
-        runtime: Option<ModelDownloadRuntime>,
         root: PathBuf,
-        user_agent: String,
+        client: Client,
+        fixture_endpoint: Option<String>,
     ) {
         let flag = self
             .active
@@ -711,10 +704,9 @@ impl ModelState {
             if let Err(error) = self.download_model(
                 events.as_ref(),
                 &root,
-                &endpoint,
-                runtime.as_ref(),
+                &client,
+                fixture_endpoint.as_deref(),
                 model_id,
-                &user_agent,
                 &flag,
             ) {
                 if !flag.load(Ordering::SeqCst)
@@ -782,12 +774,13 @@ impl ModelState {
         &self,
         events: &dyn DesktopEventSink,
         root: &Path,
-        endpoint: &str,
-        runtime: Option<&ModelDownloadRuntime>,
+        client: &Client,
+        fixture_endpoint: Option<&str>,
         model_id: &str,
-        user_agent: &str,
         cancel: &AtomicBool,
     ) -> Result<(), String> {
+        #[cfg(not(test))]
+        let _ = fixture_endpoint;
         let (descriptor, current) = self
             .with_manager(root, |manager| {
                 Ok((
@@ -827,9 +820,6 @@ impl ModelState {
             .join(&descriptor.revision);
         fs::create_dir_all(&staging).map_err(|error| error.to_string())?;
         if descriptor.download_source == ModelDownloadSource::Modelscope {
-            let runtime = runtime.ok_or_else(|| {
-                "本机 ModelScope 下载运行时不可用；请重新安装桌面应用。".to_string()
-            })?;
             if !download_modelscope_snapshot(
                 self,
                 events,
@@ -837,8 +827,7 @@ impl ModelState {
                 model_id,
                 &descriptor,
                 &staging,
-                runtime,
-                user_agent,
+                client,
                 cancel,
             )? {
                 return Ok(());
@@ -848,14 +837,10 @@ impl ModelState {
             // 都是 ModelScope + MLX，因此绝不会进入这条路径。
             #[cfg(not(test))]
             {
-                let _ = endpoint;
                 return Err("发布版本只支持受管的 ModelScope MLX 模型。".to_string());
             }
             #[cfg(test)]
-            let client = Client::builder()
-                .user_agent(user_agent)
-                .build()
-                .map_err(|error| format!("无法建立下载连接：{error}"))?;
+            let endpoint = fixture_endpoint.unwrap_or_default();
             #[cfg(test)]
             if let Some(archive) = descriptor.archive.clone() {
                 let archive_path = self
@@ -1047,11 +1032,10 @@ fn model_url(
     Ok(url)
 }
 
-/// Download a single immutable ModelScope snapshot through the bundled Python SDK.
-///
-/// The process speaks JSONL only: it receives the already-approved repo/revision/file
-/// whitelist from Rust and reports bounded progress back. It never receives a renderer
-/// path or a URL, and its downloaded files are still verified by `ModelManager` below.
+/// Download the immutable ModelScope file whitelist directly with the production reqwest
+/// client. The URL comes only from the catalog descriptor; renderer preferences are not
+/// consulted. Files are fetched in manifest order and remain in `.part` form until the
+/// manager verifies and atomically installs the complete staging directory.
 fn download_modelscope_snapshot(
     state: &ModelState,
     events: &dyn DesktopEventSink,
@@ -1059,168 +1043,73 @@ fn download_modelscope_snapshot(
     model_id: &str,
     descriptor: &ModelDescriptor,
     staging: &Path,
-    runtime: &ModelDownloadRuntime,
-    user_agent: &str,
+    client: &Client,
     cancel: &AtomicBool,
 ) -> Result<bool, String> {
-    let repo_id = descriptor
-        .repo_id
-        .as_deref()
-        .ok_or_else(|| "ModelScope 模型缺少固定仓库标识。".to_string())?;
-    let files = descriptor
-        .files
-        .iter()
-        .filter(|file| file.allowed)
-        .map(|file| file.path.clone())
-        .collect::<Vec<_>>();
-    if files.is_empty() {
+    if descriptor.revision.len() != 40
+        || !descriptor
+            .revision
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit())
+    {
+        return Err("模型清单包含无效的固定 revision。".to_string());
+    }
+    if descriptor.files.iter().all(|file| !file.allowed) {
         return Err("ModelScope 模型没有可下载的白名单文件。".to_string());
     }
-    if !runtime.python.is_file() || !runtime.package_dir.is_dir() {
-        return Err("本机 ModelScope 下载运行时不可用；请重新安装桌面应用。".to_string());
-    }
-    let mut child = Command::new(&runtime.python)
-        .args(["-m", "double_love_asr.modelscope_download"])
-        .current_dir(&runtime.package_dir)
-        .env("PYTHONNOUSERSITE", "1")
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|_| "无法启动本机 ModelScope 下载器。".to_string())?;
-    let request = serde_json::json!({
-        "repo_id": repo_id,
-        "revision": descriptor.revision,
-        "local_dir": staging,
-        "files": files,
-        "user_agent": user_agent,
-    });
-    if let Some(mut stdin) = child.stdin.take() {
-        serde_json::to_writer(&mut stdin, &request)
-            .map_err(|_| "无法向本机 ModelScope 下载器发送请求。".to_string())?;
-        stdin
-            .write_all(b"\n")
-            .map_err(|_| "无法向本机 ModelScope 下载器发送请求。".to_string())?;
-    } else {
-        return Err("无法向本机 ModelScope 下载器发送请求。".to_string());
-    }
-    let stdout = child
-        .stdout
-        .take()
-        .ok_or_else(|| "无法读取本机 ModelScope 下载器输出。".to_string())?;
-    let stderr = child
-        .stderr
-        .take()
-        .ok_or_else(|| "无法读取本机 ModelScope 下载器错误输出。".to_string())?;
-    let (sender, receiver) = mpsc::channel::<String>();
-    let reader = std::thread::spawn(move || {
-        for line in BufReader::new(stdout).lines().map_while(Result::ok) {
-            if sender.send(line).is_err() {
-                break;
-            }
-        }
-    });
-    let stderr_reader = std::thread::spawn(move || {
-        let mut output = String::new();
-        let _ = BufReader::new(stderr).read_to_string(&mut output);
-        output
-    });
-    let mut completed = false;
-    let mut declared_error = None::<String>;
-    let mut cancelled = false;
-    loop {
+
+    let mut completed_before = 0_u64;
+    for file in descriptor.files.iter().filter(|file| file.allowed) {
         if cancel.load(Ordering::SeqCst) {
-            cancelled = true;
-            let _ = child.kill();
+            return Ok(false);
         }
-        match receiver.recv_timeout(Duration::from_millis(100)) {
-            Ok(line) => {
-                let Ok(event) = serde_json::from_str::<serde_json::Value>(&line) else {
-                    continue;
-                };
-                match event.get("event").and_then(serde_json::Value::as_str) {
-                    Some("progress") => {
-                        let current_file = event
-                            .get("current_file")
-                            .and_then(serde_json::Value::as_str)
-                            .filter(|path| descriptor.file(path).is_some())
-                            .map(str::to_string);
-                        let Some(file_name) = current_file else {
-                            continue;
-                        };
-                        let file_total = descriptor
-                            .file(&file_name)
-                            .map(|file| file.size_bytes)
-                            .unwrap_or_default();
-                        let file_downloaded = event
-                            .get("file_bytes_downloaded")
-                            .and_then(serde_json::Value::as_u64)
-                            .unwrap_or_default()
-                            .min(file_total);
-                        let downloaded = event
-                            .get("bytes_downloaded")
-                            .and_then(serde_json::Value::as_u64)
-                            .unwrap_or_default()
-                            .min(descriptor.total_size());
-                        let progress = state
-                            .with_manager(root, |manager| {
-                                manager.update_progress(
-                                    model_id,
-                                    Some(file_name),
-                                    downloaded,
-                                    file_downloaded,
-                                    file_total,
-                                    None,
-                                )
-                            })
-                            .map_err(|error| error.to_string())?;
-                        emit(events, "dl://model-progress", &progress);
-                    }
-                    Some("completed") => completed = true,
-                    Some("error") => {
-                        declared_error = Some(
-                            event
-                                .get("message")
-                                .and_then(serde_json::Value::as_str)
-                                .filter(|message| !message.contains('/') && !message.contains('\\'))
-                                .unwrap_or("ModelScope 下载失败，请检查网络后重试。")
-                                .to_string(),
-                        );
-                    }
-                    _ => {}
-                }
-            }
-            Err(mpsc::RecvTimeoutError::Timeout) => {}
-            Err(mpsc::RecvTimeoutError::Disconnected) => {}
+        let relative = safe_relative_path(&file.path)?;
+        let final_path = staging.join(&relative);
+        if fs::symlink_metadata(&final_path).is_ok_and(|metadata| {
+            metadata.file_type().is_file() && metadata.len() == file.size_bytes
+        }) {
+            completed_before = completed_before.saturating_add(file.size_bytes);
+            continue;
         }
-        if child
-            .try_wait()
-            .map_err(|_| "无法检查 ModelScope 下载状态。".to_string())?
-            .is_some()
-        {
-            while let Ok(line) = receiver.try_recv() {
-                if let Ok(event) = serde_json::from_str::<serde_json::Value>(&line)
-                    && event.get("event").and_then(serde_json::Value::as_str) == Some("completed")
-                {
-                    completed = true;
-                }
-            }
-            break;
+        let part_path = PathBuf::from(format!("{}.part", final_path.to_string_lossy()));
+        if let Some(parent) = part_path.parent() {
+            fs::create_dir_all(parent).map_err(|_| "模型下载目录不可用。".to_string())?;
         }
-    }
-    let status = child
-        .wait()
-        .map_err(|_| "无法等待 ModelScope 下载器结束。".to_string())?;
-    let _ = reader.join();
-    let _ = stderr_reader.join();
-    if cancelled {
-        return Ok(false);
-    }
-    if let Some(error) = declared_error {
-        return Err(error);
-    }
-    if !status.success() || !completed {
-        return Err("ModelScope 下载失败，请检查网络后重试。".to_string());
+        let url = descriptor
+            .source_url(&file.path)
+            .map_err(|_| "ModelScope 模型下载地址无效。".to_string())?;
+        if !url.starts_with("https://www.modelscope.cn/api/v1/models/") {
+            return Err("ModelScope 模型下载地址无效。".to_string());
+        }
+        let outcome = download_file_with_resume(
+            client,
+            &url,
+            &part_path,
+            file.size_bytes,
+            cancel,
+            |written, bytes_per_second| {
+                let progress = state
+                    .with_manager(root, |manager| {
+                        manager.update_progress(
+                            model_id,
+                            Some(file.path.clone()),
+                            completed_before.saturating_add(written),
+                            written,
+                            file.size_bytes,
+                            Some(bytes_per_second),
+                        )
+                    })
+                    .map_err(|error| error.to_string())?;
+                emit(events, "dl://model-progress", &progress);
+                Ok(())
+            },
+        )
+        .map_err(|error| format!("{} · {}：{error}", descriptor.display_name, file.path))?;
+        if outcome.is_none() || cancel.load(Ordering::SeqCst) {
+            return Ok(false);
+        }
+        fs::rename(&part_path, &final_path).map_err(|_| "无法完成模型文件保存。".to_string())?;
+        completed_before = completed_before.saturating_add(file.size_bytes);
     }
     Ok(true)
 }
@@ -1243,43 +1132,167 @@ fn emit_state(events: &dyn DesktopEventSink, installation: &ModelInstallation) {
     emit(events, "dl://model-state", installation);
 }
 
-#[cfg(test)]
 fn parse_content_range(value: &str) -> Option<(u64, u64, u64)> {
-    let range = value.strip_prefix("bytes ")?;
+    let range = value.trim().strip_prefix("bytes ")?;
     let (bounds, total) = range.split_once('/')?;
     let (start, end) = bounds.split_once('-')?;
-    Some((start.parse().ok()?, end.parse().ok()?, total.parse().ok()?))
+    let start = start.parse().ok()?;
+    let end = end.parse().ok()?;
+    let total = total.parse().ok()?;
+    (start <= end && end < total).then_some((start, end, total))
 }
 
-#[cfg(test)]
+const MAX_DOWNLOAD_ATTEMPTS: usize = 5;
+const RETRY_BASE_DELAY: Duration = Duration::from_millis(100);
+
+enum DownloadAttemptError {
+    Transient,
+    Fatal(String),
+}
+
+fn is_transient_status(status: StatusCode) -> bool {
+    status == StatusCode::REQUEST_TIMEOUT
+        || status == StatusCode::TOO_MANY_REQUESTS
+        || status.is_server_error()
+}
+
+fn is_transient_request_error(error: &reqwest::Error) -> bool {
+    !error.is_builder()
+        && !error.is_redirect()
+        && (error.is_connect() || error.is_timeout() || error.is_request() || error.is_body())
+}
+
+fn retry_delay(retry_index: usize) -> Duration {
+    RETRY_BASE_DELAY
+        .checked_mul(2_u32.saturating_pow(retry_index as u32))
+        .unwrap_or(Duration::MAX)
+}
+
+fn wait_for_retry(delay: Duration, cancel: &AtomicBool) -> bool {
+    let deadline = Instant::now() + delay;
+    while !cancel.load(Ordering::SeqCst) {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return true;
+        }
+        std::thread::sleep(remaining.min(Duration::from_millis(25)));
+    }
+    false
+}
+
 fn download_file_with_resume(
     client: &Client,
     url: &str,
     part_path: &Path,
     expected_size: u64,
     cancel: &AtomicBool,
+    on_progress: impl FnMut(u64, u64) -> Result<(), String>,
+) -> Result<Option<u64>, String> {
+    download_file_with_resume_and_wait(
+        client,
+        url,
+        part_path,
+        expected_size,
+        cancel,
+        wait_for_retry,
+        on_progress,
+    )
+}
+
+fn download_file_with_resume_and_wait(
+    client: &Client,
+    url: &str,
+    part_path: &Path,
+    expected_size: u64,
+    cancel: &AtomicBool,
+    mut retry_wait: impl FnMut(Duration, &AtomicBool) -> bool,
     mut on_progress: impl FnMut(u64, u64) -> Result<(), String>,
 ) -> Result<Option<u64>, String> {
-    if part_path
-        .metadata()
-        .is_ok_and(|metadata| metadata.len() > expected_size)
-    {
-        fs::remove_file(part_path).map_err(|error| error.to_string())?;
+    for attempt in 0..MAX_DOWNLOAD_ATTEMPTS {
+        match download_file_attempt(
+            client,
+            url,
+            part_path,
+            expected_size,
+            cancel,
+            &mut on_progress,
+        ) {
+            Ok(result) => return Ok(result),
+            Err(DownloadAttemptError::Fatal(error)) => return Err(error),
+            Err(DownloadAttemptError::Transient) => {
+                if cancel.load(Ordering::SeqCst) {
+                    return Ok(None);
+                }
+                if attempt + 1 == MAX_DOWNLOAD_ATTEMPTS || !retry_wait(retry_delay(attempt), cancel)
+                {
+                    return if cancel.load(Ordering::SeqCst) {
+                        Ok(None)
+                    } else {
+                        Err("模型下载失败。".to_string())
+                    };
+                }
+            }
+        }
     }
-    let offset = part_path
-        .metadata()
-        .map(|metadata| metadata.len())
-        .unwrap_or(0);
+    unreachable!("download attempts always return before the loop ends")
+}
+
+fn download_file_attempt(
+    client: &Client,
+    url: &str,
+    part_path: &Path,
+    expected_size: u64,
+    cancel: &AtomicBool,
+    on_progress: &mut impl FnMut(u64, u64) -> Result<(), String>,
+) -> Result<Option<u64>, DownloadAttemptError> {
+    let metadata = match fs::symlink_metadata(part_path) {
+        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => {
+            return Err(DownloadAttemptError::Fatal(
+                "模型下载暂存文件不可用。".to_string(),
+            ));
+        }
+        Ok(metadata) => Some(metadata),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(_) => {
+            return Err(DownloadAttemptError::Fatal(
+                "无法读取模型下载状态。".to_string(),
+            ));
+        }
+    };
+    let mut offset = metadata.as_ref().map_or(0, fs::Metadata::len);
+    if offset > expected_size {
+        fs::remove_file(part_path)
+            .map_err(|_| DownloadAttemptError::Fatal("无法重置模型下载暂存文件。".to_string()))?;
+        offset = 0;
+    }
+    if metadata.is_some() && offset == expected_size {
+        return Ok(Some(offset));
+    }
+
     let mut request = client.get(url);
     if offset > 0 {
         request = request.header(RANGE, format!("bytes={offset}-"));
     }
-    let mut response = request
-        .send()
-        .map_err(|error| format!("模型下载失败：{error}"))?;
-    let status = response.status().as_u16();
-    if status != 200 && status != 206 {
-        return Err(format!("模型服务器返回 HTTP {}", response.status()));
+    let mut response = match request.send() {
+        Ok(response) => response,
+        Err(error) if is_transient_request_error(&error) => {
+            return Err(DownloadAttemptError::Transient);
+        }
+        Err(_) => {
+            return Err(DownloadAttemptError::Fatal(
+                "模型下载地址无效。".to_string(),
+            ));
+        }
+    };
+    let status = response.status();
+    if is_transient_status(status) {
+        return Err(DownloadAttemptError::Transient);
+    }
+    if status != StatusCode::OK && status != StatusCode::PARTIAL_CONTENT {
+        return Err(DownloadAttemptError::Fatal(format!(
+            "模型服务器返回 HTTP {}",
+            response.status()
+        )));
     }
     let content_range = response
         .headers()
@@ -1287,14 +1300,34 @@ fn download_file_with_resume(
         .and_then(|value| value.to_str().ok())
         .and_then(parse_content_range);
     let expected_range = (offset, expected_size.saturating_sub(1), expected_size);
-    if offset > 0 && content_range != Some(expected_range) {
-        return Err("模型服务器返回了缺失或不匹配的 Range。".to_string());
+    if status == StatusCode::PARTIAL_CONTENT
+        && (expected_size == 0 || content_range != Some(expected_range))
+    {
+        return Err(DownloadAttemptError::Fatal(
+            "模型服务器返回了缺失或不匹配的 Range。".to_string(),
+        ));
     }
-    if status == 206 && content_range != Some(expected_range) {
-        return Err("模型服务器返回了缺失或不匹配的 Range。".to_string());
+    if status == StatusCode::OK && offset > 0 && content_range != Some(expected_range) {
+        return Err(DownloadAttemptError::Fatal(
+            "模型服务器返回了缺失或不匹配的 Range。".to_string(),
+        ));
     }
-    if offset == 0 && content_range.is_some() && content_range != Some(expected_range) {
-        return Err("模型服务器返回了缺失或不匹配的 Range。".to_string());
+    if offset == 0
+        && content_range.is_some()
+        && (expected_size == 0 || content_range != Some(expected_range))
+    {
+        return Err(DownloadAttemptError::Fatal(
+            "模型服务器返回了缺失或不匹配的 Range。".to_string(),
+        ));
+    }
+    let expected_body_size = expected_size.saturating_sub(offset);
+    if response
+        .content_length()
+        .is_some_and(|size| size != expected_body_size)
+    {
+        return Err(DownloadAttemptError::Fatal(
+            "模型服务器返回的内容大小与清单不一致。".to_string(),
+        ));
     }
     let append = offset > 0;
     let mut written = if append { offset } else { 0 };
@@ -1304,33 +1337,46 @@ fn download_file_with_resume(
         .append(append)
         .truncate(!append)
         .open(part_path)
-        .map_err(|error| error.to_string())?;
+        .map_err(|_| DownloadAttemptError::Fatal("无法打开模型下载暂存文件。".to_string()))?;
     let started = Instant::now();
     let mut buffer = vec![0_u8; 1024 * 1024];
     loop {
         if cancel.load(Ordering::SeqCst) {
-            output.sync_all().map_err(|error| error.to_string())?;
+            output
+                .sync_all()
+                .map_err(|_| DownloadAttemptError::Fatal("无法保存模型下载进度。".to_string()))?;
             return Ok(None);
         }
-        let count = response
-            .read(&mut buffer)
-            .map_err(|error| error.to_string())?;
+        let count = match response.read(&mut buffer) {
+            Ok(count) => count,
+            Err(_) => {
+                let _ = output.sync_all();
+                return Err(DownloadAttemptError::Transient);
+            }
+        };
         if count == 0 {
             break;
         }
         output
             .write_all(&buffer[..count])
-            .map_err(|error| error.to_string())?;
+            .map_err(|_| DownloadAttemptError::Fatal("无法保存模型下载进度。".to_string()))?;
         written = written.saturating_add(count as u64);
         if written > expected_size {
-            return Err("下载文件超过清单大小。".to_string());
+            return Err(DownloadAttemptError::Fatal(
+                "下载文件超过清单大小。".to_string(),
+            ));
         }
         let elapsed = started.elapsed().as_secs().max(1);
-        on_progress(written, written.saturating_sub(offset) / elapsed)?;
+        on_progress(written, written.saturating_sub(offset) / elapsed)
+            .map_err(DownloadAttemptError::Fatal)?;
     }
-    output.sync_all().map_err(|error| error.to_string())?;
+    output
+        .sync_all()
+        .map_err(|_| DownloadAttemptError::Fatal("无法保存模型下载文件。".to_string()))?;
     if written != expected_size {
-        return Err("下载文件大小与清单不一致。".to_string());
+        return Err(DownloadAttemptError::Fatal(
+            "下载文件大小与清单不一致。".to_string(),
+        ));
     }
     Ok(Some(written))
 }
@@ -1451,98 +1497,6 @@ mod tests {
         .expect("speaker catalog")
     }
 
-    fn modelscope_catalog(expected: &[u8]) -> ModelCatalog {
-        let hash = format!("{:x}", sha2::Sha256::digest(expected));
-        ModelCatalog::from_json(
-            &json!({
-                "schema_version": 1,
-                "models": [{
-                    "id": "modelscope-asr", "display_name": "ModelScope fixture", "component": "asr",
-                    "ui_role": "primary", "repo_id": "mlx-community/fixture",
-                    "download_source": "modelscope", "revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-                    "files": [{"path": "config.json", "size_bytes": expected.len(), "sha256": hash, "allowed": true}],
-                    "license": "MIT", "license_url": "https://opensource.org/license/mit",
-                    "dependencies": [], "min_memory_bytes": null,
-                    "source_url_template": "https://www.modelscope.cn/api/v1/models/mlx-community/fixture/repo?Revision={revision}&FilePath={path}", "bundled": false
-                }]
-            })
-            .to_string(),
-        )
-        .expect("ModelScope catalog")
-    }
-
-    fn test_python() -> Option<PathBuf> {
-        for candidate in ["python3.12", "python3.11", "python3"] {
-            if Command::new(candidate)
-                .arg("-c")
-                .arg("import sys; assert sys.version_info >= (3, 10)")
-                .status()
-                .is_ok_and(|status| status.success())
-            {
-                let output = Command::new("which").arg(candidate).output().ok()?;
-                let path = String::from_utf8(output.stdout).ok()?;
-                let path = PathBuf::from(path.trim());
-                if path.is_file() {
-                    return Some(path);
-                }
-            }
-        }
-        None
-    }
-
-    fn fake_modelscope_runtime(mode: &str) -> Option<(ModelDownloadRuntime, PathBuf)> {
-        let python = test_python()?;
-        let root = temp("modelscope-runtime");
-        let package = root.join("double_love_asr");
-        fs::create_dir_all(&package).expect("runtime package");
-        fs::write(package.join("__init__.py"), "").expect("package init");
-        fs::write(root.join("mode"), mode).expect("mode");
-        let script = r#"
-import json
-import sys
-import time
-from pathlib import Path
-
-request = json.loads(sys.stdin.readline())
-if request.get("repo_id") != "mlx-community/fixture":
-    print(json.dumps({"event": "error", "message": "invalid repository"}), flush=True)
-    raise SystemExit(2)
-if request.get("revision") != "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa":
-    print(json.dumps({"event": "error", "message": "invalid revision"}), flush=True)
-    raise SystemExit(2)
-if request.get("user_agent") != "double-love-studio/0.2.0":
-    print(json.dumps({"event": "error", "message": "invalid user agent"}), flush=True)
-    raise SystemExit(2)
-print(json.dumps({"event": "started"}), flush=True)
-mode = (Path(__file__).parent.parent / "mode").read_text().strip()
-if mode == "slow":
-    time.sleep(10)
-elif mode == "resume":
-    time.sleep(0.5)
-target_root = Path(request["local_dir"])
-for filename in request["files"]:
-    destination = target_root / filename
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    destination.write_bytes(b"hello")
-    print(json.dumps({
-        "event": "progress", "current_file": filename,
-        "bytes_downloaded": 5, "bytes_total": 5,
-        "file_bytes_downloaded": 5, "file_bytes_total": 5
-    }), flush=True)
-if mode == "extra":
-    (target_root / "example.py").write_text("not allowed")
-print(json.dumps({"event": "completed"}), flush=True)
-"#;
-        fs::write(package.join("modelscope_download.py"), script).expect("runtime downloader");
-        Some((
-            ModelDownloadRuntime {
-                python,
-                package_dir: root.clone(),
-            },
-            root,
-        ))
-    }
-
     fn server(bytes: Vec<u8>, requests: usize, slow: bool) -> (String, thread::JoinHandle<()>) {
         let listener = TcpListener::bind("127.0.0.1:0").expect("listener");
         let address = listener.local_addr().expect("address");
@@ -1621,6 +1575,45 @@ print(json.dumps({"event": "completed"}), flush=True)
         (format!("http://{address}"), handle)
     }
 
+    fn response_sequence_server(
+        statuses: Vec<Option<u16>>,
+        body: Vec<u8>,
+    ) -> (String, thread::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("listener");
+        let address = listener.local_addr().expect("address");
+        let handle = thread::spawn(move || {
+            for status in statuses {
+                let (mut stream, _) = listener.accept().expect("request");
+                let mut request = [0_u8; 4096];
+                let _ = stream.read(&mut request).expect("read request");
+                let Some(status) = status else {
+                    continue;
+                };
+                let reason = match status {
+                    200 => "OK",
+                    408 => "Request Timeout",
+                    429 => "Too Many Requests",
+                    403 => "Forbidden",
+                    404 => "Not Found",
+                    500 => "Internal Server Error",
+                    502 => "Bad Gateway",
+                    503 => "Service Unavailable",
+                    504 => "Gateway Timeout",
+                    _ => "Error",
+                };
+                let response_body: &[u8] = if status == 200 { body.as_slice() } else { &[] };
+                write!(
+                    stream,
+                    "HTTP/1.1 {status} {reason}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    response_body.len()
+                )
+                .expect("headers");
+                let _ = stream.write_all(response_body);
+            }
+        });
+        (format!("http://{address}"), handle)
+    }
+
     fn user_agent_server(bytes: Vec<u8>, requests: usize) -> (String, thread::JoinHandle<()>) {
         let listener = TcpListener::bind("127.0.0.1:0").expect("listener");
         let address = listener.local_addr().expect("address");
@@ -1676,7 +1669,7 @@ print(json.dumps({"event": "completed"}), flush=True)
         let events = Arc::new(Events::default());
 
         state
-            .begin_install(
+            .begin_install_fixture(
                 root.clone(),
                 endpoint.clone(),
                 "asr",
@@ -1716,7 +1709,7 @@ print(json.dumps({"event": "completed"}), flush=True)
         // The first worker must release the single queue before resume starts a new worker.
         thread::sleep(Duration::from_millis(100));
         state
-            .begin_install(
+            .begin_install_fixture(
                 root.clone(),
                 endpoint.clone(),
                 "asr",
@@ -1790,7 +1783,7 @@ print(json.dumps({"event": "completed"}), flush=True)
         let events = Arc::new(Events::default());
 
         state
-            .begin_install(
+            .begin_install_fixture(
                 root.clone(),
                 endpoint,
                 "asr",
@@ -1865,7 +1858,7 @@ print(json.dumps({"event": "completed"}), flush=True)
         let events = Arc::new(Events::default());
 
         state
-            .begin_install(
+            .begin_install_fixture(
                 root.clone(),
                 endpoint.clone(),
                 "dependency",
@@ -1876,7 +1869,7 @@ print(json.dumps({"event": "completed"}), flush=True)
             .expect("dependency install");
         wait_state(&state, &root, "dependency", ModelInstallState::Installed);
         state
-            .begin_install(
+            .begin_install_fixture(
                 root.clone(),
                 endpoint.clone(),
                 "asr",
@@ -1920,7 +1913,7 @@ print(json.dumps({"event": "completed"}), flush=True)
             ModelInstallState::NotInstalled
         );
         state
-            .begin_install(
+            .begin_install_fixture(
                 root.clone(),
                 endpoint,
                 "asr",
@@ -1952,7 +1945,7 @@ print(json.dumps({"event": "completed"}), flush=True)
         let state = ModelState::with_catalog(catalog(&endpoint, &bytes));
 
         state
-            .begin_install(
+            .begin_install_fixture(
                 root.clone(),
                 endpoint,
                 "asr",
@@ -1975,7 +1968,7 @@ print(json.dumps({"event": "completed"}), flush=True)
         let state = ModelState::with_catalog(catalog(&endpoint, &bytes));
 
         state
-            .begin_install(
+            .begin_install_fixture(
                 root.clone(),
                 endpoint,
                 "asr",
@@ -2017,7 +2010,7 @@ print(json.dumps({"event": "completed"}), flush=True)
         let events = Arc::new(Events::default());
 
         state
-            .begin_install(
+            .begin_install_fixture(
                 root.clone(),
                 endpoint.clone(),
                 "asr",
@@ -2040,7 +2033,7 @@ print(json.dumps({"event": "completed"}), flush=True)
             thread::sleep(Duration::from_millis(10));
         }
         state
-            .begin_install(
+            .begin_install_fixture(
                 root.clone(),
                 endpoint,
                 "asr-alt",
@@ -2150,7 +2143,7 @@ print(json.dumps({"event": "completed"}), flush=True)
         let state = ModelState::with_catalog(catalog(&endpoint, &expected));
         let events = Arc::new(Events::default());
         state
-            .begin_install(
+            .begin_install_fixture(
                 root.clone(),
                 endpoint,
                 "dependency",
@@ -2167,7 +2160,7 @@ print(json.dumps({"event": "completed"}), flush=True)
         // A new state reads the persisted not-installed snapshot and uses the same fixture catalog.
         let state = ModelState::with_catalog(catalog(&endpoint, &expected));
         state
-            .begin_install(
+            .begin_install_fixture(
                 root.clone(),
                 endpoint,
                 "dependency",
@@ -2178,179 +2171,6 @@ print(json.dumps({"event": "completed"}), flush=True)
             .expect("install corrupt bytes");
         wait_state(&state, &root, "dependency", ModelInstallState::Corrupt);
         fixture.join().expect("fixture server");
-        fs::remove_dir_all(root).expect("cleanup");
-    }
-
-    #[test]
-    fn modelscope_sdk_download_uses_fixed_manifest_and_keeps_paths_out_of_events() {
-        let Some((runtime, runtime_root)) = fake_modelscope_runtime("normal") else {
-            return;
-        };
-        let root = temp("modelscope-sdk");
-        let state = ModelState::with_catalog(modelscope_catalog(b"hello"));
-        let events = Arc::new(Events::default());
-        state
-            .begin_install_with_runtime(
-                root.clone(),
-                "https://ignored.example.invalid".to_string(),
-                Some(runtime),
-                "modelscope-asr",
-                true,
-                "0.2.0".to_string(),
-                events.clone(),
-            )
-            .expect("SDK install queues");
-        wait_state(
-            &state,
-            &root,
-            "modelscope-asr",
-            ModelInstallState::Installed,
-        );
-        let installed = state
-            .installed_inference_dir(&root, "modelscope-asr")
-            .expect("installed MLX model");
-        assert_eq!(
-            fs::read(installed.join("config.json")).expect("model file"),
-            b"hello"
-        );
-        let event_json =
-            serde_json::to_string(&*events.0.lock().expect("events")).expect("event JSON");
-        assert!(!event_json.contains(&root.to_string_lossy().into_owned()));
-        assert!(!event_json.contains(&runtime_root.to_string_lossy().into_owned()));
-        fs::remove_dir_all(root).expect("cleanup model root");
-        fs::remove_dir_all(runtime_root).expect("cleanup runtime root");
-    }
-
-    #[test]
-    fn modelscope_pause_preserves_staging_and_resume_reuses_it() {
-        let Some((runtime, runtime_root)) = fake_modelscope_runtime("slow") else {
-            return;
-        };
-        let root = temp("modelscope-resume");
-        let state = ModelState::with_catalog(modelscope_catalog(b"hello"));
-        state
-            .begin_install_with_runtime(
-                root.clone(),
-                "https://ignored.example.invalid".to_string(),
-                Some(runtime.clone()),
-                "modelscope-asr",
-                true,
-                "0.2.0".to_string(),
-                Arc::new(Events::default()),
-            )
-            .expect("slow SDK install queues");
-        wait_state(
-            &state,
-            &root,
-            "modelscope-asr",
-            ModelInstallState::Downloading,
-        );
-        let paused = state
-            .set_cancel(&root, "modelscope-asr", false)
-            .expect("pause request");
-        assert_eq!(paused.state, ModelInstallState::Paused);
-        let staging_id = paused.staging_id.expect("staging id");
-        for _ in 0..100 {
-            if !state
-                .active
-                .lock()
-                .expect("active")
-                .contains_key("modelscope-asr")
-            {
-                break;
-            }
-            thread::sleep(Duration::from_millis(20));
-        }
-        assert!(root.join(".staging").join(&staging_id).is_dir());
-        fs::write(runtime_root.join("mode"), "resume").expect("resume mode");
-        state
-            .begin_install_with_runtime(
-                root.clone(),
-                "https://ignored.example.invalid".to_string(),
-                Some(runtime),
-                "modelscope-asr",
-                true,
-                "0.2.0".to_string(),
-                Arc::new(Events::default()),
-            )
-            .expect("resume queues");
-        wait_state(
-            &state,
-            &root,
-            "modelscope-asr",
-            ModelInstallState::Downloading,
-        );
-        let resumed_staging = state
-            .snapshot(&root)
-            .expect("resumed snapshot")
-            .into_iter()
-            .find(|item| item.descriptor.id == "modelscope-asr")
-            .expect("model")
-            .installation
-            .staging_id
-            .expect("resumed staging id");
-        assert_eq!(resumed_staging, staging_id);
-        wait_state(
-            &state,
-            &root,
-            "modelscope-asr",
-            ModelInstallState::Installed,
-        );
-        fs::remove_dir_all(root).expect("cleanup model root");
-        fs::remove_dir_all(runtime_root).expect("cleanup runtime root");
-    }
-
-    #[test]
-    fn modelscope_extra_downloaded_file_is_rejected_before_install() {
-        let Some((runtime, runtime_root)) = fake_modelscope_runtime("extra") else {
-            return;
-        };
-        let root = temp("modelscope-extra-file");
-        let state = ModelState::with_catalog(modelscope_catalog(b"hello"));
-        state
-            .begin_install_with_runtime(
-                root.clone(),
-                "https://ignored.example.invalid".to_string(),
-                Some(runtime),
-                "modelscope-asr",
-                true,
-                "0.2.0".to_string(),
-                Arc::new(Events::default()),
-            )
-            .expect("SDK install queues");
-        wait_state(&state, &root, "modelscope-asr", ModelInstallState::Corrupt);
-        assert!(!state.installed_dir(&root, "modelscope-asr").is_ok());
-        fs::remove_dir_all(root).expect("cleanup model root");
-        fs::remove_dir_all(runtime_root).expect("cleanup runtime root");
-    }
-
-    #[test]
-    fn modelscope_install_fails_before_queue_when_runtime_is_missing() {
-        let root = temp("modelscope-runtime-missing");
-        let state = ModelState::with_catalog(modelscope_catalog(b"hello"));
-        let error = state
-            .begin_install_with_runtime(
-                root.clone(),
-                "https://ignored.example.invalid".to_string(),
-                None,
-                "modelscope-asr",
-                true,
-                "0.2.0".to_string(),
-                Arc::new(Events::default()),
-            )
-            .expect_err("missing runtime must fail before queue");
-        assert!(error.contains("ModelScope 下载运行时"));
-        assert_eq!(
-            state
-                .snapshot(&root)
-                .expect("snapshot")
-                .into_iter()
-                .find(|item| item.descriptor.id == "modelscope-asr")
-                .expect("model")
-                .installation
-                .state,
-            ModelInstallState::NotInstalled
-        );
         fs::remove_dir_all(root).expect("cleanup");
     }
 
@@ -2430,6 +2250,243 @@ print(json.dumps({"event": "completed"}), flush=True)
     }
 
     #[test]
+    fn downloader_fails_closed_for_sizes_and_preserves_cancelled_part() {
+        let client = Client::builder()
+            .user_agent("double-love-studio/0.2.0")
+            .build()
+            .expect("client");
+        let directory = temp("downloader-fail-closed");
+        fs::create_dir_all(&directory).expect("directory");
+        let part = directory.join("model.bin.part");
+
+        let (endpoint, fixture) = range_response_server(b"hello".to_vec(), 200, None);
+        let error = download_file_with_resume(
+            &client,
+            &format!("{endpoint}/short.bin"),
+            &part,
+            6,
+            &AtomicBool::new(false),
+            |_, _| Ok(()),
+        )
+        .expect_err("short response must fail");
+        assert!(!error.contains(&endpoint));
+        assert!(!error.contains(&directory.to_string_lossy().into_owned()));
+        fixture.join().expect("short fixture");
+
+        let (endpoint, fixture) = range_response_server(b"hello!".to_vec(), 200, None);
+        let error = download_file_with_resume(
+            &client,
+            &format!("{endpoint}/oversize.bin"),
+            &part,
+            5,
+            &AtomicBool::new(false),
+            |_, _| Ok(()),
+        )
+        .expect_err("oversize response must fail");
+        assert!(!error.contains(&endpoint));
+        assert!(!error.contains(&directory.to_string_lossy().into_owned()));
+        fixture.join().expect("oversize fixture");
+
+        fs::write(&part, b"partial").expect("partial");
+        let (endpoint, fixture) = server(vec![b'x'; 4096], 1, true);
+        let cancel = AtomicBool::new(true);
+        let outcome = download_file_with_resume(
+            &client,
+            &format!("{endpoint}/cancel.bin"),
+            &part,
+            4096,
+            &cancel,
+            |_, _| Ok(()),
+        )
+        .expect("cancelled download");
+        assert_eq!(outcome, None);
+        assert_eq!(fs::read(&part).expect("preserved part"), b"partial");
+        fixture.join().expect("cancel fixture");
+
+        fs::remove_dir_all(directory).expect("cleanup");
+    }
+
+    #[test]
+    fn transient_http_failures_retry_five_attempts_with_incremental_wait() {
+        let client = Client::builder().build().expect("client");
+        let directory = temp("retry-http");
+        fs::create_dir_all(&directory).expect("directory");
+        let part = directory.join("model.bin.part");
+        let (endpoint, fixture) = response_sequence_server(
+            vec![Some(503), Some(429), Some(408), Some(500), Some(200)],
+            b"hello".to_vec(),
+        );
+        let mut delays = Vec::new();
+        let outcome = download_file_with_resume_and_wait(
+            &client,
+            &format!("{endpoint}/model.bin"),
+            &part,
+            5,
+            &AtomicBool::new(false),
+            |delay, _| {
+                delays.push(delay);
+                true
+            },
+            |_, _| Ok(()),
+        )
+        .expect("transient HTTP failures should recover");
+        assert_eq!(outcome, Some(5));
+        assert_eq!(fs::read(&part).expect("downloaded file"), b"hello");
+        assert_eq!(
+            delays,
+            vec![
+                Duration::from_millis(100),
+                Duration::from_millis(200),
+                Duration::from_millis(400),
+                Duration::from_millis(800),
+            ]
+        );
+        fixture.join().expect("retry fixture");
+        fs::remove_dir_all(directory).expect("cleanup");
+    }
+
+    #[test]
+    fn network_error_retries_and_cancel_interrupts_retry_wait_without_deleting_part() {
+        let client = Client::builder().build().expect("client");
+        let directory = temp("retry-network");
+        fs::create_dir_all(&directory).expect("directory");
+        let part = directory.join("model.bin.part");
+        let (endpoint, fixture) =
+            response_sequence_server(vec![None, Some(200)], b"hello".to_vec());
+        let mut delays = Vec::new();
+        let outcome = download_file_with_resume_and_wait(
+            &client,
+            &format!("{endpoint}/model.bin"),
+            &part,
+            5,
+            &AtomicBool::new(false),
+            |delay, _| {
+                delays.push(delay);
+                true
+            },
+            |_, _| Ok(()),
+        )
+        .expect("network error should recover");
+        assert_eq!(outcome, Some(5));
+        assert_eq!(fs::read(&part).expect("downloaded file"), b"hello");
+        assert_eq!(delays, vec![Duration::from_millis(100)]);
+        fixture.join().expect("network fixture");
+
+        fs::write(&part, b"he").expect("partial file");
+        let (endpoint, fixture) = response_sequence_server(vec![Some(503)], b"hello".to_vec());
+        let cancel = AtomicBool::new(false);
+        let mut waits = 0;
+        let outcome = download_file_with_resume_and_wait(
+            &client,
+            &format!("{endpoint}/model.bin"),
+            &part,
+            5,
+            &cancel,
+            |_, cancel| {
+                waits += 1;
+                cancel.store(true, Ordering::SeqCst);
+                false
+            },
+            |_, _| Ok(()),
+        )
+        .expect("cancelled retry should return cleanly");
+        assert_eq!(outcome, None);
+        assert_eq!(waits, 1);
+        assert_eq!(fs::read(&part).expect("preserved partial file"), b"he");
+        fixture.join().expect("cancel retry fixture");
+        fs::remove_dir_all(directory).expect("cleanup");
+    }
+
+    #[test]
+    fn non_transient_http_range_and_size_errors_are_not_retried() {
+        let client = Client::builder().build().expect("client");
+        let directory = temp("retry-fatal");
+        fs::create_dir_all(&directory).expect("directory");
+        let part = directory.join("model.bin.part");
+
+        let (endpoint, fixture) = response_sequence_server(vec![Some(404)], Vec::new());
+        let mut waits = 0;
+        let error = download_file_with_resume_and_wait(
+            &client,
+            &format!("{endpoint}/model.bin"),
+            &part,
+            5,
+            &AtomicBool::new(false),
+            |_, _| {
+                waits += 1;
+                true
+            },
+            |_, _| Ok(()),
+        )
+        .expect_err("404 must fail without retry");
+        assert!(error.contains("HTTP 404"));
+        assert_eq!(waits, 0);
+        fixture.join().expect("404 fixture");
+
+        fs::write(&part, b"he").expect("partial file");
+        let (endpoint, fixture) = range_response_server(b"llo".to_vec(), 200, Some("bytes 1-3/5"));
+        let mut waits = 0;
+        let error = download_file_with_resume_and_wait(
+            &client,
+            &format!("{endpoint}/model.bin"),
+            &part,
+            5,
+            &AtomicBool::new(false),
+            |_, _| {
+                waits += 1;
+                true
+            },
+            |_, _| Ok(()),
+        )
+        .expect_err("bad Range must fail without retry");
+        assert!(error.contains("Range"));
+        assert_eq!(waits, 0);
+        fixture.join().expect("Range fixture");
+
+        let (endpoint, fixture) = range_response_server(b"llo".to_vec(), 200, None);
+        fs::write(&part, b"he").expect("partial file");
+        let mut waits = 0;
+        let error = download_file_with_resume_and_wait(
+            &client,
+            &format!("{endpoint}/model.bin"),
+            &part,
+            5,
+            &AtomicBool::new(false),
+            |_, _| {
+                waits += 1;
+                true
+            },
+            |_, _| Ok(()),
+        )
+        .expect_err("missing Range must fail without retry");
+        assert!(error.contains("Range"));
+        assert_eq!(waits, 0);
+        fixture.join().expect("missing Range fixture");
+
+        let (endpoint, fixture) = range_response_server(b"ll".to_vec(), 200, None);
+        fs::remove_file(&part).expect("remove partial file");
+        let mut waits = 0;
+        let error = download_file_with_resume_and_wait(
+            &client,
+            &format!("{endpoint}/model.bin"),
+            &part,
+            5,
+            &AtomicBool::new(false),
+            |_, _| {
+                waits += 1;
+                true
+            },
+            |_, _| Ok(()),
+        )
+        .expect_err("short body must fail without retry");
+        assert!(error.contains("大小"));
+        assert_eq!(waits, 0);
+        fixture.join().expect("size fixture");
+
+        fs::remove_dir_all(directory).expect("cleanup");
+    }
+
+    #[test]
     fn speaker_runtime_selects_only_the_current_mlx_model() {
         let root = temp("speaker-selection");
         let state = ModelState::with_catalog(speaker_catalog());
@@ -2467,7 +2524,7 @@ print(json.dumps({"event": "completed"}), flush=True)
                 .expect("license lookup")
         );
         let error = state
-            .begin_install(
+            .begin_install_fixture(
                 root.clone(),
                 "https://example.invalid".to_string(),
                 "wespeaker-zh",
