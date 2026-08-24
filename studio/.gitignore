@@ -8,3 +8,7 @@ build/runtime/
 !build/runtime/README.md
 build/model-runtime/
 !build/model-runtime/README.md
+
+# Native module build artifacts (binding.gyp and src/ stay tracked).
+build/native/
+native/avfoundation-player/build/
